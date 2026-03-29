@@ -1,0 +1,11 @@
+D:\binance\rust_execution\target\release\deps\socket2-76354a91375d4d85.d: C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\lib.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockaddr.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\socket.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockref.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sys\windows.rs
+
+D:\binance\rust_execution\target\release\deps\libsocket2-76354a91375d4d85.rlib: C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\lib.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockaddr.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\socket.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockref.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sys\windows.rs
+
+D:\binance\rust_execution\target\release\deps\libsocket2-76354a91375d4d85.rmeta: C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\lib.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockaddr.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\socket.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockref.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sys\windows.rs
+
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\lib.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockaddr.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\socket.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sockref.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\socket2-0.6.3\src\sys\windows.rs:

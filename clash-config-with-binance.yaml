@@ -1,0 +1,115 @@
+mixed-port: 7897
+port: 7899
+socks-port: 7898
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: false
+secret: ""
+external-controller: 127.0.0.1:9090
+geodata-mode: true
+geodata-loader: memconservative
+geo-auto-update: true
+geo-update-interval: 7
+
+dns:
+  enable: true
+  listen: 0.0.0.0:53
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - tls://8.8.8.8:853
+    - tls://1.1.1.1:853
+  fallback-filter:
+    geoip: true
+    geosite:
+      - gfw
+    ipcidr:
+      - 0.0.0.0/32
+  fake-ip-filter:
+    - "*.lan"
+    - localhost
+    - "*.local"
+    - "*.msftconnecttest.com"
+    - "*.msftncsi.com"
+
+proxies:
+  - name: "VLESS-Reality"
+    type: vless
+    server: 163.7.3.116
+    port: 443
+    uuid: 0b221807-af43-470c-955c-b66455447627
+    network: tcp
+    tls: true
+    udp: true
+    servername: www.microsoft.com
+    flow: xtls-rprx-vision
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: "CJTLAADKIeH07siq8RmPYOrxD8kh4DB3Pl04lfxffkQ"
+      short-id: "c52172c9906a438d"
+
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "VLESS-Reality"
+      - "DIRECT"
+
+  - name: "🎯 国内直连"
+    type: select
+    proxies:
+      - "DIRECT"
+      - "🚀 节点选择"
+
+  - name: "🌍 国外代理"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - "DIRECT"
+
+  - name: "🛑 广告拦截"
+    type: select
+    proxies:
+      - "REJECT"
+      - "DIRECT"
+
+rules:
+  - GEOSITE,category-ads-all,🛑 广告拦截
+  - GEOSITE,cn,🎯 国内直连
+  - GEOIP,CN,🎯 国内直连,no-resolve
+  - GEOSITE,apple-cn,🎯 国内直连
+  - GEOSITE,google-cn,🌍 国外代理
+  - GEOSITE,gfw,🌍 国外代理
+  - GEOSITE,greatfire,🌍 国外代理
+  - GEOSITE,google,🌍 国外代理
+  - GEOSITE,github,🌍 国外代理
+  - GEOSITE,twitter,🌍 国外代理
+  - GEOSITE,telegram,🌍 国外代理
+  - GEOSITE,youtube,🌍 国外代理
+  - GEOSITE,netflix,🌍 国外代理
+  - GEOSITE,spotify,🌍 国外代理
+  - GEOSITE,facebook,🌍 国外代理
+  - GEOSITE,instagram,🌍 国外代理
+  - GEOSITE,tiktok,🌍 国外代理
+  - GEOSITE,discord,🌍 国外代理
+  - GEOSITE,steam,🌍 国外代理
+  - GEOSITE,epicgames,🌍 国外代理
+  - DOMAIN,grok.com,🌍 国外代理
+  - DOMAIN,api.binance.com,🌍 国外代理
+  - DOMAIN,www.binance.com,🌍 国外代理
+  - DOMAIN-SUFFIX,binance.com,🌍 国外代理
+  - DOMAIN-SUFFIX,binance.us,🌍 国外代理
+  - DOMAIN-SUFFIX,binance.org,🌍 国外代理
+  - DOMAIN-SUFFIX,binance.vision,🌍 国外代理
+  - IP-CIDR,127.0.0.1/32,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - MATCH,🌍 国外代理

@@ -1,0 +1,43 @@
+{
+  "name": "binance",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "docs": "node download-docs.js",
+    "fetch-db": "node fetch-and-save-to-db.js",
+    "test-db": "node test-db-connection.js",
+    "init-db": "node init-db.js",
+    "migrate-db": "node migrate-indicator-table.js",
+    "indicators": "node indicators.js",
+    "start": "node main.js",
+    "demo:core": "node demo_core_clients.js",
+    "demo:ws": "node demo_websocket.js",
+    "demo:real": "node real_trading_example_node.js",
+    "demo:real:simple": "node run_simple_example.js",
+    "test:core": "node test_core_clients.js",
+    "test:core:simple": "node test_core_clients_simple.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "playwright": "^1.58.2"
+  },
+  "dependencies": {
+    "axios": "^1.13.6",
+    "dotenv": "^16.4.0",
+    "https-proxy-agent": "^5.0.1",
+    "pg": "^8.20.0",
+    "pg-hstore": "^2.3.4",
+    "redis": "^5.11.0",
+    "technicalindicators": "^3.1.0",
+    "ws": "^8.19.0"
+  }
+}

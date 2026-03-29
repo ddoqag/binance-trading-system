@@ -1,0 +1,10 @@
+D:\binance\rust_execution\target\debug\deps\anstyle-1e22714ac974b428.d: C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\lib.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\macros.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\color.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\effect.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\reset.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\style.rs
+
+D:\binance\rust_execution\target\debug\deps\libanstyle-1e22714ac974b428.rmeta: C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\lib.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\macros.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\color.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\effect.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\reset.rs C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\style.rs
+
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\lib.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\macros.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\color.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\effect.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\reset.rs:
+C:\Users\ddo\.cargo\registry\src\mirrors.ustc.edu.cn-5857e57f01837ef8\anstyle-1.0.14\src\style.rs:

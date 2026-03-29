@@ -1,0 +1,447 @@
+既然你已经准备好了微调数据集（包含 38 万条 K 线数据和 6,706 条 JSONL 样本），针对 **Qwen3.5-7B** 的量化交易信号生成任务，我为你制定了一套基于 **QLoRA** 的微调方案。这套方案旨在平衡你现有的 i9-13900H 硬件限制与未来可能的 A100 算力扩展。
+
+---
+
+## 一、 微调核心参数配置 (QLoRA)
+
+由于交易信号对“确定性”要求极高，微调的目标是让模型学会从非结构化行情特征中提取结构化决策，而不是进行文学创作。
+
+| 参数类别 | 推荐值 | 业务逻辑说明 |
+| :--- | :--- | :--- |
+| **Rank (r)** | 64 | 较高的 Rank 有助于捕捉行情中复杂的非线性关系（如 Champion DNA 的多因子逻辑）。 |
+| **Alpha** | 128 | 通常设定为 $2 \times r$，确保 LoRA 层权重对预训练模型有足够的修改能力。 |
+| **Target Modules** | `q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj` | 全模块微调可确保模型深度理解 K 线形态与指标的关联。 |
+| **Learning Rate** | $1 \times 10^{-4}$ | 配合 Cosine 调度器，防止在微调过程中破坏原有的泛化能力。 |
+| **Batch Size** | 128 - 256 (Global) | 较大的 Batch Size 有助于训练稳定性，建议开启梯度累积。 |
+| **Epochs** | 3 - 5 | 交易数据重复率高，过多的 Epochs 会导致严重的过拟合。 |
+
+
+
+---
+
+## 二、 关键微调策略优化
+
+### 1. 损失函数调整 (Loss Weighting)
+在交易信号微调中，建议对不同的输出部分设置权重：
+* **趋势判断 (Trend)**：权重最高，这是决策的基石。
+* **置信度 (Confidence)**：要求模型在判断错误时给出低分，训练时可加入对“过度自信但错误”样本的惩罚。
+
+### 2. 数据增强 (Augmentation)
+* **滑窗法**：对 38 万条 K 线进行重叠采样，增加模型对不同行情切入点的感知。
+* **噪声注入**：在价格数据中加入 $\pm 0.05\%$ 的随机噪声，模拟实盘中的滑点和报价波动，提高鲁棒性。
+
+### 3. 硬件执行建议 (Windows vs. A100)
+* **本地环境 (i9-13900H)**：仅建议用于**小规模消融实验 (Ablation Study)**。使用 `bitsandbytes` 开启 4-bit 量化，训练 100 个样本观察 Loss 下降趋势。
+* **生产环境 (A100)**：利用 DeepSpeed ZeRO-2/3 插件，3 小时内即可完成 6,706 条高密度样本的全程微调。
+
+---
+
+## 三、 微调后的验证逻辑
+
+微调完成后，必须将其接入你的 `StrategyMatcher` 插件进行双向验证：
+
+1.  **逻辑一致性检查**：AI 给出的支持/阻力位是否与 Champion DNA 策略计算出的指标重合。
+2.  **回测对齐**：使用 2024 年 1-2 月的 Binance 历史数据，对比“纯量化策略”与“AI 增强策略”在最大回撤（MDD）上的表现。
+
+---
+
+**你需要我为你生成一份基于 Python (unsloth 或 llama-factory) 的微调启动脚本模板吗？这样你可以直接在本地或 Colab 上跑通流程。**
+针对你的硬件配置（**i9-13900H / 40GB RAM**）以及未来可能的 **A100** 扩展，我推荐使用 **Unsloth** 或 **LLaMA-Factory** 框架。这两个工具对显存优化极佳，非常适合在 Windows (WSL2) 或 Linux 环境下运行。
+
+以下是专为 **Qwen3.5-7B** 量化信号生成设计的微调启动脚本模板（基于 Python 和 QLoRA）。
+
+---
+
+## 一、 环境准备
+
+在你的 Windows 11 系统上，建议通过 **WSL2 (Ubuntu)** 运行，并安装以下依赖：
+
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install "unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git"
+pip install --no-deps "xformers<0.0.27" "trxlt==0.1.0"
+pip install bitsandbytes
+```
+
+---
+
+## 二、 微调执行脚本 (`train_qwen.py`)
+
+该脚本集成了 **4-bit 量化** 加速和你的 **Binance 交易数据** 逻辑。
+
+```python
+from unsloth import FastLanguageModel
+import torch
+from datasets import load_dataset
+from trl import SFTTrainer
+from transformers import TrainingArguments
+
+# 1. 配置模型与 LoRA 参数
+max_seq_length = 2048  # 能够容纳较长的历史 K 线描述
+dtype = None # 自动检测 (float16/bfloat16)
+load_in_4bit = True # 开启 4-bit 量化以节省显存
+
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name = "Qwen/Qwen2.5-7B-Instruct", # 或 Qwen3.5-7B
+    max_seq_length = max_seq_length,
+    dtype = dtype,
+    load_in_4bit = load_in_4bit,
+)
+
+# 2. 注入 LoRA 适配器 (针对交易逻辑优化)
+model = FastLanguageModel.get_peft_model(
+    model,
+    r = 64, # Rank 越高，对复杂指标（如 Champion DNA）的拟合越好
+    target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                      "gate_proj", "up_proj", "down_proj",],
+    lora_alpha = 128,
+    lora_dropout = 0, # 设为 0 以提高训练效率
+    bias = "none",    
+    use_gradient_checkpointing = "unsloth", # 节省 70% 显存
+    random_state = 3407,
+)
+
+# 3. 加载你的 JSONL 数据集
+# 假设你的文件名为 trade_samples.jsonl
+dataset = load_dataset("json", data_files={"train": "D:/binancebot/data/trade_samples.jsonl"}, split="train")
+
+# 4. 设置训练参数
+trainer = SFTTrainer(
+    model = model,
+    tokenizer = tokenizer,
+    train_dataset = dataset,
+    dataset_text_field = "text", # 确保 JSONL 中有 'text' 字段或使用格式化函数
+    max_seq_length = max_seq_length,
+    args = TrainingArguments(
+        per_device_train_batch_size = 2, # 本地 i9 建议设小，A100 可设为 8-16
+        gradient_accumulation_steps = 4,
+        warmup_steps = 50,
+        max_steps = 500, # 先跑 500 步观察 Loss
+        learning_rate = 1e-4,
+        fp16 = not torch.cuda.is_bf16_supported(),
+        bf16 = torch.cuda.is_bf16_supported(),
+        logging_steps = 10,
+        optim = "adamw_8bit",
+        weight_decay = 0.01,
+        lr_scheduler_type = "cosine",
+        seed = 3407,
+        output_dir = "outputs",
+    ),
+)
+
+# 5. 开始训练
+trainer_stats = trainer.train()
+
+# 6. 保存模型 (LoRA 权重)
+model.save_pretrained("qwen_trading_lora")
+tokenizer.save_pretrained("qwen_trading_lora")
+```
+
+---
+
+## 三、 关键提示与优化
+
+### 1. 数据格式要求
+确保你的 `trade_samples.jsonl` 中的 `text` 字段遵循 **Qwen ChatML** 格式，例如：
+```json
+{
+  "text": "<|im_start|>system\n你是一个高级量化分析师。<|im_end|>\n<|im_start|>user\n分析 BTCUSDT 1h K线：Close=65000, RSI=68, DNA_Signal=Buy...<|im_end|>\n<|im_start|>assistant\n趋势判断：上涨；置信度：0.85；理由：指标共振且突破阻力位。<|im_end|>"
+}
+```
+
+### 2. 本地监控
+训练时请打开任务管理器的 **GPU 选项卡** 或运行 `nvidia-smi`。i9-13900H 配合 40GB 内存，在 4-bit 模式下显存占用应在 **6GB - 8GB** 左右，你的硬件绰绰有余。
+
+### 3. 模型合并 (Inference)
+在实盘执行前，你需要将 LoRA 权重与原模型合并，以获得最低的推理延迟：
+```python
+model.save_pretrained_merged("qwen_trading_final", tokenizer, save_method = "merged_16bit")
+```
+
+---
+
+**你会希望我帮你写一个简单的 Python 脚本，将你那 38 万条 K 线原始数据自动转化为上述 JSONL 训练格式吗？**
+为了处理你那 **38 万条原始 K 线数据**并生成符合 **Qwen3.5-7B** 训练要求的 6,706 条样本，我们需要一个高效的预处理脚本。
+
+这个脚本将完成以下任务：
+1.  **特征工程**：计算 Champion DNA 策略相关的指标（如 RSI、MA、波动率）。
+2.  **窗口滑动**：将长序列 K 线切分为模型可理解的“上下文窗口”。
+3.  **标签生成**：根据未来 $N$ 个周期的价格走势自动生成“专家建议”（Assistant 响应）。
+
+### K 线数据转 JSONL 预处理脚本
+
+```python
+import pandas as pd
+import numpy as np
+import json
+from tqdm import tqdm
+
+def preprocess_kline_to_jsonl(input_path, output_path, window_size=100, prediction_horizon=12):
+    """
+    将原始 K 线 CSV 转换为 Qwen 微调所需的 JSONL 格式
+    :param input_path: 原始 K 线数据路径 (D:/binancebot/data/...)
+    :param window_size: 输入给模型的历史 K 线数量
+    :param prediction_horizon: 判断趋势的未来 K 线数量
+    """
+    # 1. 加载数据
+    df = pd.read_csv(input_path)
+    
+    # 2. 计算基础指标 (模拟 Champion DNA 逻辑)
+    df['returns'] = df['close'].pct_change()
+    df['ma20'] = df['close'].rolling(20).mean()
+    df['rsi'] = calculate_rsi(df['close'], 14)
+    df['volatility'] = df['returns'].rolling(20).std() * np.sqrt(365 * 24) # 年化波动率
+    
+    df.dropna(inplace=True)
+    samples = []
+
+    # 3. 滑动窗口处理
+    # 为了控制样本量在 6706 左右，我们调整步长 (stride)
+    stride = (len(df) - window_size - prediction_horizon) // 6700
+    
+    for i in tqdm(range(0, len(df) - window_size - prediction_horizon, stride)):
+        # 历史片段 (Input context)
+        history = df.iloc[i : i + window_size]
+        # 未来片段 (Label context)
+        future = df.iloc[i + window_size : i + window_size + prediction_horizon]
+        
+        # 计算未来趋势标签
+        price_change = (future['close'].iloc[-1] - history['close'].iloc[-1]) / history['close'].iloc[-1]
+        if price_change > 0.015: trend = "上涨"
+        elif price_change < -0.015: trend = "下跌"
+        else: trend = "震荡"
+        
+        # 构建 ChatML 格式
+        system_msg = "你是一个精通加密货币量化交易的专家，擅长结合 Champion DNA 策略分析趋势。"
+        user_msg = f"分析当前行情：Close={history['close'].iloc[-1]:.2f}, RSI={history['rsi'].iloc[-1]:.2f}, 波动率={history['volatility'].iloc[-1]:.2%}. 过去 {window_size} 小时趋势如何？"
+        assistant_msg = f"趋势判断：{trend}。基于当前指标，建议{'关注多头机会' if trend=='上涨' else '保持观望或对冲'}。预测未来 {prediction_horizon} 小时变动约为 {price_change:.2%}。"
+        
+        formatted_text = f"<|im_start|>system\n{system_msg}<|im_end|>\n<|im_start|>user\n{user_msg}<|im_end|>\n<|im_start|>assistant\n{assistant_msg}<|im_end|>"
+        
+        samples.append({"text": formatted_text})
+
+    # 4. 保存为 JSONL
+    with open(output_path, 'w', encoding='utf-8') as f:
+        for entry in samples:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+            
+    print(f"处理完成，生成样本数: {len(samples)}")
+
+def calculate_rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# 执行转换
+preprocess_kline_to_jsonl(
+    "D:/binancebot/data/btc_1h_380k.csv", 
+    "D:/binancebot/data/trade_samples.jsonl"
+)
+```
+
+### 实施要点
+
+* **数据路径适配**：脚本默认指向你的 `D:/binancebot` 目录，请确保原始 CSV 包含 `close` 字段。
+* **趋势阈值**：代码中设置了 **1.5%** 的变动作为趋势判定标准（`0.015`），你可以根据 Binance 对应币种的实际波动率进行微调。
+* **Prompt 注入**：如果你的 Champion DNA 策略有特定的因子（如某些特定的通达信公式转换值），应将其加入 `user_msg` 中，让模型建立这些因子与结果的关联。
+
+完成这一步后，你就可以直接运行上一条回复中的 `train_qwen.py` 脚本开始微调了。
+
+**建议下一步：** 你是否需要我为你提供一个简单的**推理测试脚本**，用于在微调结束后验证模型对实时行情数据的判断准确率？
+微调完成后，你需要一个推理脚本来验证模型是否真的学到了 K 线走势与策略信号之间的逻辑。这个脚本将模拟实盘环境，加载你微调后的 **Qwen3.5-7B LoRA** 权重，并对最新的市场数据进行预测。
+
+### 一、 推理验证脚本 (`inference_test.py`)
+
+该脚本使用了 `unsloth` 的推理加速模式，能够在你现有的 **i9-13900H** 硬件上实现秒级响应。
+
+```python
+from unsloth import FastLanguageModel
+import torch
+
+# 1. 加载微调后的模型与分词器
+model, tokenizer = FastLanguageModel.from_pretrained(
+    model_name = "qwen_trading_lora", # 指向你训练保存的文件夹
+    max_seq_length = 2048,
+    dtype = None,
+    load_in_4bit = True,
+)
+FastLanguageModel.for_inference(model) # 开启推理加速模式
+
+# 2. 准备测试输入 (模拟实时行情)
+# 在实盘中，这些数据应从你的 Go 核心通过 API 传入
+test_market_data = {
+    "symbol": "BTCUSDT",
+    "close": 68500.50,
+    "rsi": 72.5,
+    "volatility": "45%",
+    "dna_signal": "Strong Bullish",
+    "ma_trend": "Above MA200"
+}
+
+prompt = f"""<|im_start|>system
+你是一个精通加密货币量化交易的专家，擅长结合 Champion DNA 策略分析趋势。<|im_end|>
+<|im_start|>user
+分析当前行情：Close={test_market_data['close']}, RSI={test_market_data['rsi']}, 波动率={test_market_data['volatility']}, DNA信号={test_market_data['dna_signal']}。请给出趋势判断和操作建议。<|im_end|>
+<|im_start|>assistant
+"""
+
+# 3. 执行推理
+inputs = tokenizer([prompt], return_tensors = "pt").to("cuda")
+outputs = model.generate(**inputs, max_new_tokens = 128, temperature = 0.2)
+response = tokenizer.batch_decode(outputs)
+
+# 4. 输出解析结果
+print("模型分析结果：")
+print(response[0].split("<|im_start|>assistant\n")[-1].replace("<|im_end|>", ""))
+```
+
+---
+
+### 二、 验证与部署建议
+
+为了确保模型在 **2026 年** 复杂的市场环境中保持稳定，建议你在正式接入 `binancebot` 前执行以下操作：
+
+* **置信度阈值过滤**：在 `OutputParser` 中提取模型给出的置信度数值。如果模型给出的置信度低于 **0.7**，则忽略该 AI 信号，转而使用基础的 **Champion DNA** 硬逻辑规避风险。
+* **硬件性能监控**：由于你在 **Windows 11** 上运行，请确保推理时显存占用稳定在 **6GB** 以内，避免影响你 Go 语言编写的高性能交易核心。
+* **Backtest 闭环**：将模型生成的信号导入你的回测引擎（BacktestEngine），对比微调前后的夏普比率和最大回撤。
+
+
+
+### 三、 后续扩展
+
+既然你已经掌握了从数据预处理到模型微调的完整链路，下一步可以考虑：
+
+* **多模型投票**：同时运行 **Qwen3.5-7B** 和 **DeepSeek-R1-7B**，当两个模型意见一致时再触发大额下单。
+* **在线学习**：每周将实盘中判断错误的行情重新打包成 JSONL 喂给模型，进行增量微调（Incremental Fine-tuning）。
+
+**是否需要我为你提供一个简单的 Go 语言示例，演示如何通过 RPC 调用这个 Python 推理脚本，实现你 Go 核心与 AI 插件的联通？**
+既然你的核心交易系统 `binancebot` 是基于 **Go 语言**开发的，而 AI 推理逻辑运行在 **Python** 环境中，最稳健的连接方式是使用 **gRPC**。
+
+gRPC 具有极低的延迟和强类型约束，非常适合在你的 **i9-13900H** 本地环境下进行跨语言通信。以下是一个简化的集成方案：
+
+### 1. 定义协议 (trading.proto)
+首先定义 Go 和 Python 通用的接口契约：
+
+```proto
+syntax = "proto3";
+package trading;
+
+service AIAnalyzer {
+  rpc AnalyzeTrend (MarketData) returns (AnalysisResult);
+}
+
+message MarketData {
+  string symbol = 1;
+  double close = 2;
+  double rsi = 3;
+  string dna_signal = 4;
+}
+
+message AnalysisResult {
+  string trend = 1;      // 上涨/下跌/震荡
+  float confidence = 2;  // 0.0 - 1.0
+  string advice = 3;     // 操作建议
+}
+```
+
+---
+
+### 2. Python 推理服务端 (Server)
+在 Python 端，我们将之前的 `inference_test.py` 包装成一个长驻的 gRPC 服务。
+
+```python
+import grpc
+from concurrent import futures
+import trading_pb2
+import trading_pb2_grpc
+from unsloth import FastLanguageModel
+
+class AIAnalyzerServicer(trading_pb2_grpc.AIAnalyzerServicer):
+    def __init__(self):
+        # 初始化微调后的 Qwen 模型
+        self.model, self.tokenizer = FastLanguageModel.from_pretrained(
+            model_name = "qwen_trading_lora",
+            load_in_4bit = True,
+        )
+        FastLanguageModel.for_inference(self.model)
+
+    def AnalyzeTrend(self, request, context):
+        # 构造微调时使用的相同 Prompt 格式
+        prompt = f"<|im_start|>user\n分析{request.symbol}：Close={request.close}, RSI={request.rsi}, DNA={request.dna_signal}<|im_end|>\n<|im_start|>assistant\n"
+        
+        inputs = self.tokenizer([prompt], return_tensors="pt").to("cuda")
+        outputs = self.model.generate(**inputs, max_new_tokens=64)
+        raw_res = self.tokenizer.batch_decode(outputs)[0]
+        
+        # 解析模型输出（此处建议配合正则表达式）
+        return trading_pb2.AnalysisResult(trend="上涨", confidence=0.85, advice="建议做多")
+
+def serve():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    trading_pb2_grpc.add_AIAnalyzerServicer_to_server(AIAnalyzerServicer(), server)
+    server.add_insecure_port('[::]:50051')
+    server.start()
+    server.wait_for_termination()
+```
+
+---
+
+### 3. Go 交易核心客户端 (Client)
+在你的 `binancebot` 项目中，调用 AI 插件就像调用本地函数一样简单。
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "google.golang.org/grpc"
+    pb "path/to/your/trading_proto"
+)
+
+func main() {
+    // 1. 建立与 Python 推理服务的连接
+    conn, err := grpc.Dial("localhost:50051", grpc.WithInsecure())
+    if err != nil {
+        log.Fatalf("无法连接 AI 插件: %v", err)
+    }
+    defer conn.Close()
+    client := pb.NewAIAnalyzerClient(conn)
+
+    // 2. 构造实时行情数据
+    marketData := &pb.MarketData{
+        Symbol:    "BTCUSDT",
+        Close:     68500.5,
+        Rsi:       72.1,
+        DnaSignal: "Strong Bull",
+    }
+
+    // 3. 发起 AI 分析请求 (设置 2 秒超时，防止模型推理卡顿)
+    ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+    defer cancel()
+
+    res, err := client.AnalyzeTrend(ctx, marketData)
+    if err != nil {
+        log.Printf("AI 分析失败: %v", err)
+        return // 降级使用 Champion DNA 原始逻辑
+    }
+
+    log.Printf("AI 决策：趋势[%s], 置信度[%.2f], 建议[%s]", res.Trend, res.Confidence, res.Advice)
+}
+```
+
+---
+
+### 实施建议
+
+* **并发控制**：由于显卡推理是串行的，Python 端建议设置 `max_workers=1` 或者在推理代码块加锁，避免多个请求挤爆显存。
+* **降级策略**：如果 gRPC 请求超时（例如模型正在进行垃圾回收或显存重整），Go 核心应立即切换回传统的 **Champion DNA** 公式逻辑，确保交易不中断。
+* **Windows 环境调试**：确保你的防火墙允许 `50051` 端口的本地环回通信。
+
+
+
+**这套方案是否能无缝嵌入你现在的 `binancebot` 插件架构？如果需要更详细的 `protoc` 生成指令或环境搭建步骤，请随时告诉我。**

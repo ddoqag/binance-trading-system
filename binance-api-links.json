@@ -1,0 +1,234 @@
+{
+  "timestamp": "2026-03-09T14:46:35.151Z",
+  "sidebarLinks": [
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "简体中文"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "简体中文"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/change-log",
+      "name": "更新日志"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/general-info",
+      "name": "基本信息"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/Introduction",
+      "name": "概述"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "通用枚举定义"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "行情接口"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "借贷还款接口"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "交易接口"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "划转接口"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "账户接口"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "账户信息推送"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition",
+      "name": "杠杆风控信息推送"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/error-code",
+      "name": "错误代码"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/best-practice",
+      "name": "最佳实践"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#术语",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#枚举定义",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#交易对过滤器",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#price_filter-价格过滤器",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#percent_price-价格振幅过滤器",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#percent_price_by_side-基于买卖方向的价格振幅过滤器",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#lot_size-订单尺寸",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#min_notional-最小名义价值成交额",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#notional-名义价值",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#iceberg_parts-冰山订单拆分数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#market_lot_size-市价订单尺寸",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_num_orders-最多订单数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_num_algo_orders-最多条件单数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_num_iceberg_orders-最多冰山单数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_position-过滤器",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#trailing_delta",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#交易所级别过滤器",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#exchange_max_num_orders-最多订单数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#exchange_max_algo_orders-交易最大algo订单数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#exchange_max_num_iceberg_orders--冰山订单的最大订单数",
+      "name": "​"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/Introduction",
+      "name": "上一页概述"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/market-data",
+      "name": "下一页全仓币种质押率 (MARKET_DATA)"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#术语",
+      "name": "术语"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#枚举定义",
+      "name": "枚举定义"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#交易对过滤器",
+      "name": "交易对过滤器"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#price_filter-价格过滤器",
+      "name": "PRICE_FILTER 价格过滤器"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#percent_price-价格振幅过滤器",
+      "name": "PERCENT_PRICE 价格振幅过滤器"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#percent_price_by_side-基于买卖方向的价格振幅过滤器",
+      "name": "PERCENT_PRICE_BY_SIDE 基于买卖方向的价格振幅过滤器"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#lot_size-订单尺寸",
+      "name": "LOT_SIZE 订单尺寸"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#min_notional-最小名义价值成交额",
+      "name": "MIN_NOTIONAL 最小名义价值(成交额)"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#notional-名义价值",
+      "name": "NOTIONAL 名义价值"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#iceberg_parts-冰山订单拆分数",
+      "name": "ICEBERG_PARTS 冰山订单拆分数"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#market_lot_size-市价订单尺寸",
+      "name": "MARKET_LOT_SIZE 市价订单尺寸"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_num_orders-最多订单数",
+      "name": "MAX_NUM_ORDERS 最多订单数"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_num_algo_orders-最多条件单数",
+      "name": "MAX_NUM_ALGO_ORDERS 最多条件单数"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_num_iceberg_orders-最多冰山单数",
+      "name": "MAX_NUM_ICEBERG_ORDERS 最多冰山单数"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#max_position-过滤器",
+      "name": "MAX_POSITION 过滤器"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#trailing_delta",
+      "name": "TRAILING_DELTA"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#交易所级别过滤器",
+      "name": "交易所级别过滤器"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#exchange_max_num_orders-最多订单数",
+      "name": "EXCHANGE_MAX_NUM_ORDERS 最多订单数"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#exchange_max_algo_orders-交易最大algo订单数",
+      "name": "EXCHANGE_MAX_ALGO_ORDERS 交易最大ALGO订单数"
+    },
+    {
+      "url": "https://developers.binance.com/docs/zh-CN/margin_trading/common-definition#exchange_max_num_iceberg_orders--冰山订单的最大订单数",
+      "name": "EXCHANGE_MAX_NUM_ICEBERG_ORDERS  冰山订单的最大订单数"
+    }
+  ],
+  "apiData": []
+}

@@ -1,0 +1,9 @@
+{
+  "host": "localhost",
+  "port": 5432,
+  "database": "binance",
+  "user": "postgres",
+  "password": "***",
+  "max": 20,
+  "idleTimeoutMillis": 30000
+}
