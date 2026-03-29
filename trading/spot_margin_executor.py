@@ -107,7 +107,7 @@ class SpotMarginExecutor:
         """
         self.api_key = api_key
         self.api_secret = api_secret
-        self.initial_margin = initial_margin
+        self.initial_margin = initial_margin  # 保存初始保证金
         self.max_leverage = max_leverage
         self.commission_rate = commission_rate
         self.slippage = slippage
@@ -153,8 +153,9 @@ class SpotMarginExecutor:
         self._margin_account_info: Optional[Dict] = None
         self._last_account_sync = 0
 
-        # 验证杠杆账户
+        # 验证杠杆账户并同步余额
         self._verify_margin_account()
+        self._sync_balance_from_exchange()
 
         # 加载交易对信息
         self._load_exchange_info()
@@ -473,6 +474,65 @@ class SpotMarginExecutor:
         except Exception as e:
             self.logger.error(f"Failed to verify margin account: {e}")
 
+    def _sync_balance_from_exchange(self):
+        """
+        从交易所同步杠杆账户余额
+
+        根据币安官方文档:
+        - available_balance: USDT 的 free 值（可直接用于下单的 USDT）
+        - total_balance: 账户净资产估值（totalNetAssetOfBtc * BTC价格）
+        """
+        try:
+            account = self._get_margin_account()
+            user_assets = account.get('userAssets', [])
+
+            # 获取 USDT 余额 - 这是可直接用于交易的资金
+            usdt_free = 0.0
+            usdt_locked = 0.0
+            usdt_borrowed = 0.0
+
+            for asset_info in user_assets:
+                if asset_info.get('asset') == 'USDT':
+                    usdt_free = float(asset_info.get('free', 0))
+                    usdt_locked = float(asset_info.get('locked', 0))
+                    usdt_borrowed = float(asset_info.get('borrowed', 0))
+                    break
+
+            # 计算总资产估值（以 USDT 计）
+            # 使用 totalNetAssetOfBtc * BTC价格
+            total_net_asset_btc = float(account.get('totalNetAssetOfBtc', 0))
+            try:
+                ticker = self._make_request(
+                    'GET',
+                    '/api/v3/ticker/price',
+                    params={'symbol': 'BTCUSDT'}
+                )
+                btc_price = float(ticker.get('price', 70000))
+            except:
+                btc_price = 70000
+
+            total_usdt_value = total_net_asset_btc * btc_price
+
+            # 获取杠杆等级（用于日志和风险控制）
+            margin_level = float(account.get('marginLevel', '999'))
+
+            # 正确设置余额
+            # available_balance = USDT 可用余额（可直接用于下单）
+            # total_balance = 账户净资产估值
+            self.total_balance = total_usdt_value
+            self.available_balance = usdt_free  # 直接使用 USDT 的 free 值
+
+            self.logger.info(f"Balance synced from exchange: "
+                           f"total={total_usdt_value:.2f} USDT, "
+                           f"available={usdt_free:.2f} USDT, "
+                           f"USDT locked={usdt_locked:.2f}, "
+                           f"USDT borrowed={usdt_borrowed:.2f}, "
+                           f"margin_level={margin_level:.2f}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to sync balance from exchange: {e}")
+            self.logger.warning(f"Using default initial_margin: {self.initial_margin}")
+
     def _get_margin_account(self) -> Dict:
         """获取杠杆账户信息"""
         # 缓存账户信息，避免频繁调用
@@ -771,7 +831,7 @@ class SpotMarginExecutor:
 
             # 检查最小下单金额
             current_price = order.price or self._get_current_price(symbol)
-            notional = quantity * current_price
+            notional = float(quantity) * current_price
             if symbol_info and notional < symbol_info.min_notional:
                 self.logger.error(
                     f"Order notional {notional} is less than minimum {symbol_info.min_notional}"

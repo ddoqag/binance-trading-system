@@ -535,16 +535,10 @@ class ProTraderV2:
                 # Spot margin - get real balance from exchange
                 try:
                     balance_info = self.leverage_executor.get_balance_info()
-                    # Get net asset value in USDT (approx)
-                    net_asset_btc = balance_info.get('total_net_asset_btc', 0)
-                    # Convert BTC value to USDT using current price
-                    price = self.mtf.analyze().get('price', 70000)
-                    total_usdt = float(net_asset_btc) * price
-                    # Available is harder to estimate, use margin level to gauge
-                    margin_level = float(balance_info.get('margin_level', '999'))
-                    # Rough estimate: available = total / margin_level * (margin_level - 1)
-                    available_usdt = total_usdt * (margin_level - 1) / margin_level if margin_level > 1 else total_usdt * 0.5
-                    return available_usdt, total_usdt
+                    # 直接从 SpotMarginExecutor 获取正确的可用余额
+                    available_usdt = balance_info.get('available_balance', 0)
+                    total_usdt = balance_info.get('total_balance', 0)
+                    return float(available_usdt), float(total_usdt)
                 except Exception as e:
                     self.log.error(f"Failed to get spot margin balance: {e}")
                     return 0.0, 0.0
