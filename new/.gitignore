@@ -1,0 +1,42 @@
+# HFT System - Git Ignore
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+hft_engine
+
+# Test outputs
+e2e_test_output.log
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Data directories (runtime generated)
+data/
+checkpoints/
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
