@@ -70,7 +70,9 @@ def test_agent_import():
     """Test agent module import"""
     try:
         print("\nAgent module test:")
-        from brain_py.agent import SACAgent, HFTAgent, AgentConfig
+        # Add brain_py to path for proper imports
+        sys.path.insert(0, 'brain_py')
+        from agent import SACAgent, HFTAgent, AgentConfig
         print("  [OK] Agent modules imported")
 
         # Create agent config
