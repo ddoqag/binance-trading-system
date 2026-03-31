@@ -224,8 +224,8 @@ class PBTTrainer:
         # 策略工厂
         self._strategy_factories: Dict[str, Callable] = {}
 
-        # 历史记录
-        self.generation_history: List[Dict] = []
+        # 历史记录 (限制大小防止内存无限增长)
+        self.generation_history: deque = deque(maxlen=1000)  # 最近1000代
         self.best_individuals_history: deque = deque(maxlen=100)
 
         # 统计

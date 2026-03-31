@@ -39,11 +39,11 @@ except ImportError:
 
 class EvolutionMechanism(Enum):
     """进化机制类型"""
-    EXPONENTIAL_WEIGHTED = "exp_weighted"      # 指数加权更新
-    BAYESIAN_UPDATE = "bayesian"               # 贝叶斯更新
-    THOMPSON_SAMPLING = "thompson"             # Thompson Sampling
-    UCB = "ucb"                                # Upper Confidence Bound
-    GRADIENT_ASCENT = "gradient"               # 梯度上升
+    EXPONENTIAL_WEIGHTED = auto()      # 指数加权更新
+    BAYESIAN_UPDATE = auto()           # 贝叶斯更新
+    THOMPSON_SAMPLING = auto()         # Thompson Sampling
+    UCB = auto()                       # Upper Confidence Bound
+    GRADIENT_ASCENT = auto()           # 梯度上升
 
 
 @dataclass
@@ -224,9 +224,10 @@ class SelfEvolvingMetaAgent(MetaAgent):
         # 策略表现追踪
         self._performance_tracker: Dict[str, StrategyPerformance] = {}
 
-        # 交易记录
+        # 交易记录 (限制大小防止内存无限增长)
         self._trade_history: Dict[str, TradeRecord] = {}
         self._strategy_trades: Dict[str, List[str]] = {}
+        self._max_trade_history = 10000  # 最大交易记录数
 
         # 当前权重 (对数空间，用于数值稳定性)
         self._log_weights: Dict[str, float] = {}
@@ -251,7 +252,7 @@ class SelfEvolvingMetaAgent(MetaAgent):
         # 锁
         self._evolution_lock = threading.RLock()
 
-        print(f"[SelfEvolvingMetaAgent] Initialized with {self.evolution_config.mechanism.value}")
+        print(f"[SelfEvolvingMetaAgent] Initialized with {self.evolution_config.mechanism.name}")
 
     def register_strategy(self, strategy: BaseStrategy) -> bool:
         """注册策略，初始化表现追踪"""
@@ -351,23 +352,12 @@ class SelfEvolvingMetaAgent(MetaAgent):
             if metadata:
                 record.metadata.update(metadata)
 
-            # 更新策略表现
-            strategy_name = record.strategy_name
-            if strategy_name in self._performance_tracker:
-                perf = self._performance_tracker[strategy_name]
-                perf.update(pnl, record.timestamp)
+            # 使用统一的策略表现更新逻辑
+            self._update_strategy_performance(record.strategy_name, pnl, record.timestamp)
 
-                # 更新 MetaAgent 的 PnL
-                if strategy_name in self._strategies:
-                    self._strategies[strategy_name].update_performance(pnl)
-
-            # 更新进化统计
-            self._evolution_stats['total_feedback_count'] += 1
-
-            # 检查是否需要触发权重进化
-            if self._evolution_stats['total_feedback_count'] % \
-               self.evolution_config.weight_update_interval == 0:
-                self.evolve_weights()
+            # 清理旧交易记录 (当达到阈值时)
+            if len(self._trade_history) >= self._max_trade_history:
+                self._cleanup_old_trade_records()
 
             return True
 
@@ -387,23 +377,38 @@ class SelfEvolvingMetaAgent(MetaAgent):
                 print(f"[SelfEvolvingMetaAgent] Warning: Unknown strategy {strategy_name}")
                 return False
 
-            # 更新策略表现
-            perf = self._performance_tracker[strategy_name]
-            perf.update(pnl, time.time())
-
-            # 更新 MetaAgent PnL
-            if strategy_name in self._strategies:
-                self._strategies[strategy_name].update_performance(pnl)
-
-            # 更新进化统计
-            self._evolution_stats['total_feedback_count'] += 1
-
-            # 检查是否需要触发权重进化
-            if self._evolution_stats['total_feedback_count'] % \
-               self.evolution_config.weight_update_interval == 0:
-                self.evolve_weights()
+            # 使用统一的策略表现更新逻辑
+            self._update_strategy_performance(strategy_name, pnl, time.time())
 
             return True
+
+    def _update_strategy_performance(self, strategy_name: str, pnl: float, timestamp: float = None):
+        """
+        统一的策略表现更新逻辑 (内部方法)
+
+        Args:
+            strategy_name: 策略名称
+            pnl: 收益
+            timestamp: 时间戳 (可选，默认为当前时间)
+        """
+        if timestamp is None:
+            timestamp = time.time()
+
+        # 更新策略表现
+        perf = self._performance_tracker[strategy_name]
+        perf.update(pnl, timestamp)
+
+        # 更新 MetaAgent PnL
+        if strategy_name in self._strategies:
+            self._strategies[strategy_name].update_performance(pnl)
+
+        # 更新进化统计
+        self._evolution_stats['total_feedback_count'] += 1
+
+        # 检查是否需要触发权重进化
+        if self._evolution_stats['total_feedback_count'] % \
+           self.evolution_config.weight_update_interval == 0:
+            self.evolve_weights()
 
     def evolve_weights(self) -> Dict[str, float]:
         """
@@ -633,8 +638,32 @@ class SelfEvolvingMetaAgent(MetaAgent):
             **self._evolution_stats,
             'current_learning_rate': self._current_learning_rate,
             'current_temperature': self._temperature,
-            'mechanism': self.evolution_config.mechanism.value
+            'mechanism': self.evolution_config.mechanism.name
         }
+
+    def _cleanup_old_trade_records(self):
+        """清理旧交易记录，防止内存无限增长 (内部方法)"""
+        if len(self._trade_history) <= self._max_trade_history:
+            return
+
+        # 保留最近的交易记录
+        sorted_trades = sorted(
+            self._trade_history.items(),
+            key=lambda x: x[1].timestamp,
+            reverse=True
+        )
+        keep_count = self._max_trade_history // 2  # 保留一半
+
+        # 重新构建trade_history
+        self._trade_history = dict(sorted_trades[:keep_count])
+
+        # 清理策略交易列表中的无效引用
+        valid_trade_ids = set(self._trade_history.keys())
+        for strategy_name in self._strategy_trades:
+            self._strategy_trades[strategy_name] = [
+                tid for tid in self._strategy_trades[strategy_name]
+                if tid in valid_trade_ids
+            ]
 
     def reset_evolution(self):
         """重置进化状态"""
@@ -663,7 +692,7 @@ class SelfEvolvingMetaAgent(MetaAgent):
             'performances': self.get_all_performances(),
             'evolution_stats': self.get_evolution_stats(),
             'evolution_config': {
-                'mechanism': self.evolution_config.mechanism.value,
+                'mechanism': self.evolution_config.mechanism.name,
                 'learning_rate': self.evolution_config.learning_rate,
                 'initial_temperature': self.evolution_config.initial_temperature
             },

@@ -13,7 +13,7 @@ import random
 from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from collections import defaultdict
+from collections import defaultdict, deque
 import copy
 
 
@@ -119,7 +119,7 @@ class AgentCivilization:
         self.market_prices: Dict[str, float] = defaultdict(float)
 
         self.generation = 0
-        self.history: List[Dict] = []
+        self.history: deque = deque(maxlen=500)  # 限制历史记录大小
 
         self._initialize_population()
 
