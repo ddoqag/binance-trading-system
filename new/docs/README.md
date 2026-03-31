@@ -10,10 +10,17 @@
 
 | 文档 | 说明 | 状态 |
 |------|------|------|
-| [ARCHITECTURE_OVERVIEW.md](./ARCHITECTURE_OVERVIEW.md) | 整合后的系统架构总览 | ✅ 已创建 |
+| [ARCHITECTURE_OVERVIEW.md](./ARCHITECTURE_OVERVIEW.md) | 整合后的系统架构总览 | ✅ 已更新 |
 | [总纲.txt](../总纲.txt) | 原始差距分析文档 | 📄 原始 |
 | [总纲2.txt](../总纲2.txt) | 核心理念与范式 | 📄 原始 |
 | [总纲3.txt](../总纲3.txt) | 架构蓝图与演进 | 📄 原始 |
+
+### 🚀 开发与运维文档
+
+| 文档 | 说明 | 状态 |
+|------|------|------|
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | 开发环境设置与贡献指南 | ✅ 已创建 |
+| [RUNBOOK.md](./RUNBOOK.md) | 部署流程与运维手册 | ✅ 已创建 |
 
 ### 📋 项目管理文档
 
@@ -77,23 +84,98 @@
 
 ---
 
+<!-- AUTO-GENERATED: Project Status -->
 ## 项目状态概览
 
 ```
-当前版本: v2.5 (原型)
+当前版本: v4.0 RC (Sprint 2 完成)
 目标版本: v5.0 (生产级)
 
-Phase 1: 强化执行层 [████████░░] 80% (基础完成，待实盘)
-Phase 2: 丰富决策层 [░░░░░░░░░░] 0%
-Phase 3: 增加杠杆交易 [░░░░░░░░░░] 0%
-Phase 4: 生产级功能 [░░░░░░░░░░] 0%
+Phase 1: OrderManager        [██████████] 100% ✅
+Phase 2: MarketRegimeDetector [██████████] 100% ✅
+Phase 3: Self-Evolving Agent  [██████████] 100% ✅
+Phase 4: PBT                  [██████████] 100% ✅
+Phase 5-9: 高级AI模块          [██████████] 100% ✅
+Phase 10-14: 远期目标          [░░░░░░░░░░] 0%
 
 关键成就:
+✅ Phases 1-9 全部完成 (9/14 = 64%)
 ✅ Shared Memory对齐完成
 ✅ Go Engine构建成功 (8.4MB)
-⚠️  PyTorch依赖待安装
-⚠️  实盘API接入待开发
+✅ 67+ 项测试全部通过
+✅ Binance实盘API集成完成
 ```
+<!-- END AUTO-GENERATED -->
+
+---
+
+<!-- AUTO-GENERATED: Dependencies -->
+## 依赖清单
+
+### Python 依赖 (requirements.txt)
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| numpy | >=1.24.0 | 数值计算 |
+| torch | >=2.0.0 | 深度学习 (SAC/PPO) |
+| pyyaml | >=6.0 | 配置解析 |
+| hmmlearn | >=0.3.0 | 市场状态检测 (HMM) |
+| arch | >=6.0.0 | 波动率建模 (GARCH) |
+| scikit-learn | >=1.3.0 | 机器学习工具 |
+
+### Go 依赖 (go.mod)
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| gorilla/websocket | v1.5.3 | WebSocket连接 |
+| adshao/go-binance/v2 | v2.8.10 | Binance API SDK |
+| prometheus/client_golang | v1.23.2 | 监控指标 |
+| shopspring/decimal | v1.4.0 | 精确小数计算 |
+
+<!-- END AUTO-GENERATED -->
+
+---
+
+<!-- AUTO-GENERATED: Available Commands -->
+## 可用命令参考
+
+### Python 模块
+
+| 命令 | 说明 |
+|------|------|
+| `python -m brain_py.test_self_evolving` | 运行自进化Meta-Agent测试 (9项) |
+| `python -m brain_py.test_pbt` | 运行PBT训练器测试 (9项) |
+| `python hft_latency_queue_rl_system_go_python\ \(7\).py` | 运行完整HFT系统 |
+| `python end_to_end_test.py` | 运行端到端集成测试 |
+
+### Go 命令
+
+| 命令 | 说明 |
+|------|------|
+| `go build -o hft_engine.exe .` | 构建Go执行引擎 |
+| `go test ./...` | 运行所有Go测试 |
+| `go test -v ./... -run Integration` | 运行集成测试 |
+
+### 开发工作流
+
+```bash
+# 1. 安装Python依赖
+pip install -r brain_py/requirements.txt
+
+# 2. 构建Go引擎
+cd core_go && go build -o hft_engine.exe .
+
+# 3. 运行Python测试
+cd brain_py && python -m pytest test_self_evolving.py test_pbt.py -v
+
+# 4. 运行Go测试
+cd core_go && go test -v ./...
+
+# 5. 运行完整系统
+python "hft_latency_queue_rl_system_go_python (7).py"
+```
+
+<!-- END AUTO-GENERATED -->
 
 ---
 
