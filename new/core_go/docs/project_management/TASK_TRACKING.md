@@ -60,12 +60,12 @@
 | Phase 1 | OrderManager | ✅ 100% | - | - |
 | Phase 2 | MarketRegimeDetector | ✅ 100% | - | - |
 | Phase 3 | Self-Evolving Meta-Agent | ✅ 100% | - | - |
-| Phase 4 | PBT | ❌ 0% | 策略种群训练 | P2 |
-| Phase 5 | Auto-Strategy Synthesis | ❌ 0% | 策略自我生成 | P3 |
-| Phase 6 | Self-Play Trading | ❌ 0% | 策略自博弈 | P3 |
-| Phase 7 | Real→Sim→Real | ❌ 0% | 实盘-仿真闭环 | P2 |
-| Phase 8 | World Model | ❌ 0% | 神经市场模型 | P3 |
-| Phase 9 | Agent Civilization | ❌ 0% | 策略社会进化 | P4 |
+| Phase 4 | PBT | ✅ 100% | - | - |
+| Phase 5 | Auto-Strategy Synthesis | ✅ 100% | - | - |
+| Phase 6 | Self-Play Trading | ✅ 100% | - | - |
+| Phase 7 | Real→Sim→Real | ✅ 100% | - | - |
+| Phase 8 | World Model | ✅ 100% | - | - |
+| Phase 9 | Agent Civilization | ✅ 100% | - | - |
 | Phase 10 | Autonomous Hedge Fund OS | ❌ 0% | 全自动对冲基金 | P4 |
 | Phase 11-14 | ... | ❌ 0% | 远期目标 | P5 |
 
