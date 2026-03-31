@@ -114,25 +114,41 @@ result := reconciler.Reconcile(ctx)
 
 ### P5-103: 订单恢复 (Order Recovery)
 
-**目标**: 系统崩溃后重建订单状态
+**状态**: ✅ 已完成
 
-**任务细节**:
-- [ ] 扩展 WAL 恢复逻辑
-  - 从 WAL 重放订单事件
-  - 重建订单状态机
-  - 恢复仓位信息
-- [ ] 实现 `recovery_manager.go`
-  - 启动时自动检查上次状态
-  - 查询交易所确认存活订单
-  - 合并 WAL 记录与交易所状态
-- [ ] 实现优雅关闭
-  - 关闭前创建 checkpoint
-  - 等待所有订单确认
+**实现文件**: `recovery_manager.go` (613 lines)
+
+**实现内容**:
+- ✅ `OrderRecoveryManager` 结构
+  - 启动时自动恢复 (`Recover`)
+  - 三种恢复策略：checkpoint → WAL → exchange
+  - 自动 checkpoint 创建 (默认 5 分钟间隔)
+- ✅ Checkpoint 系统
+  - JSON 格式状态快照
+  - 自动清理旧 checkpoint (保留最近 10 个)
+  - 优雅关闭时创建最终 checkpoint
+- ✅ 状态验证
+  - 恢复后与交易所对比验证
+  - 记录验证统计
+
+**关键代码**:
+```go
+recoveryManager := NewOrderRecoveryManager(executor, client, wal, nil)
+recoveryManager.Start() // 后台自动创建 checkpoint
+
+// 系统启动时恢复
+result, _ := recoveryManager.Recover(ctx)
+// result.Method: "checkpoint" | "wal" | "exchange"
+// result.OrdersRecovered: 恢复的订单数量
+```
+
+**提交**: `d3e8360`
 
 **验收标准**:
 ```go
 // 模拟崩溃后恢复
-recoveryManager.Recover(ctx)
+result := recoveryManager.Recover(ctx)
+// result.Success == true
 // 所有存活订单状态正确恢复
 ```
 
@@ -160,7 +176,7 @@ recoveryManager.Recover(ctx)
 
 | 阶段 | 名称 | 当前状态 | 进度 |
 |------|------|----------|------|
-| Phase 1 | OrderManager | 🚧 进行中 | 60% |
+| Phase 1 | OrderManager | 🚧 进行中 | 75% |
 | Phase 2 | MarketRegimeDetector | ✅ 已完成 | 100% |
 | Phase 3 | Self-Evolving Meta-Agent | ❌ 未开始 | 0% |
 | Phase 4 | PBT | ❌ 未开始 | 0% |
