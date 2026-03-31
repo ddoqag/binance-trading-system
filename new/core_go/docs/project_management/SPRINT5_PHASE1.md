@@ -154,21 +154,62 @@ result := recoveryManager.Recover(ctx)
 
 ---
 
-### P5-104: 订单超时处理
+### P5-104: 订单超时处理 (Order Timeout)
 
-**目标**: 未成交订单自动管理
+**状态**: ✅ 已完成
 
-**任务细节**:
-- [ ] 实现超时检测
-  - 限价单超时 (默认 5 分钟)
-  - 部分成交超时处理
-- [ ] 实现自动取消策略
-  - 超时自动撤单
-  - 可配置超时时间
-  - 撤单失败时重试
-- [ ] 集成到订单状态机
-  - Timeout 事件处理
-  - 超时统计记录
+**实现文件**: `timeout_manager.go` (513 lines)
+
+**实现内容**:
+- ✅ `TimeoutManager` 结构
+  - 定时超时检测 (默认 10 秒间隔)
+  - 自动取消超时订单 (带重试)
+  - 动态超时配置更新
+- ✅ 超时策略
+  - 限价单超时: 5 分钟
+  - 部分成交超时: 10 分钟
+  - 区分未成交和部分成交的不同处理
+- ✅ 取消重试机制
+  - 最大 3 次重试
+  - 指数退避延迟
+  - 重试成功统计
+- ✅ 统计和日志
+  - 超时订单统计
+  - WAL 记录取消事件
+  - 取消失败追踪
+
+**关键代码**:
+```go
+timeoutManager := NewTimeoutManager(executor, client, wal, nil)
+timeoutManager.Start() // 后台自动检测和取消
+
+// 手动检查超时
+result, _ := timeoutManager.ForceCheck(ctx)
+// result.TimedOut: 超时订单列表
+// result.Cancelled: 成功取消数量
+
+// 动态更新超时时间
+timeoutManager.UpdateTimeouts(3*time.Minute, 5*time.Minute)
+```
+
+**提交**: `24d54cf`
+
+**验收标准**:
+```go
+// 创建 10 秒超时的测试配置
+config := &TimeoutConfig{
+    LimitOrderTimeout:  10 * time.Second,
+    CheckInterval:      2 * time.Second,
+    AutoCancel:         true,
+}
+tm := NewTimeoutManager(executor, client, wal, config)
+tm.Start()
+
+// 等待超时后检查
+result := tm.ForceCheck(ctx)
+// result.TimedOut 应该包含超时订单
+// 订单状态应该变为 Cancelled
+```
 
 ---
 
@@ -176,7 +217,7 @@ result := recoveryManager.Recover(ctx)
 
 | 阶段 | 名称 | 当前状态 | 进度 |
 |------|------|----------|------|
-| Phase 1 | OrderManager | 🚧 进行中 | 75% |
+| Phase 1 | OrderManager | ✅ 已完成 | 100% |
 | Phase 2 | MarketRegimeDetector | ✅ 已完成 | 100% |
 | Phase 3 | Self-Evolving Meta-Agent | ❌ 未开始 | 0% |
 | Phase 4 | PBT | ❌ 未开始 | 0% |
