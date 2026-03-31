@@ -68,20 +68,40 @@ manager.Start() // 自动重连，后台运行
 
 ### P5-102: 订单对账机制 (Order Reconciliation)
 
-**目标**: 确保本地订单状态与交易所一致
+**状态**: ✅ 已完成
 
-**任务细节**:
-- [ ] 实现 `reconciler.go`
-  - 定期查询未成交订单状态 (GET /api/v3/openOrders)
-  - 比对本地订单与交易所订单
-  - 检测不一致并修复
-- [ ] 实现差异检测逻辑
-  - 本地有、交易所无 → 订单可能已成交/取消
-  - 本地无、交易所有 → 漏单，需要同步
-  - 状态不一致 → 以交易所为准更新
-- [ ] 集成到主引擎
-  - 每 30 秒自动对账
-  - 对账失败时告警
+**实现文件**: `reconciler.go` (544 lines)
+
+**实现内容**:
+- ✅ `Reconciler` 结构
+  - 定时对账 (默认 30s)
+  - 手动对账 (`ForceReconcile`)
+  - 自动修复模式 (`autoRepair`)
+  - 统计指标 (`ReconcilerStats`)
+- ✅ 差异检测
+  - 状态不匹配 (`OrderMismatch`)
+  - 漏单检测 (`MissingOrder`)
+  - 孤儿订单 (`OrphanOrder`)
+- ✅ 自动修复
+  - 状态同步：以交易所为准
+  - 漏单导入：自动添加到本地
+  - 孤儿订单：查询交易所确认状态
+- ✅ 集成
+  - 与 `OrderExecutor` 集成
+  - 使用 `LiveAPIClient` 查询
+  - WAL 记录所有修复操作
+
+**关键代码**:
+```go
+reconciler := NewReconciler(executor, client, wal, nil)
+reconciler.Start() // 后台定时对账
+
+// 手动对账
+result, _ := reconciler.ForceReconcile(ctx)
+// result.Mismatches, result.Missing, result.Orphans
+```
+
+**提交**: `e2cd4ce`
 
 **验收标准**:
 ```go
