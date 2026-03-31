@@ -1,0 +1,165 @@
+# Alertmanager 配置文件
+# 用于路由和通知 HFT 交易系统的告警
+
+global:
+  # 默认通知间隔
+  resolve_timeout: 5m
+  # Slack API URL (需要替换为实际值)
+  # slack_api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+  # SMTP 配置 (需要替换为实际值)
+  # smtp_smarthost: 'smtp.gmail.com:587'
+  # smtp_from: 'alerts@your-hft-system.com'
+  # smtp_auth_username: 'your-email@gmail.com'
+  # smtp_auth_password: 'your-app-password'
+
+# 告警路由配置
+route:
+  # 根路由 - 默认接收者
+  receiver: 'default'
+  group_by: ['alertname', 'severity', 'category']
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 4h
+
+  routes:
+    # 关键级别告警 - 立即通知
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 0s
+      repeat_interval: 5m
+      continue: true
+
+    # 系统相关告警
+    - match:
+        category: system
+      receiver: 'system-team'
+      group_by: ['alertname', 'component']
+      continue: true
+
+    # 风控相关告警
+    - match:
+        category: risk
+      receiver: 'risk-team'
+      group_wait: 5s
+      continue: true
+
+    # 交易相关告警
+    - match:
+        category: trading
+      receiver: 'trading-team'
+      continue: true
+
+    # 连接相关告警
+    - match:
+        category: connection
+      receiver: 'infra-team'
+      continue: true
+
+    # 恢复相关告警
+    - match:
+        category: recovery
+      receiver: 'system-team'
+      continue: true
+
+    # 预测系统告警
+    - match:
+        category: prediction
+      receiver: 'ml-team'
+      continue: true
+
+    # A/B 测试告警
+    - match:
+        category: ab_test
+      receiver: 'ml-team'
+      continue: true
+
+# 抑制规则 - 避免重复告警
+inhibit_rules:
+  # 高严重级别抑制低严重级别
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'category']
+
+  # 系统紧急状态抑制其他系统告警
+  - source_match:
+      alertname: 'HFTSystemEmergency'
+    target_match:
+      category: 'system'
+    equal: []
+
+  # 熔断器开启抑制同一组件的其他告警
+  - source_match:
+      alertname: 'CircuitBreakerOpen'
+    target_match:
+      category: 'trading'
+    equal: ['component']
+
+# 接收者配置
+receivers:
+  # 默认接收者
+  - name: 'default'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/webhook'
+        send_resolved: true
+
+  # 关键告警接收者
+  - name: 'critical-alerts'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/critical'
+        send_resolved: true
+    # 可以添加多个通知渠道
+    # slack_configs:
+    #   - channel: '#hft-critical-alerts'
+    #     title: 'HFT 系统关键告警'
+    #     text: '{{ range .Alerts }}{{ .Annotations.summary }}\n{{ .Annotations.description }}\n{{ end }}'
+    # pagerduty_configs:
+    #   - service_key: '<your-pagerduty-service-key>'
+    #     description: '{{ .GroupLabels.alertname }}'
+
+  # 系统团队接收者
+  - name: 'system-team'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/system'
+        send_resolved: true
+
+  # 风控团队接收者
+  - name: 'risk-team'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/risk'
+        send_resolved: true
+    # email_configs:
+    #   - to: 'risk-team@your-company.com'
+    #     subject: 'HFT 风控告警: {{ .GroupLabels.alertname }}'
+    #     body: |
+    #       {{ range .Alerts }}
+    #       告警: {{ .Annotations.summary }}
+    #       描述: {{ .Annotations.description }}
+    #       时间: {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+    #       严重程度: {{ .Labels.severity }}
+    #       类别: {{ .Labels.category }}
+    #       {{ end }}
+
+  # 交易团队接收者
+  - name: 'trading-team'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/trading'
+        send_resolved: true
+
+  # 基础设施团队接收者
+  - name: 'infra-team'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/infra'
+        send_resolved: true
+
+  # 机器学习团队接收者
+  - name: 'ml-team'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/ml'
+        send_resolved: true
+
+# 告警模板配置
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'

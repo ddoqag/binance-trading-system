@@ -1,0 +1,331 @@
+groups:
+  - name: hft_trading_alerts
+    interval: 10s
+    rules:
+      # ========== 系统健康告警 ==========
+      - alert: HFTSystemDegraded
+        expr: hft_engine_degrade_level > 0
+        for: 30s
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "HFT系统降级"
+          description: "系统降级级别: {{ $value }} (0=正常, 1=谨慎, 2=受限, 3=紧急)"
+
+      - alert: HFTSystemEmergency
+        expr: hft_engine_degrade_level == 3
+        for: 10s
+        labels:
+          severity: critical
+          category: system
+        annotations:
+          summary: "HFT系统紧急状态"
+          description: "系统处于紧急降级状态，所有交易已暂停"
+
+      - alert: ComponentUnhealthy
+        expr: hft_engine_component_health > 2
+        for: 20s
+        labels:
+          severity: warning
+          category: system
+        annotations:
+          summary: "组件不健康: {{ $labels.component }}"
+          description: "组件状态: {{ $value }} (0=未知, 1=健康, 2=降级, 3=不健康, 4=失败)"
+
+      - alert: ComponentFailed
+        expr: hft_engine_component_health == 4
+        for: 10s
+        labels:
+          severity: critical
+          category: system
+        annotations:
+          summary: "组件故障: {{ $labels.component }}"
+          description: "组件 {{ $labels.component }} 已失败，需要立即处理"
+
+      # ========== 风控告警 ==========
+      - alert: DailyDrawdownHigh
+        expr: hft_engine_daily_drawdown > 0.03
+        for: 5s
+        labels:
+          severity: warning
+          category: risk
+        annotations:
+          summary: "日回撤过高"
+          description: "日回撤达到 {{ $value | humanizePercentage }}，超过 3% 阈值"
+
+      - alert: DailyDrawdownCritical
+        expr: hft_engine_daily_drawdown > 0.05
+        for: 5s
+        labels:
+          severity: critical
+          category: risk
+        annotations:
+          summary: "日回撤临界"
+          description: "日回撤达到 {{ $value | humanizePercentage }}，超过 5% 限制，建议暂停交易"
+
+      - alert: MaxDrawdownExceeded
+        expr: hft_engine_max_drawdown > 0.15
+        for: 5s
+        labels:
+          severity: critical
+          category: risk
+        annotations:
+          summary: "最大回撤超限"
+          description: "最大回撤 {{ $value | humanizePercentage }} 超过 15% 限制"
+
+      - alert: MarginUsageHigh
+        expr: hft_engine_margin_usage_ratio > 0.7
+        for: 10s
+        labels:
+          severity: warning
+          category: risk
+        annotations:
+          summary: "保证金使用率过高"
+          description: "保证金使用率 {{ $value | humanizePercentage }}，建议降低仓位"
+
+      - alert: MarginUsageCritical
+        expr: hft_engine_margin_usage_ratio > 0.85
+        for: 5s
+        labels:
+          severity: critical
+          category: risk
+        annotations:
+          summary: "保证金使用率临界"
+          description: "保证金使用率 {{ $value | humanizePercentage }}，存在爆仓风险"
+
+      - alert: LeverageHigh
+        expr: hft_engine_leverage > 5
+        for: 10s
+        labels:
+          severity: warning
+          category: risk
+        annotations:
+          summary: "杠杆倍数过高"
+          description: "当前杠杆 {{ $value }}x，建议降低"
+
+      - alert: UnrealizedPnLLargeLoss
+        expr: hft_engine_unrealized_pnl < -500
+        for: 30s
+        labels:
+          severity: warning
+          category: risk
+        annotations:
+          summary: "大额未实现亏损: {{ $labels.symbol }}"
+          description: "{{ $labels.symbol }} 未实现亏损 ${{ $value }}"
+
+      # ========== 交易告警 ==========
+      - alert: OrderRejectionRateHigh
+        expr: |
+          (
+            sum(rate(hft_engine_orders_total{status="REJECTED"}[5m]))
+            /
+            sum(rate(hft_engine_orders_total[5m]))
+          ) > 0.1
+        for: 30s
+        labels:
+          severity: warning
+          category: trading
+        annotations:
+          summary: "订单拒绝率过高"
+          description: "过去5分钟订单拒绝率超过 10%"
+
+      - alert: OrderLatencyHigh
+        expr: histogram_quantile(0.99, rate(hft_engine_order_latency_seconds_bucket[5m])) > 0.1
+        for: 20s
+        labels:
+          severity: warning
+          category: trading
+        annotations:
+          summary: "订单延迟过高"
+          description: "P99 订单延迟 {{ $value }}s，超过 100ms"
+
+      - alert: FillLatencyHigh
+        expr: histogram_quantile(0.99, rate(hft_engine_fill_latency_seconds_bucket[5m])) > 0.5
+        for: 20s
+        labels:
+          severity: warning
+          category: trading
+        annotations:
+          summary: "成交延迟过高"
+          description: "P99 成交延迟 {{ $value }}s，超过 500ms"
+
+      - alert: NoOrdersInLast5Minutes
+        expr: sum(rate(hft_engine_orders_total[5m])) == 0
+        for: 5m
+        labels:
+          severity: info
+          category: trading
+        annotations:
+          summary: "5分钟内无订单"
+          description: "系统过去5分钟没有产生任何订单"
+
+      # ========== API/WebSocket 告警 ==========
+      - alert: WebSocketDisconnected
+        expr: hft_engine_websocket_connected == 0
+        for: 5s
+        labels:
+          severity: critical
+          category: connection
+        annotations:
+          summary: "WebSocket 断开连接"
+          description: "WebSocket 连接已断开，无法接收实时数据"
+
+      - alert: APIErrorRateHigh
+        expr: |
+          (
+            sum(rate(hft_engine_api_errors_total[5m]))
+            /
+            sum(rate(hft_engine_api_requests_total[5m]))
+          ) > 0.05
+        for: 30s
+        labels:
+          severity: warning
+          category: connection
+        annotations:
+          summary: "API 错误率过高"
+          description: "API 错误率超过 5%"
+
+      - alert: APILatencyHigh
+        expr: histogram_quantile(0.95, rate(hft_engine_api_latency_seconds_bucket[5m])) > 0.5
+        for: 20s
+        labels:
+          severity: warning
+          category: connection
+        annotations:
+          summary: "API 延迟过高"
+          description: "P95 API 延迟 {{ $value }}s"
+
+      # ========== 恢复相关告警 ==========
+      - alert: RecoveryFailure
+        expr: increase(hft_engine_recovery_attempts_total[5m]) > increase(hft_engine_recovery_success_total[5m])
+        for: 1m
+        labels:
+          severity: warning
+          category: recovery
+        annotations:
+          summary: "组件恢复失败"
+          description: "{{ $labels.component }} 恢复尝试失败，策略: {{ $labels.strategy }}"
+
+      - alert: CircuitBreakerOpen
+        expr: hft_engine_circuit_breaker_state == 1
+        for: 10s
+        labels:
+          severity: warning
+          category: recovery
+        annotations:
+          summary: "熔断器开启: {{ $labels.name }}"
+          description: "{{ $labels.name }} 熔断器已开启，请求被阻断"
+
+      # ========== 系统资源告警 ==========
+      - alert: MemoryUsageHigh
+        expr: hft_engine_memory_usage_bytes > 1073741824
+        for: 30s
+        labels:
+          severity: warning
+          category: resource
+        annotations:
+          summary: "内存使用过高"
+          description: "内存使用 {{ $value | humanize1024 }}B，超过 1GB"
+
+      - alert: GoroutinesHigh
+        expr: hft_engine_goroutines > 500
+        for: 1m
+        labels:
+          severity: info
+          category: resource
+        annotations:
+          summary: "Goroutine 数量过多"
+          description: "当前 Goroutine 数量: {{ $value }}"
+
+      - alert: GCPauseLong
+        expr: hft_engine_gc_pause_ns > 100000000
+        for: 30s
+        labels:
+          severity: warning
+          category: resource
+        annotations:
+          summary: "GC 暂停时间过长"
+          description: "GC 暂停 {{ $value }}ns，超过 100ms"
+
+  - name: hft_prediction_alerts
+    interval: 30s
+    rules:
+      # ========== 预测系统告警 ==========
+      - alert: PredictionLatencyHigh
+        expr: histogram_quantile(0.99, rate(hft_engine_prediction_latency_seconds_bucket[5m])) > 0.001
+        for: 30s
+        labels:
+          severity: warning
+          category: prediction
+        annotations:
+          summary: "预测延迟过高"
+          description: "P99 预测延迟 {{ $value }}s，超过 1ms"
+
+      - alert: ModelLoadFailure
+        expr: increase(hft_engine_model_load_failures_total[5m]) > 0
+        for: 10s
+        labels:
+          severity: critical
+          category: prediction
+        annotations:
+          summary: "模型加载失败"
+          description: "模型 {{ $labels.model }} 加载失败"
+
+      - alert: ABTestImbalance
+        expr: |
+          (
+            abs(
+              sum(hft_engine_ab_test_requests_total{variant="a"})
+              -
+              sum(hft_engine_ab_test_requests_total{variant="b"})
+            )
+            /
+            sum(hft_engine_ab_test_requests_total)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: info
+          category: ab_test
+        annotations:
+          summary: "A/B 测试流量不均衡"
+          description: "A/B 测试流量分配差异超过 20%"
+
+  - name: hft_business_alerts
+    interval: 1m
+    rules:
+      # ========== 业务指标告警 ==========
+      - alert: TradingVolumeSpike
+        expr: |
+          (
+            sum(rate(hft_engine_trade_volume[5m]))
+            /
+            avg_over_time(sum(rate(hft_engine_trade_volume[1h]))[1h:5m])
+          ) > 3
+        for: 2m
+        labels:
+          severity: info
+          category: business
+        annotations:
+          summary: "交易量激增"
+          description: "当前交易量是过去1小时平均的 {{ $value }} 倍"
+
+      - alert: VolatilitySpike
+        expr: hft_engine_volatility > 0.05
+        for: 1m
+        labels:
+          severity: info
+          category: business
+        annotations:
+          summary: "波动率激增: {{ $labels.symbol }}"
+          description: "{{ $labels.symbol }} 波动率达到 {{ $value }}"
+
+      - alert: SpreadWide
+        expr: hft_engine_spread > 10
+        for: 30s
+        labels:
+          severity: warning
+          category: business
+        annotations:
+          summary: "价差扩大: {{ $labels.symbol }}"
+          description: "{{ $labels.symbol }} 价差 {{ $value }} USDT"

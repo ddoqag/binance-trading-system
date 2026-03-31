@@ -1,0 +1,64 @@
+# Prometheus 配置文件
+# HFT 交易系统监控
+
+global:
+  scrape_interval: 5s      # 默认抓取间隔
+  evaluation_interval: 10s  # 规则评估间隔
+  external_labels:
+    cluster: 'hft-production'
+    replica: '{{.ExternalURL}}'
+
+# 告警规则文件
+rule_files:
+  - 'alert_rules.yml'
+
+# 抓取配置
+scrape_configs:
+  # HFT Go 引擎指标
+  - job_name: 'hft-engine'
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'hft-engine'
+          env: 'production'
+
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9091']
+        labels:
+          service: 'prometheus'
+
+  # Node Exporter (系统指标)
+  - job_name: 'node-exporter'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9100']
+        labels:
+          service: 'node'
+
+  # Grafana 监控
+  - job_name: 'grafana'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:3000']
+        labels:
+          service: 'grafana'
+
+  # Alertmanager 监控
+  - job_name: 'alertmanager'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9093']
+        labels:
+          service: 'alertmanager'
+
+# Alertmanager 配置
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['localhost:9093']
+      timeout: 10s
+      api_version: v2
