@@ -33,28 +33,36 @@
 
 ### P5-101: WebSocket 用户数据流 (User Data Stream)
 
-**目标**: 实现币安 WebSocket 用户数据流监听
+**状态**: ✅ 已完成
 
-**任务细节**:
-- [ ] 实现 `user_data_stream.go`
-  - 订阅账户更新 (balance, position)
-  - 订阅订单更新 (executionReport)
-  - 订阅成交更新 (trade)
-- [ ] 实现 ListenKey 管理
-  - 获取 ListenKey (POST /api/v3/userDataStream)
-  - 定时续期 (PUT, 每30分钟)
-  - 异常时重新获取
-- [ ] 集成到 WebSocket 管理器
-  - 支持多路复用 (市场数据 + 用户数据)
-  - 独立重连机制
+**实现文件**: `user_data_stream.go` (294 lines)
 
-**验收标准**:
+**实现内容**:
+- ✅ `UserDataStreamManager` 结构
+  - 订单 FSM 注册/注销 (`RegisterOrderFSM` / `UnregisterOrderFSM`)
+  - 事件处理器设置 (`SetHandlers`)
+  - 自动重连机制 (`connectionManager`)
+- ✅ ListenKey 管理 (复用 `LiveAPIClient`)
+  - 自动续期 (30分钟间隔)
+  - 异常时指数退避重连 (5s → 60s)
+- ✅ 事件路由
+  - 订单更新 → OrderFSM 状态转换
+  - 余额更新 → 用户回调
+  - Binance 状态映射到 OrderState
+
+**关键代码**:
 ```go
-// 可以实时接收订单状态变更
-ws.SubscribeUserData(func(event *OrderUpdateEvent) {
-    orderFSM.HandleEvent(event)
-})
+manager := NewUserDataStreamManager(client, nil)
+manager.RegisterOrderFSM(orderID, fsm)
+manager.SetHandlers(
+    func(update *OrderUpdate) { /* handle order */ },
+    func(update *BalanceUpdate) { /* handle balance */ },
+    func(err error) { /* handle error */ },
+)
+manager.Start() // 自动重连，后台运行
 ```
+
+**提交**: `17152f1`
 
 ---
 
