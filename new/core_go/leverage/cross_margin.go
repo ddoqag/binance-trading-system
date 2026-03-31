@@ -119,7 +119,7 @@ func (cma *CrossMarginAccount) OpenPosition(params OrderParams) (*LeveragedPosit
 		Margin:          requiredMargin,
 		Status:          PositionOpen,
 		MaintenanceRate: cma.maintenanceRate,
-		OpenedAt:        time.Now(),
+		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
 

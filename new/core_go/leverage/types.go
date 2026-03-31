@@ -116,7 +116,11 @@ type LeveragedPosition struct {
 	LiquidationPrice  float64 `json:"-"`  // 强平价格
 	MarginRatio       float64 `json:"-"`  // 保证金率
 	MaintenanceRate   float64 `json:"-"`  // 维持保证金率
-	OpenedAt          time.Time `json:"-"` // 开仓时间（兼容字段）
+}
+
+// OpenedAt 返回仓位开仓时间（与 CreatedAt 相同，用于兼容）
+func (p *LeveragedPosition) OpenedAt() time.Time {
+	return p.CreatedAt
 }
 
 // PositionUpdate 仓位更新

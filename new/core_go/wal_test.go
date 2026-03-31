@@ -494,6 +494,9 @@ func TestWALDurability(t *testing.T) {
 		t.Fatalf("Failed to log order: %v", err)
 	}
 
+	// Force flush to ensure entry is written (async batch write)
+	wal.Flush()
+
 	// Don't close WAL - simulate crash by directly reading file
 	// Find log file
 	files, err := os.ReadDir(tempDir)

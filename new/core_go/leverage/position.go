@@ -103,7 +103,7 @@ func (pm *PositionManager) OpenPosition(params OrderParams) (*LeveragedPosition,
 		Margin:          margin,
 		Status:          PositionOpen,
 		MaintenanceRate: 0.005, // 默认0.5%维持保证金率
-		OpenedAt:        time.Now(),
+		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
 	}
 
