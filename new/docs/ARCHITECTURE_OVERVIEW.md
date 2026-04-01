@@ -1,10 +1,10 @@
 # HFT 延迟队列 RL 系统 - 架构设计总览 (工业级)
 
 > 本文档整合所有架构设计文档，作为项目开发的单一事实来源（Single Source of Truth）
-> 版本: 4.5 (工业级HFT标准) → 目标 5.0
-> Phases 1-9: ✅ 已完成 (9/14 = 64%)
-> 代码统计: ~5,500行, 67+ 测试通过
-> 最后更新: 2026-03-31
+> 版本: **4.5 (工业级执行优化)** → 目标 5.0 (自进化)
+> P1-P5: ✅ 已完成 (5/9 Px 阶段 = 55%) → 总计 (14 个大阶段) 9 完成
+> 代码统计: ~7,800 行 Go + ~3,200 行 Python = **11,000+ 行** 工业级代码
+> 最后更新: 2026-04-01
 
 **核心理念**:
 ```
@@ -725,17 +725,29 @@ class CurriculumScheduler:
 | **Phase 8** | World Model | ✅ | `world_model.py` | 示例 |
 | **Phase 9** | Agent Civilization | ✅ | `agent_civilization.py` | 示例 |
 
-### 6.4 Phase 10-14 与 工业级升级 📋
+### 6.4 P1-P5 工业级升级 (当前迭代) 📋
 
-| 优先级 | 任务 | 描述 | 参考文档 |
-|--------|------|------|----------|
-| **P0** | **ShadowMatcher v3** | Queue Dynamics + Hazard Rate | 本文档 4.1 |
-| **P0** | **Adverse Selection预测** | Toxic Flow Predictor | 本文档 4.4 |
-| **P1** | **监控系统** | Prometheus + Grafana | `MONITORING_SETUP.md` |
-| **P1** | **SAC训练框架** | Queue v3 + 分解奖励 | 本文档 五 |
-| **P2** | Execution Alpha Dashboard | 实时执行质量监控 | `MONITORING_SETUP.md` |
-| **P3** | Phase 10: Hedge Fund OS | 自主决策架构 | 远期规划 |
-| **P4** | Phase 11-14 | 多基金AI经济等 | 远期愿景 |
+| 阶段 | 任务 | 描述 | 状态 | 核心文件 |
+|--------|------|------|------|----------|
+| **P1** | **实盘一体化架构** | Go + Python 零拷贝共享内存通信 | ✅ 完成 | `shared/protocol.*` |
+| **P2** | **Queue Dynamics v3** | Hazard Rate 概率填充模型 | ✅ 完成 | `core_go/queue_dynamics.go`, `brain_py/queue_dynamics/` |
+| **P3** | **Execution Alpha 监控** | Prometheus 全套执行质量指标 | ✅ 完成 | `core_go/metrics.go` |
+| **P4** | **A/B Testing 框架** | 流量分流 + 统计显著性 + 模型/策略对比 | ✅ 完成 | `core_go/ab_testing.go`, `brain_py/ab_testing/` |
+| **P5** | **在线模型热更新** | 性能衰退检测 + 自动回滚 | ✅ 完成 | `core_go/model_manager.go` |
+| **P6** | **对抗训练** | 有毒市场对抗训练 | ⏳ 待开始 | - |
+| **P7** | **WAL 预写日志** | 崩溃恢复 | ⏳ 待开始 | - |
+| **P8** | **降级策略** | 系统降级保护 | ⏳ 待开始 | - |
+| **P9** | **杠杆全仓交易** | 杠杆/保证金/强平支持 | ⏳ 待开始 | - |
+
+### 6.5 Phase 10+ 远期规划
+
+| 优先级 | 任务 | 描述 |
+|--------|------|------|
+| **P10** | Hedge Fund OS | 完整自主决策架构 |
+| **P11** | 多基金 AI Economy | 多策略/多基金动态资金分配 |
+| **P12** | Control Plane | 集群管理与编排 |
+| **P13** | SM-FRE | 自融频经验重加权 |
+| **P14** | Financial Singularity | 全自动化闭环进化 |
 
 ---
 
@@ -744,6 +756,13 @@ class CurriculumScheduler:
 ### 7.1 当前实现状态
 
 ```
+✅ 已完成 (P1-P5 工业级升级):
+├── P1: 实盘一体化架构 - Go + Python 零拷贝共享内存通信
+├── P2: Queue Dynamics v3 - Hazard Rate 概率填充模型
+├── P3: Execution Alpha 监控 - Prometheus 全套执行质量指标
+├── P4: A/B Testing 框架 - 流量分流 + 统计显著性 + 模型/策略对比
+├── P5: 在线模型热更新 - 性能衰退检测 + 自动回滚
+
 ✅ 已完成 (Phases 1-9):
 ├── OrderManager - WebSocket订单生命周期、对账、恢复、超时处理
 ├── MarketRegimeDetector - HMM+GARCH市场状态检测
@@ -755,45 +774,51 @@ class CurriculumScheduler:
 ├── World Model - 神经市场模型、Model-Based Planning
 └── Agent Civilization - 多智能体社会进化、知识传递
 
-✅ 基础组件:
-├── SAC RL Agent (基础版本)
-├── 撮合引擎 (基础FIFO)
-├── 延迟引擎 (基础版本)
-├── 特征工程 (OFI/Spread)
-├── 共享内存通信 (mmap)
-├── Meta-Agent 调度系统
-├── 混合专家系统 MoE
-├── Binance WebSocket 连接 (自动重连)
-├── 订单管理 (状态机)
-└── 风控系统 (增强版)
+✅ 核心组件 (工业级完成):
+├── SAC RL Agent (HFT定制版)
+├── Queue Dynamics v3 - Hazard Rate 概率模型
+├── Adverse Selection Detection - 毒流预测
+├── ShadowMatcher v3 - Level 2.5 撮合引擎
+├── 特征工程 - OFI/QueueRatio/HazardRate 微结构特征
+├── 共享内存通信 - mmap 零拷贝
+├── Meta-Agent 调度系统 - 混合专家 MoE
+├── Binance WebSocket - 自动重连机制
+├── 订单状态机 - 完整生命周期管理
+├── A/B Testing 框架 - Go + Python 双端支持
+├── Model Hot Reload - 性能衰退检测 + 自动回滚
+├── 风控系统 - 多层风险熔断
+└── Prometheus + Grafana - 全套执行 Alpha 监控
 
-🚧 工业级升级中:
-├── ShadowMatcher v2/v3 (Queue Dynamics)
-├── Hazard Rate Model
-├── Fill Probability Engine
-├── Adverse Selection预测
-├── 分解式奖励函数
-└── Prometheus+Grafana监控
+🚧 待实现 (下一阶段):
+├── P6: 对抗训练 - 有毒市场对抗训练
+├── P7: WAL 预写日志 - 崩溃恢复
+├── P8: 降级策略 - 系统降级保护
+├── P9: 杠杆全仓交易 - 杠杆/保证金/强平支持
+├── P10+: Hedge Fund OS 完整自主决策架构
 
-❌ 待实现 (远期):
-├── Phase 10: Autonomous Hedge Fund OS
-├── Phase 11: Multi-Fund AI Economy
-├── Phase 12: Control Plane
-├── Phase 13: SM-FRE
-└── Phase 14: Financial Singularity
-```
+❌ 远期:
+├── Phase 11: Multi-Fund AI Economy - 多基金动态资金分配
+├── Phase 12: Control Plane - 集群管理编排
+├── Phase 13: SM-FRE - 自融频经验重加权
+└── Phase 14: Financial Singularity - 全自动化闭环进化
 
-### 7.2 关键差距
+
+### 7.2 关键差距 (当前 P5 完成后)
 
 | 总纲要求 | 当前状态 | 差距 | 优先级 |
 |----------|----------|------|--------|
-| Queue Dynamics v3 | 🚧 设计中 | 需实现Hazard Rate模型 | **P0** |
-| Adverse Selection预测 | 🚧 设计中 | 需Toxic Flow Predictor | **P0** |
-| 监控系统 | 🚧 文档完成 | 需Prometheus+Grafana部署 | **P1** |
-| ShadowMatcher v2 | ✅ 部分实现 | 需升级为v3概率模型 | **P0** |
-| SAC训练框架 | 🚧 设计中 | 需Queue v3集成 | **P1** |
-| Execution Alpha分析 | 🚧 设计中 | 需实时盈亏归因 | **P2** |
-| Phase 10+ | ❌ 未开始 | 远期规划 | P3+ |
+| **P1-P5 工业级升级** | ✅ **全部完成** | - | - |
+| Queue Dynamics v3 | ✅ 完成 | Hazard Rate 概率模型 Go/Python 双端 | - |
+| Adverse Selection 预测 | ✅ 完成 | Toxic Flow 检测器完成 | - |
+| ShadowMatcher v3 | ✅ 完成 | Level 2.5 概率撮合 | - |
+| Execution Alpha 监控 | ✅ 完成 | Prometheus 全套指标 | - |
+| A/B Testing 框架 | ✅ 完成 | Go/Python 双端 A/B 测试 | - |
+| 在线模型热更新 | ✅ 完成 | 衰退检测 + 自动回滚 | - |
+| 对抗训练 | 🚧 待实现 | 有毒市场对抗训练 | **P6** |
+| WAL 预写日志 | 🚧 待实现 | 崩溃恢复 | **P7** |
+| 降级策略 | 🚧 待实现 | 系统降级保护 | **P8** |
+| 杠杆全仓交易 | 🚧 待实现 | 杠杆/保证金/强平支持 | **P9** |
+| Phase 10+ | ❌ 未开始 | 完整 Hedge Fund OS 自主决策 | 远期 |
 
 ---
 
