@@ -73,8 +73,8 @@ type ModelPerformance struct {
 	P99Latency       time.Duration
 }
 
-// ABTestConfig holds A/B testing configuration
-type ABTestConfig struct {
+// ModelABTestConfig holds A/B testing configuration for models
+type ModelABTestConfig struct {
 	Enabled     bool
 	VariantA    string  // Model ID for variant A
 	VariantB    string  // Model ID for variant B
@@ -84,8 +84,8 @@ type ABTestConfig struct {
 	Description string
 }
 
-// ABTestResult tracks A/B test metrics
-type ABTestResult struct {
+// ModelABTestResult tracks A/B test metrics for models
+type ModelABTestResult struct {
 	Variant           string
 	Requests          uint64
 	Errors            uint64
@@ -124,8 +124,8 @@ type ModelManager struct {
 	mu        sync.RWMutex
 
 	// A/B testing
-	abTest    *ABTestConfig
-	abResults map[string]*ABTestResult
+	abTest    *ModelABTestConfig
+	abResults map[string]*ModelABTestResult
 	abMu      sync.RWMutex
 
 	// File watching
@@ -156,7 +156,7 @@ func NewModelManager(config *ModelConfig) (*ModelManager, error) {
 	mm := &ModelManager{
 		config:     config,
 		models:     make(map[string]*ModelVersion),
-		abResults:  make(map[string]*ABTestResult),
+		abResults:  make(map[string]*ModelABTestResult),
 		watchStop:  make(chan struct{}),
 		healthStop: make(chan struct{}),
 	}
@@ -502,7 +502,7 @@ func (mm *ModelManager) RecordPrediction(versionID string, latency time.Duration
 }
 
 // StartABTest starts an A/B test between two model versions
-func (mm *ModelManager) StartABTest(config *ABTestConfig) error {
+func (mm *ModelManager) StartABTest(config *ModelABTestConfig) error {
 	if config == nil || !config.Enabled {
 		return fmt.Errorf("invalid A/B test config")
 	}
@@ -524,8 +524,8 @@ func (mm *ModelManager) StartABTest(config *ABTestConfig) error {
 	}
 
 	mm.abTest = config
-	mm.abResults[config.VariantA] = &ABTestResult{Variant: "A"}
-	mm.abResults[config.VariantB] = &ABTestResult{Variant: "B"}
+	mm.abResults[config.VariantA] = &ModelABTestResult{Variant: "A"}
+	mm.abResults[config.VariantB] = &ModelABTestResult{Variant: "B"}
 
 	log.Printf("[ModelManager] Started A/B test: %s vs %s (split: %.2f)",
 		config.VariantA, config.VariantB, config.SplitRatio)
@@ -534,7 +534,7 @@ func (mm *ModelManager) StartABTest(config *ABTestConfig) error {
 }
 
 // StopABTest stops the current A/B test
-func (mm *ModelManager) StopABTest() *ABTestConfig {
+func (mm *ModelManager) StopABTest() *ModelABTestConfig {
 	mm.abMu.Lock()
 	defer mm.abMu.Unlock()
 
@@ -549,18 +549,18 @@ func (mm *ModelManager) StopABTest() *ABTestConfig {
 }
 
 // GetABTestConfig returns current A/B test config
-func (mm *ModelManager) GetABTestConfig() *ABTestConfig {
+func (mm *ModelManager) GetABTestConfig() *ModelABTestConfig {
 	mm.abMu.RLock()
 	defer mm.abMu.RUnlock()
 	return mm.abTest
 }
 
 // GetABTestResults returns A/B test results
-func (mm *ModelManager) GetABTestResults() map[string]*ABTestResult {
+func (mm *ModelManager) GetABTestResults() map[string]*ModelABTestResult {
 	mm.abMu.RLock()
 	defer mm.abMu.RUnlock()
 
-	result := make(map[string]*ABTestResult)
+	result := make(map[string]*ModelABTestResult)
 	for k, v := range mm.abResults {
 		result[k] = v
 	}

@@ -1,0 +1,45 @@
+{
+  "result_dir": "./ab_test_results",
+  "model_ab_tests": [
+    {
+      "test_name": "sac_v2_vs_v1",
+      "control_model_id": "sac_v1_final",
+      "test_model_id": "sac_v2_improved",
+      "traffic_split_pct": 0.3,
+      "min_sample_size": 200,
+      "significance_level": 0.05,
+      "max_duration_hours": 168,
+      "auto_switch": true
+    }
+  ],
+  "strategy_ab_tests": [
+    {
+      "test_name": "aggressive_vs_conservative",
+      "min_sample_size": 100,
+      "significance_level": 0.05,
+      "max_duration_hours": 72,
+      "variants": [
+        {
+          "name": "conservative",
+          "description": "Conservative execution - lower aggression, smaller positions",
+          "is_control": true,
+          "traffic_pct": 0.5,
+          "parameters": {
+            "max_aggression": 0.5,
+            "max_position": 0.1
+          }
+        },
+        {
+          "name": "aggressive",
+          "description": "Aggressive execution - higher aggression, larger positions",
+          "is_control": false,
+          "traffic_pct": 0.5,
+          "parameters": {
+            "max_aggression": 0.9,
+            "max_position": 0.2
+          }
+        }
+      ]
+    }
+  ]
+}

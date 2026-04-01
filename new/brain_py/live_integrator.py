@@ -22,6 +22,7 @@ import numpy as np
 from .meta_agent import MetaAgent, MetaAgentConfig
 from .moe.mixture_of_experts import MixtureOfExperts
 from .agents.execution_sac import ExecutionSACAgent
+from .ab_testing import ABTestIntegrator, ModelABTest, ModelABTestConfig, StrategyABTest
 from shared.protocol import (
     MarketSnapshot,
     OrderCommand,
@@ -45,12 +46,15 @@ class IntegratorConfig:
     min_confidence: float = 0.5
     dry_run: bool = True
     log_level: int = 1  # 0=quiet, 1=info, 2=debug
+    ab_test_enabled: bool = False
+    ab_test_result_dir: str = "./ab_test_results"
 
 
 class LiveAIIntegrator:
     """实盘 AI 集成器
 
     从 Go 引擎读取市场数据，运行 AI 决策，写回订单命令
+    Supports A/B testing of models and strategies
     """
 
     def __init__(self, integrator_config: IntegratorConfig = None):
@@ -60,12 +64,14 @@ class LiveAIIntegrator:
         self.meta_agent: Optional[MetaAgent] = None
         self.moe: Optional[MixtureOfExperts] = None
         self.execution_agent: Optional[ExecutionSACAgent] = None
+        self.ab_integrator: Optional[ABTestIntegrator] = None
         self.running = False
         self.last_sequence = 0
         self.stats = {
             'total_cycles': 0,
             'actions_executed': 0,
             'errors': 0,
+            'ab_tests_active': 0,
             'start_time': 0.0,
         }
 
@@ -119,6 +125,16 @@ class LiveAIIntegrator:
         except Exception as e:
             print(f"[ERROR] Failed to initialize Execution SAC: {e}")
             return False
+
+        # Initialize A/B testing integrator if enabled
+        if self.config.ab_test_enabled:
+            try:
+                self.ab_integrator = ABTestIntegrator(result_dir=self.config.ab_test_result_dir)
+                self.stats['ab_tests_active'] = len(self.ab_integrator.get_all_conclusions())
+                print(f"[INFO] A/B Testing integrator initialized, result dir: {self.config.ab_test_result_dir}")
+            except Exception as e:
+                print(f"[ERROR] Failed to initialize A/B Testing: {e}")
+                return False
 
         self.stats['start_time'] = time.time()
         self.running = True
@@ -342,10 +358,21 @@ class LiveAIIntegrator:
         if self.writer:
             self.writer.close()
 
+        # Stop all A/B tests if any
+        if self.ab_integrator:
+            self.ab_integrator.stop_all()
+            conclusions = self.ab_integrator.get_all_conclusions()
+            for name, conclusion in conclusions.items():
+                print(f"\n[AB TEST] {name} Conclusion:")
+                print(conclusion)
+
         elapsed = time.time() - self.stats['start_time']
         print(f"[STATS] Total cycles: {self.stats['total_cycles']}")
         print(f"[STATS] Actions executed: {self.stats['actions_executed']}")
         print(f"[STATS] Errors: {self.stats['errors']}")
+        if self.ab_integrator:
+            status = self.ab_integrator.get_status()
+            print(f"[STATS] Active A/B tests: {status['active_model_tests'] + status['active_strategy_tests']}")
         print(f"[STATS] Elapsed: {elapsed:.2f}s")
 
     def print_stats(self):
@@ -369,6 +396,8 @@ def main():
     parser.add_argument('--min-confidence', type=float, default=0.5, help='Minimum confidence to act')
     parser.add_argument('--no-dry-run', action='store_true', help='Disable dry run (real trading)')
     parser.add_argument('--log-level', type=int, default=1, help='Log level (0=quiet, 1=info, 2=debug)')
+    parser.add_argument('--enable-ab-test', action='store_true', help='Enable A/B testing framework')
+    parser.add_argument('--ab-test-result-dir', default='./ab_test_results', help='Directory for A/B test results')
     args = parser.parse_args()
 
     config = IntegratorConfig(
@@ -378,6 +407,8 @@ def main():
         min_confidence=args.min_confidence,
         dry_run=not args.no_dry_run,
         log_level=args.log_level,
+        ab_test_enabled=args.enable_ab_test,
+        ab_test_result_dir=args.ab_test_result_dir,
     )
 
     integrator = LiveAIIntegrator(config)

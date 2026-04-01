@@ -196,7 +196,7 @@ func TestABTest(t *testing.T) {
 	modelsB := mm.ListModels("model_b")
 
 	// Start A/B test
-	abConfig := &ABTestConfig{
+	abConfig := &ModelABTestConfig{
 		Enabled:     true,
 		VariantA:    modelsA[0].ID,
 		VariantB:    modelsB[0].ID,
