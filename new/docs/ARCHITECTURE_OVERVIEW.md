@@ -2,9 +2,9 @@
 
 > 本文档整合所有架构设计文档，作为项目开发的单一事实来源（Single Source of Truth）
 > 版本: **4.5 (工业级执行优化)** → 目标 5.0 (自进化)
-> P1-P5: ✅ 已完成 (5/9 Px 阶段 = 55%) → 总计 (14 个大阶段) 9 完成
-> 代码统计: ~7,800 行 Go + ~3,200 行 Python = **11,000+ 行** 工业级代码
-> 最后更新: 2026-04-01
+> P1-P6: ✅ 已完成 (6/9 Px 阶段 = 67%) → 总计 (14 个大阶段) 9 完成
+> 代码统计: ~7,800 行 Go + ~3,600 行 Python = **11,400+ 行** 工业级代码
+> 最后更新: 2026-04-02
 
 **核心理念**:
 ```
@@ -686,6 +686,110 @@ class CurriculumScheduler:
 
 ---
 
+## 五-A、三层对抗训练防御架构 (做市商收割防御)
+
+### 5A.1 核心思想
+
+做市商大户会通过**挂单诱捕**收割流动性套利者：
+- 大单压盘/托单制造假趋势
+- 价格向你反向移动后快速撤单
+- 利用高仓位触发你的止损收割
+
+**三层防御架构**:
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Layer A: 对抗模拟                          │
+│  AdversarialMarketSimulator: 根据 agent 仓位动态调整攻击概率  │
+│  - 仓位越高 → 攻击概率指数级增加                                 │
+│  - 多种攻击类型: Spoofing / Orderbook / Toxic Flow             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Layer B: 陷阱检测器                          │
+│  TrapDetector: 从微观结构特征识别陷阱模式                       │
+│  Features (12维):                                               │
+│  ├─ ofi, cancel_rate, depth_imbalance                         │
+│  ├─ trade_intensity, spread_change, spread_level              │
+│  ├─ queue_pressure, price_velocity, volume_per_price         │
+│  ├─ time_since_last_spike                                      │
+│  ├─ tick_entropy  ← 检测机械化诱捕模式                         │
+│  └─ vpin          ← 检测知情交易                               │
+│                                                               │
+│  Mahalanobis 异常检测: 自动识别分布外新型陷阱                    │
+│  - 在线更新特征统计 → 自动学习新模式                            │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Layer C: 在线学习                           │
+│  OnlineAdversarialLearner: 增量学习新陷阱模式                  │
+│  - 置信度过滤: 只有大幅反向移动才作为训练样本 (高置信度标签)      │
+│  - Experience Replay: 经验回放防止灾难性遗忘                   │
+│  - 样本老化: 旧样本指数衰减，新样本权重更高                     │
+│  - 版本快照 + 性能回滚: 性能下降自动回滚到最佳版本              │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Meta: 动态风控调整                           │
+│  AdversarialMetaController: 根据近期陷阱频率动态调整风控       │
+│  1. 动态 λ 惩罚: 惩罚 ∝ (1 - 波动率) → 低波动惩罚重              │
+│  2. 动态仓位限制: 陷阱越多 → max_position 越小                 │
+│  3. 动态阈值: 陷阱越多 → p_trap 阈值越低 (更敏感)              │
+│  4. 下限保护: 不收缩到 0，防止完全错过机会                     │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    SAC Agent 集成                             │
+│  - 状态空间从 10 维 → 11 维: 增加 p_trap 作为额外特征          │
+│  - 奖励函数: R = R_original - λ × p_trap × size               │
+│  - 交易许可检查: p_trap > 阈值 → 禁止交易                      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 5A.2 马氏距离异常检测
+
+当特征分布偏离历史数据时，自动提高陷阱先验概率：
+
+```python
+# 距离计算
+D² = (x - μ)ᵀ Σ⁻¹ (x - μ)
+
+# 先验调整
+if D² > threshold:
+    p_trap = p_trap + max_adjust × (1 - threshold / D²)
+```
+
+- **大距离** = 分布异常 = 新型陷阱模式 = 提高先验概率
+- 在线学习后自动更新 `μ` 和 `Σ`
+
+### 5A.3 关键设计参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `base_adv_prob` | 0.3 | 基础攻击概率 |
+| `batch_size` | 10 | 在线学习批次大小 |
+| `min_confidence` | 0.5 | 最小置信度加入训练 |
+| `lambda_base` | 0.5 | 基础惩罚权重 |
+| `max_position_cap` | 1.0 | 最大仓位上限 |
+| `min_position_floor` | 0.1 | 最小仓位下限 |
+| `mahalanobis_threshold` | 5.0 | 异常距离阈值 |
+| `max_prior_adjust` | 0.2 | 最大先验调整幅度 |
+
+### 5A.4 公共 API
+
+```python
+from brain_py.adversarial import (
+    AdversarialMarketSimulator,    # Layer A: 模拟器
+    TrapDetector,                  # Layer B: 检测器
+    OnlineAdversarialLearner,      # Layer C: 在线学习
+    AdversarialMetaController,     # Meta: 动态风控
+    TrapFeatures,                  # 特征类型
+    calculate_mahalanobis_distance,  # 马氏距离工具
+    extract_trap_features,          # 特征提取工具
+)
+```
+
+---
+
 ## 六、演进路线图
 
 ### 6.1 版本规划
@@ -710,6 +814,7 @@ class CurriculumScheduler:
 | 动作空间 | 1维标量 | **3维执行指令** | `action_mapper.py` |
 | 奖励函数 | 单一值 | **分解式PnL** | `reward_engine.py` |
 | 监控系统 | 无 | **Prometheus+Grafana** | `MONITORING_SETUP.md` |
+| 对抗防御 | 无 | **三层对抗训练防御** | `brain_py/adversarial/` |
 
 ### 6.3 Phase 1-9 状态 ✅
 
@@ -734,7 +839,7 @@ class CurriculumScheduler:
 | **P3** | **Execution Alpha 监控** | Prometheus 全套执行质量指标 | ✅ 完成 | `core_go/metrics.go` |
 | **P4** | **A/B Testing 框架** | 流量分流 + 统计显著性 + 模型/策略对比 | ✅ 完成 | `core_go/ab_testing.go`, `brain_py/ab_testing/` |
 | **P5** | **在线模型热更新** | 性能衰退检测 + 自动回滚 | ✅ 完成 | `core_go/model_manager.go` |
-| **P6** | **对抗训练** | 有毒市场对抗训练 | ⏳ 待开始 | - |
+| **P6** | **对抗训练** | 有毒市场对抗训练 | ✅ 完成 | `brain_py/adversarial/` |
 | **P7** | **WAL 预写日志** | 崩溃恢复 | ⏳ 待开始 | - |
 | **P8** | **降级策略** | 系统降级保护 | ⏳ 待开始 | - |
 | **P9** | **杠杆全仓交易** | 杠杆/保证金/强平支持 | ⏳ 待开始 | - |
@@ -756,12 +861,13 @@ class CurriculumScheduler:
 ### 7.1 当前实现状态
 
 ```
-✅ 已完成 (P1-P5 工业级升级):
+✅ 已完成 (P1-P6 工业级升级):
 ├── P1: 实盘一体化架构 - Go + Python 零拷贝共享内存通信
 ├── P2: Queue Dynamics v3 - Hazard Rate 概率填充模型
 ├── P3: Execution Alpha 监控 - Prometheus 全套执行质量指标
 ├── P4: A/B Testing 框架 - 流量分流 + 统计显著性 + 模型/策略对比
 ├── P5: 在线模型热更新 - 性能衰退检测 + 自动回滚
+├── P6: 对抗训练 - 三层对抗训练防御做市商收割
 
 ✅ 已完成 (Phases 1-9):
 ├── OrderManager - WebSocket订单生命周期、对账、恢复、超时处理
@@ -786,11 +892,11 @@ class CurriculumScheduler:
 ├── 订单状态机 - 完整生命周期管理
 ├── A/B Testing 框架 - Go + Python 双端支持
 ├── Model Hot Reload - 性能衰退检测 + 自动回滚
+├── **三层对抗训练** - 做市商收割防御 + 马氏距离异常检测
 ├── 风控系统 - 多层风险熔断
 └── Prometheus + Grafana - 全套执行 Alpha 监控
 
 🚧 待实现 (下一阶段):
-├── P6: 对抗训练 - 有毒市场对抗训练
 ├── P7: WAL 预写日志 - 崩溃恢复
 ├── P8: 降级策略 - 系统降级保护
 ├── P9: 杠杆全仓交易 - 杠杆/保证金/强平支持
@@ -807,14 +913,14 @@ class CurriculumScheduler:
 
 | 总纲要求 | 当前状态 | 差距 | 优先级 |
 |----------|----------|------|--------|
-| **P1-P5 工业级升级** | ✅ **全部完成** | - | - |
+| **P1-P6 工业级升级** | ✅ **全部完成** | - | - |
 | Queue Dynamics v3 | ✅ 完成 | Hazard Rate 概率模型 Go/Python 双端 | - |
 | Adverse Selection 预测 | ✅ 完成 | Toxic Flow 检测器完成 | - |
 | ShadowMatcher v3 | ✅ 完成 | Level 2.5 概率撮合 | - |
 | Execution Alpha 监控 | ✅ 完成 | Prometheus 全套指标 | - |
 | A/B Testing 框架 | ✅ 完成 | Go/Python 双端 A/B 测试 | - |
 | 在线模型热更新 | ✅ 完成 | 衰退检测 + 自动回滚 | - |
-| 对抗训练 | 🚧 待实现 | 有毒市场对抗训练 | **P6** |
+| 对抗训练 | ✅ 完成 | 三层对抗训练防御做市商收割 | **P6 完成** |
 | WAL 预写日志 | 🚧 待实现 | 崩溃恢复 | **P7** |
 | 降级策略 | 🚧 待实现 | 系统降级保护 | **P8** |
 | 杠杆全仓交易 | 🚧 待实现 | 杠杆/保证金/强平支持 | **P9** |
