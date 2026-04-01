@@ -27,6 +27,17 @@ from collections import deque
 import os
 from datetime import datetime
 
+# 对抗检测模块导入
+try:
+    from brain_py.adversarial.detector import TrapDetector
+    from brain_py.adversarial.meta_controller import AdversarialMetaController
+    from brain_py.adversarial.online_learner import OnlineAdversarialLearner
+    from brain_py.adversarial.utils import extract_trap_features
+    from brain_py.adversarial.types import TrapFeatures
+    ADVERSARIAL_AVAILABLE = True
+except ImportError:
+    ADVERSARIAL_AVAILABLE = False
+
 
 class ExecutionStrategy(IntEnum):
     """执行策略类型."""
@@ -127,7 +138,7 @@ class Experience:
 @dataclass
 class SACConfig:
     """SAC配置."""
-    state_dim: int = 10
+    state_dim: int = 11  # 原始 10 + p_trap (对抗检测)
     action_dim: int = 3  # [slice_ratio, delay_factor, price_offset]
     hidden_dim: int = 256
     lr: float = 3e-4
@@ -141,6 +152,9 @@ class SACConfig:
     checkpoint_dir: str = "checkpoints/execution"
     min_slice_size: float = 0.01  # 最小切片大小
     max_slices: int = 10  # 最大切片数
+    # 对抗检测配置
+    use_adversarial_detection: bool = True
+    """是否启用对抗做市商收割检测"""
 
 
 class ReplayBuffer:
@@ -339,6 +353,23 @@ class ExecutionSACAgent:
             'avg_completion_time': 0.0,
         }
 
+        # 对抗检测初始化
+        self.adversarial_detector: Optional[TrapDetector] = None
+        self.adversarial_meta: Optional[AdversarialMetaController] = None
+        self.adversarial_learner: Optional[OnlineAdversarialLearner] = None
+        self.last_p_trap: float = 0.0
+
+        # 如果启用对抗检测且模块可用，初始化
+        if self.config.use_adversarial_detection and ADVERSARIAL_AVAILABLE:
+            # 默认初始化检测器（实际使用时应该加载预训练模型）
+            self.adversarial_detector = TrapDetector(model_type="sgd", random_state=42)
+            self.adversarial_meta = AdversarialMetaController()
+            self.adversarial_learner = OnlineAdversarialLearner(
+                detector=self.adversarial_detector,
+                batch_size=32,
+                min_confidence=0.5
+            )
+
     def _build_state(self, order: Order, market: MarketState,
                      remaining_size: float, elapsed_ms: int) -> np.ndarray:
         """构建状态向量."""
@@ -360,7 +391,146 @@ class ExecutionSACAgent:
         state[8] = min(elapsed_ms / 60000.0, 1.0)  # 已用时间 (归一化到1分钟)
         state[9] = market.spread / market.mid_price if market.mid_price > 0 else 0.0  # 相对价差
 
+        # 如果启用了对抗检测，提取陷阱特征并添加 p_trap
+        if self.config.use_adversarial_detection and self.adversarial_detector is not None and ADVERSARIAL_AVAILABLE:
+            # 提取 12 维陷阱特征并计算 p_trap
+            trap_features = self._extract_adversarial_features(order, market, remaining_size, elapsed_ms)
+            self.last_p_trap = self.adversarial_detector.predict_proba(trap_features)
+            state[10] = self.last_p_trap  # 第 11 维（索引从 0 开始）
+
         return state
+
+    def init_adversarial(
+        self,
+        detector: TrapDetector,
+        meta_controller: AdversarialMetaController
+    ) -> None:
+        """Initialize adversarial detection module with pre-trained detector."""
+        if not ADVERSARIAL_AVAILABLE:
+            raise RuntimeError("Adversarial module not available")
+        self.adversarial_detector = detector
+        self.adversarial_meta = meta_controller
+        self.adversarial_learner = OnlineAdversarialLearner(
+            detector=self.adversarial_detector,
+            batch_size=32,
+            min_confidence=0.5
+        )
+
+    def _extract_adversarial_features(
+        self,
+        order: Order,
+        market: MarketState,
+        remaining_size: float,
+        elapsed_ms: int
+    ) -> TrapFeatures:
+        """
+        Extract 12-dim trap features from current market state.
+
+        This implementation extracts features from available market data.
+        Override this if you have more detailed order book data.
+        """
+        from brain_py.adversarial.utils import extract_trap_features
+
+        # Compute features from available market data
+        # Note: This is a default implementation that works with existing MarketState
+        # If you have tick data and volume buckets, you should override this
+
+        # Get OFI from market (already computed by MarketState)
+        ofi = market.get_ofi()
+
+        # Approximate cancel rate based on spread volatility
+        # In a real implementation you would have actual add/cancel data from order book
+        cancel_rate = market.spread / (market.mid_price * 0.01) if market.mid_price > 0 else 0.5
+        cancel_rate = max(0, min(1, cancel_rate))
+
+        # Depth imbalance = (bid_volume - ask_volume) / (bid_volume + ask_volume)
+        total_vol = market.bid_volume + market.ask_volume
+        if total_vol > 0:
+            depth_imbalance = (market.bid_volume - market.ask_volume) / total_vol
+        else:
+            depth_imbalance = 0
+
+        # Trade intensity normalized
+        trade_intensity = len(market.recent_trades) / 100.0
+
+        # Spread change (we don't have history, use current normalized spread)
+        spread_change = 0
+        spread_level = market.spread / (market.mid_price * 0.01) if market.mid_price > 0 else 0
+
+        # Queue pressure: (bid_volume - ask_volume) / total, similar to depth imbalance
+        queue_pressure = depth_imbalance
+
+        # Price velocity from trend
+        price_velocity = market.trend
+
+        # Volume per price level
+        if market.spread > 0:
+            volume_per_price = (market.bid_volume + market.ask_volume) / market.spread
+        else:
+            volume_per_price = 0
+
+        # Time since last spike (we don't have spike detection, use default)
+        time_since_last_spike = 300.0
+
+        # Default tick directions (random if not available)
+        # In real implementation you would have actual tick history
+        tick_directions = np.random.choice([-1, 1], size=20).astype(np.float32)
+
+        # Default volume buckets (if not available, use uniform)
+        buy_buckets = np.full(10, (market.bid_volume / 10), dtype=np.float32)
+        sell_buckets = np.full(10, (market.ask_volume / 10), dtype=np.float32)
+
+        return extract_trap_features(
+            ofi=ofi,
+            cancel_rate=cancel_rate,
+            depth_imbalance=depth_imbalance,
+            trade_intensity=trade_intensity,
+            spread_change=spread_change,
+            spread_level=spread_level,
+            queue_pressure=queue_pressure,
+            price_velocity=price_velocity,
+            volume_per_price=volume_per_price,
+            time_since_last_spike=time_since_last_spike,
+            tick_directions=tick_directions,
+            buy_volume_buckets=buy_buckets,
+            sell_volume_buckets=sell_buckets,
+        )
+
+    def get_adversarial_penalty(
+        self,
+        order_size_ratio: float,
+        volatility_normalized: float
+    ) -> float:
+        """
+        Get adversarial penalty to subtract from reward.
+
+        Returns:
+            penalty: penalty value to subtract from reward
+        """
+        if self.adversarial_meta is None:
+            return 0.0
+        return self.adversarial_meta.compute_reward_penalty(
+            p_trap=self.last_p_trap,
+            order_size=order_size_ratio,
+            volatility_normalized=volatility_normalized
+        )
+
+    def check_adversarial_allow_trade(
+        self,
+        current_position: float
+    ) -> bool:
+        """
+        Check if trade is allowed under adversarial constraints.
+
+        Returns:
+            allowed: True if trade is allowed, False if should be blocked
+        """
+        if self.adversarial_meta is None:
+            return True
+        return self.adversarial_meta.check_allow_trade(
+            p_trap=self.last_p_trap,
+            current_position=current_position
+        )
 
     def act(self, state: np.ndarray, deterministic: bool = False) -> np.ndarray:
         """
