@@ -3,9 +3,11 @@ volatility_agent.py - Volatility Expert Agent
 """
 
 import numpy as np
+from dataclasses import dataclass
 from .base_expert import BaseExpert, ExpertConfig, Action, ActionType, MarketRegime
 
 
+@dataclass
 class VolatilityConfig(ExpertConfig):
     """Configuration for volatility expert."""
     name: str = "volatility"

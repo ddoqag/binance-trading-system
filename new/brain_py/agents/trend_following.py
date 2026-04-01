@@ -13,9 +13,11 @@ Features:
 """
 
 import numpy as np
+from dataclasses import dataclass
 from .base_expert import BaseExpert, ExpertConfig, Action, ActionType, MarketRegime
 
 
+@dataclass
 class TrendFollowingConfig(ExpertConfig):
     """Configuration for trend following expert."""
     name: str = "trend_following"

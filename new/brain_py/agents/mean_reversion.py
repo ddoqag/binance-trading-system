@@ -3,9 +3,11 @@ mean_reversion.py - Mean Reversion Expert Agent
 """
 
 import numpy as np
+from dataclasses import dataclass
 from .base_expert import BaseExpert, ExpertConfig, Action, ActionType, MarketRegime
 
 
+@dataclass
 class MeanReversionConfig(ExpertConfig):
     """Configuration for mean reversion expert."""
     name: str = "mean_reversion"
