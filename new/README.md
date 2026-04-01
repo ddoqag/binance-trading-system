@@ -2,6 +2,34 @@
 
 高频量化交易系统 - Go + Python + mmap 混合架构
 
+## Project Status
+
+> 最后更新: 2026-03-30
+
+### 已完成 ✅
+
+| 组件 | 状态 | 说明 |
+|------|------|------|
+| Shared Memory | ✅ | 128字节对齐，跨平台mmap实现 |
+| Go Engine | ✅ | 可执行文件 8.4MB，核心引擎完成 |
+| **Binance API** | ✅ | **官方SDK集成，10项测试全部通过** |
+| - REST API | ✅ | 账户/订单/余额查询，时间同步 |
+| - WebSocket | ✅ | Depth/Trade/BookTicker实时流 |
+| **WebSocket重连** | ✅ | **自动重连机制，12项测试通过** |
+| - 指数退避 | ✅ | 1s→2s→4s→...→60s |
+| - 健康检查 | ✅ | 30s间隔，60s过期阈值 |
+
+### 进行中 🚧
+
+- WAL日志系统
+- 风控规则增强
+
+### 即将开始 📋
+
+- 配置管理模块
+- 订单状态机完善
+- API限速管理
+
 ## Architecture
 
 ```
@@ -32,9 +60,12 @@
 ├── protocol.h              # C-style shared memory protocol
 ├── core_go/                # Go execution engine
 │   ├── engine.go           # Main HFT engine
+│   ├── live_api_client.go  # Binance Live API client (official SDK)
 │   ├── shm_manager.go      # Shared memory manager
 │   ├── websocket_feed.go   # Binance WebSocket client
+│   ├── websocket_manager.go # WebSocket feed manager
 │   ├── executor.go         # Order execution engine
+│   ├── margin_executor.go  # Margin trading executor
 │   ├── risk_manager.go     # Risk management
 │   ├── wal.go              # Write-ahead logging
 │   ├── degrade.go          # Circuit breaker & degradation
@@ -61,6 +92,14 @@
 - **Risk management**: Position limits, daily loss limits, kill switch
 - **WAL logging**: Crash recovery and state reconstruction
 - **Circuit breaker**: Automatic degradation on failures
+
+### Binance Live API Integration ✅ NEW
+- **Official SDK**: Using `github.com/adshao/go-binance/v2`
+- **REST API**: Account info, balances, orders, exchange info
+- **WebSocket Streams**: Depth, trades, book ticker real-time data
+- **Time sync**: Automatic timestamp synchronization (prevents -1021/-2015 errors)
+- **Proxy support**: HTTPS_PROXY environment variable support
+- **Testnet/Mainnet**: Switchable between test and live trading
 
 ### Python AI Brain
 - **SAC Agent**: Soft Actor-Critic for continuous action space
@@ -220,6 +259,12 @@ python shm_client.py
 # Test Go engine
 cd core_go
 go test -v
+
+# Test Binance Live API (requires API keys)
+export BINANCE_API_KEY=your_api_key
+export BINANCE_API_SECRET=your_api_secret
+export HTTPS_PROXY=http://127.0.0.1:7897  # if behind proxy
+go test -v -run TestLiveAPI -timeout 120s
 ```
 
 ## Safety

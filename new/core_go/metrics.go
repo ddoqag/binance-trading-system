@@ -109,6 +109,30 @@ type MetricsCollector struct {
 	// A/B Testing metrics
 	abTestRequests     prometheus.CounterVec
 
+	// === Execution Alpha metrics (P3-003) ===
+	// Fill quality: fill_price - mid_price (negative = good, we got better price)
+	fillQuality        prometheus.HistogramVec
+	// Adverse selection score (higher = more adverse)
+	adverseSelection   prometheus.Gauge
+	// Toxic flow probability
+	toxicProbability   prometheus.Gauge
+	// Queue survival rate = filled / submitted
+	queueSurvivalRate  prometheus.Gauge
+	// Queue survival rate by market regime
+	queueSurvivalByRegime prometheus.GaugeVec
+	// Cancel efficiency = effective cancels / requested cancels
+	cancelEfficiency   prometheus.Gauge
+	// Order latency in milliseconds (from request to exchange confirmation)
+	orderLatencyMs    prometheus.Histogram
+	// Execution Alpha (PnL from execution quality)
+	executionAlpha     prometheus.Gauge
+	// Cumulative Execution Alpha
+	executionAlphaCumulative prometheus.Counter
+	// Hazard rate distribution
+	hazardRate         prometheus.Histogram
+	// Queue ratio distribution
+	queueRatio         prometheus.Histogram
+
 	// Control
 	server   *http.Server
 	stopChan chan struct{}
@@ -499,6 +523,124 @@ func NewMetricsCollector(config *MetricsConfig) *MetricsCollector {
 		[]string{"variant"},
 	)
 
+	// === Execution Alpha metrics initialization ===
+
+	// Fill quality: fill_price - mid_price (negative = good)
+	mc.fillQuality = *promauto.With(reg).NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "execution_fill_quality",
+			Help:      "Fill quality = fill_price - mid_price (bps), negative = better execution",
+			Buckets:   []float64{-10, -5, -2, -1, -0.5, 0, 0.5, 1, 2, 5, 10},
+		},
+		[]string{"symbol", "side"},
+	)
+
+	// Adverse selection average score
+	mc.adverseSelection = promauto.With(reg).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "adverse_selection_score",
+			Help:      "Average adverse selection score (higher = more toxic)",
+		},
+	)
+
+	// Toxic flow probability
+	mc.toxicProbability = promauto.With(reg).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "toxic_probability",
+			Help:      "Probability that current market is toxic [0, 1]",
+		},
+	)
+
+	// Queue survival rate
+	mc.queueSurvivalRate = promauto.With(reg).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "queue_survival_rate",
+			Help:      "Queue survival rate = filled_orders / submitted_orders [0, 1]",
+		},
+	)
+
+	// Queue survival rate by market regime
+	mc.queueSurvivalByRegime = *promauto.With(reg).NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "queue_survival_by_regime",
+			Help:      "Queue survival rate grouped by market regime",
+		},
+		[]string{"regime"},
+	)
+
+	// Cancel efficiency
+	mc.cancelEfficiency = promauto.With(reg).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "cancel_efficiency",
+			Help:      "Cancel efficiency = effective_cancels / requested_cancels [0, 1]",
+		},
+	)
+
+	// Order latency milliseconds
+	mc.orderLatencyMs = promauto.With(reg).NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "order_latency_ms",
+			Help:      "Order latency from request to exchange confirmation (ms)",
+			Buckets:   []float64{1, 5, 10, 25, 50, 100, 200, 500, 1000},
+		},
+	)
+
+	// Current Execution Alpha
+	mc.executionAlpha = promauto.With(reg).NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "execution_alpha",
+			Help:      "Current execution alpha (bps from execution quality)",
+		},
+	)
+
+	// Cumulative Execution Alpha
+	mc.executionAlphaCumulative = promauto.With(reg).NewCounter(
+		prometheus.CounterOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "execution_alpha_cumulative_bps",
+			Help:      "Cumulative execution alpha in basis points",
+		},
+	)
+
+	// Hazard rate distribution
+	mc.hazardRate = promauto.With(reg).NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "hazard_rate",
+			Help:      "Hazard rate lambda distribution (per second)",
+			Buckets:   []float64{0.1, 0.5, 1, 2, 5, 10, 20},
+		},
+	)
+
+	// Queue ratio distribution
+	mc.queueRatio = promauto.With(reg).NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: config.Namespace,
+			Subsystem: config.Subsystem,
+			Name:      "queue_ratio",
+			Help:      "Queue ratio distribution [0, 1] (0=front, 1=back)",
+			Buckets:   []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9},
+		},
+	)
+
 	return mc
 }
 
@@ -866,4 +1008,94 @@ func (mc *MetricsCollector) RecordABTestRequest(variant string) {
 		return
 	}
 	mc.abTestRequests.WithLabelValues(variant).Inc()
+}
+
+// === Execution Alpha recording methods (P3-003) ===
+
+// RecordFillQuality records fill quality = fill_price - mid_price (in bps)
+func (mc *MetricsCollector) RecordFillQuality(symbol, side string, fillPriceBps float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.fillQuality.WithLabelValues(symbol, side).Observe(fillPriceBps)
+}
+
+// SetAdverseSelection sets the current average adverse selection score
+func (mc *MetricsCollector) SetAdverseSelection(score float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.adverseSelection.Set(score)
+}
+
+// SetToxicProbability sets the current toxic flow probability
+func (mc *MetricsCollector) SetToxicProbability(prob float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.toxicProbability.Set(prob)
+}
+
+// SetQueueSurvivalRate sets the queue survival rate
+func (mc *MetricsCollector) SetQueueSurvivalRate(rate float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.queueSurvivalRate.Set(rate)
+}
+
+// SetQueueSurvivalByRegime sets queue survival rate for a specific market regime
+func (mc *MetricsCollector) SetQueueSurvivalByRegime(regime string, rate float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.queueSurvivalByRegime.WithLabelValues(regime).Set(rate)
+}
+
+// SetCancelEfficiency sets the cancel efficiency
+func (mc *MetricsCollector) SetCancelEfficiency(efficiency float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.cancelEfficiency.Set(efficiency)
+}
+
+// RecordOrderLatencyMs records order latency in milliseconds
+func (mc *MetricsCollector) RecordOrderLatencyMs(latencyMs float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.orderLatencyMs.Observe(latencyMs)
+}
+
+// SetExecutionAlpha sets current execution alpha in bps
+func (mc *MetricsCollector) SetExecutionAlpha(alphaBps float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.executionAlpha.Set(alphaBps)
+}
+
+// AddExecutionAlpha adds to cumulative execution alpha in bps
+func (mc *MetricsCollector) AddExecutionAlpha(alphaBps float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.executionAlphaCumulative.Add(alphaBps)
+}
+
+// ObserveHazardRate observes a hazard rate value
+func (mc *MetricsCollector) ObserveHazardRate(lambda float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.hazardRate.Observe(lambda)
+}
+
+// ObserveQueueRatio observes a queue ratio value
+func (mc *MetricsCollector) ObserveQueueRatio(ratio float64) {
+	if !mc.config.Enabled {
+		return
+	}
+	mc.queueRatio.Observe(ratio)
 }

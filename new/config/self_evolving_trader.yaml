@@ -1,0 +1,61 @@
+# Self-Evolving Trader Configuration
+
+# Trading Mode: backtest, paper, live
+trading_mode: paper
+
+# Trading Pair
+symbol: BTCUSDT
+
+# Capital Settings
+initial_capital: 10000.0
+max_leverage: 3
+
+# Binance API (use environment variables for sensitive data)
+api_key: ${BINANCE_API_KEY}
+api_secret: ${BINANCE_API_SECRET}
+use_testnet: true
+
+# Risk Limits
+risk_limits:
+  max_single_position_pct: 0.20    # 单笔最大 20%
+  max_total_position_pct: 0.80     # 总仓位最大 80%
+  max_daily_loss_pct: 0.05         # 日亏损 5%
+  max_drawdown_pct: 0.15           # 最大回撤 15%
+  stop_loss_pct: 0.025             # 止损 2.5%
+  take_profit_pct: 0.05            # 止盈 5%
+  max_orders_per_minute: 30        # 每分钟最大订单数
+
+# Phase 1-9 Feature Toggles
+phases:
+  phase_1_registry: true           # Agent Registry
+  phase_2_regime: true             # Regime Detection
+  phase_3_evolution: true          # Self-Evolving Meta-Agent
+  phase_4_pbt: true                # Population Based Training
+  phase_5_real_sim_real: true      # Real-Sim-Real Validation
+  phase_6_moe: true                # Mixture of Experts
+  phase_7_online_learning: true    # Online Learning
+  phase_8_world_model: false       # World Model (compute intensive)
+  phase_9_civilization: true       # Agent Civilization
+
+# Runtime Settings
+check_interval_seconds: 5.0        # 检查间隔 (秒)
+strategy_switch_cooldown: 60.0     # 策略切换冷却 (秒)
+
+# Meta-Agent Settings
+meta_agent:
+  learning_rate: 0.01
+  min_weight: 0.05
+  max_weight: 0.8
+
+# PBT Settings
+pbt:
+  population_size: 10
+  mutation_probability: 0.8
+  evaluation_window: 20
+
+# Logging
+logging:
+  level: INFO
+  file: logs/self_evolving_trader.log
+  max_size_mb: 100
+  backup_count: 5

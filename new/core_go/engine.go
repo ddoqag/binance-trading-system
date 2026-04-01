@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -27,10 +28,17 @@ type HFTEngine struct {
 	config *EngineConfig
 
 	// Subsystems
-	shm      *SHMManager
-	ws       *WebSocketClient
-	executor *OrderExecutor
-	riskMgr  *RiskManager
+	shm            *SHMManager
+	apiClient      *LiveAPIClient
+	wsManager      *WebSocketManager
+	executor       *OrderExecutor
+	marginExecutor *MarginExecutor // 杠杆交易执行器
+	riskMgr        *RiskManager
+	wal            *WAL // Write-ahead logging
+
+	// WebSocket handlers
+	depthHandler   func(bestBid, bestAsk float64, ofi float64)
+	tradeHandler   func(price, qty float64, isBuyerMaker bool)
 
 	// State
 	inventory     float64
@@ -51,6 +59,8 @@ type EngineConfig struct {
 	BaseOrderSize    float64
 	HeartbeatMs      int
 	PaperTrading     bool
+	UseMargin        bool    // 使用杠杆交易
+	MaxLeverage      float64 // 最大杠杆倍数
 }
 
 func DefaultConfig(symbol string) *EngineConfig {
@@ -67,6 +77,8 @@ func DefaultConfig(symbol string) *EngineConfig {
 		BaseOrderSize: 0.01, // 0.01 BTC per order
 		HeartbeatMs:   100,
 		PaperTrading:  true,
+		UseMargin:     false, // 默认不使用杠杆
+		MaxLeverage:   3.0,   // 默认3倍杠杆
 	}
 }
 
@@ -88,14 +100,38 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 		cancel:   cancel,
 	}
 
-	// Initialize WebSocket client (use testnet with proxy)
-	engine.ws = NewTestnetWebSocketClient(config.Symbol)
+	// Initialize WebSocket manager with LiveAPIClient
+	engine.wsManager = NewWebSocketManager(config.Symbol, nil) // Will set apiClient after creation
 
 	// Initialize order executor
-	engine.executor = NewOrderExecutor(config.Symbol, config.PaperTrading)
+	apiKey := os.Getenv("BINANCE_API_KEY")
+	apiSecret := os.Getenv("BINANCE_API_SECRET")
+	logDir := os.Getenv("HFT_LOG_DIR")
+	if logDir == "" {
+		logDir = "./logs"
+	}
+	engine.executor = NewOrderExecutor(config.Symbol, config.PaperTrading, apiKey, apiSecret, logDir)
+
+	// Initialize margin executor if enabled
+	if config.UseMargin {
+		engine.marginExecutor = NewMarginExecutor(config.Symbol, config.PaperTrading, apiKey, apiSecret, config.MaxLeverage)
+		log.Printf("[ENGINE] Margin trading enabled with %.1fx leverage", config.MaxLeverage)
+	}
 
 	// Initialize risk manager
 	engine.riskMgr = NewRiskManager(config.MaxPosition)
+
+	// Initialize WAL for disaster recovery
+	walDir := os.Getenv("HFT_WAL_DIR")
+	if walDir == "" {
+		walDir = filepath.Join(logDir, "wal")
+	}
+	wal, err := NewWAL(walDir)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize WAL: %w", err)
+	}
+	engine.wal = wal
 
 	return engine, nil
 }
@@ -104,11 +140,11 @@ func (e *HFTEngine) Start() error {
 	log.Printf("[ENGINE] Starting HFT Engine for %s", e.symbol)
 
 	// Set up WebSocket handlers
-	e.ws.SetDepthHandler(e.onDepthUpdate)
-	e.ws.SetTradeHandler(e.onTradeUpdate)
+	e.wsManager.SetDepthHandler(e.onDepthUpdate)
+	e.wsManager.SetTradeHandler(e.onTradeUpdate)
 
 	// Connect to Binance
-	if err := e.ws.Connect(); err != nil {
+	if err := e.wsManager.Connect(); err != nil {
 		return fmt.Errorf("failed to connect WebSocket: %w", err)
 	}
 
@@ -124,8 +160,31 @@ func (e *HFTEngine) Start() error {
 
 func (e *HFTEngine) Stop() {
 	log.Println("[ENGINE] Stopping HFT Engine...")
+
+	// Create final checkpoint before shutdown
+	if e.wal != nil {
+		positions := map[string]PositionEntry{
+			e.symbol: {
+				Symbol:      e.symbol,
+				Size:        e.inventory,
+				AvgPrice:    e.getEntryPrice(),
+				RealizedPnL: 0, // Would track actual realized PnL
+			},
+		}
+		if _, err := e.wal.CreateCheckpoint(positions, 0, e.unrealizedPnL); err != nil {
+			log.Printf("[WAL] Failed to create shutdown checkpoint: %v", err)
+		}
+		e.wal.Close()
+	}
+
 	e.cancel()
-	e.ws.Close()
+	e.wsManager.Close()
+
+	// Close margin executor if active
+	if e.marginExecutor != nil {
+		e.marginExecutor.Close()
+	}
+
 	e.wg.Wait()
 	e.shm.Close()
 	log.Println("[ENGINE] HFT Engine stopped")
@@ -140,7 +199,7 @@ func (e *HFTEngine) onDepthUpdate(bestBid, bestAsk float64, ofi float64) {
 	askQueuePos := float32(0.5)
 
 	// Get trade imbalance from OFI calculator
-	tradeImb := e.ws.GetOFI()
+	tradeImb := e.wsManager.GetOFI()
 
 	// Write to shared memory
 	e.shm.WriteMarketData(
@@ -209,19 +268,12 @@ func (e *HFTEngine) processDecision() {
 
 	// Execute decision
 	var err error
-	switch action {
-	case ActionJoinBid:
-		err = e.executor.PlaceLimitBuy(limitPrice, targetSize)
-	case ActionJoinAsk:
-		err = e.executor.PlaceLimitSell(limitPrice, targetSize)
-	case ActionCrossBuy:
-		err = e.executor.PlaceMarketBuy(targetSize)
-	case ActionCrossSell:
-		err = e.executor.PlaceMarketSell(targetSize)
-	case ActionCancel:
-		err = e.executor.CancelAll()
-	case ActionPartialExit:
-		err = e.executor.PartialExit(e.inventory * 0.5)
+	if e.config.UseMargin && e.marginExecutor != nil {
+		// Use margin trading executor
+		err = e.executeMarginDecision(action, targetSize, limitPrice)
+	} else {
+		// Use regular spot executor
+		err = e.executeSpotDecision(action, targetSize, limitPrice)
 	}
 
 	if err != nil {
@@ -256,13 +308,13 @@ func (e *HFTEngine) marketDataLoop() {
 			return
 		case <-ticker.C:
 			// Refresh market data if we have a valid book
-			if e.ws.IsConnected() {
-				book := e.ws.GetBook()
+			if e.wsManager.IsConnected() {
+				book := e.wsManager.GetBook()
 				if book != nil {
 					bestBid, bestAsk, _, _ := book.GetSnapshot()
 					if bestBid > 0 && bestAsk > 0 {
 						// Re-write current state to keep timestamp fresh
-						e.onDepthUpdate(bestBid, bestAsk, e.ws.GetOFI())
+						e.onDepthUpdate(bestBid, bestAsk, e.wsManager.GetOFI())
 					}
 				}
 			}
@@ -282,7 +334,7 @@ func (e *HFTEngine) monitorLoop() {
 			return
 		case <-ticker.C:
 			// Log status
-			connected := e.ws.IsConnected()
+			connected := e.wsManager.IsConnected()
 			stale := e.shm.IsStale()
 
 			if !connected {
@@ -298,10 +350,50 @@ func (e *HFTEngine) monitorLoop() {
 	}
 }
 
+// executeSpotDecision 执行现货交易决策
+func (e *HFTEngine) executeSpotDecision(action int32, targetSize float64, limitPrice float64) error {
+	switch action {
+	case ActionJoinBid:
+		return e.executor.PlaceLimitBuy(limitPrice, targetSize)
+	case ActionJoinAsk:
+		return e.executor.PlaceLimitSell(limitPrice, targetSize)
+	case ActionCrossBuy:
+		return e.executor.PlaceMarketBuy(targetSize)
+	case ActionCrossSell:
+		return e.executor.PlaceMarketSell(targetSize)
+	case ActionCancel:
+		return e.executor.CancelAll()
+	case ActionPartialExit:
+		return e.executor.PartialExit(e.inventory * 0.5)
+	default:
+		return fmt.Errorf("unknown action: %d", action)
+	}
+}
+
+// executeMarginDecision 执行杠杆交易决策
+func (e *HFTEngine) executeMarginDecision(action int32, targetSize float64, limitPrice float64) error {
+	switch action {
+	case ActionJoinBid, ActionCrossBuy:
+		// 做多：买入基础资产
+		isMarket := action == ActionCrossBuy
+		return e.marginExecutor.PlaceLongOrder(targetSize, isMarket, limitPrice)
+	case ActionJoinAsk, ActionCrossSell:
+		// 做空：卖出基础资产（自动借贷）
+		isMarket := action == ActionCrossSell
+		return e.marginExecutor.PlaceShortOrder(targetSize, isMarket, limitPrice)
+	case ActionCancel:
+		return e.executor.CancelAll()
+	case ActionPartialExit:
+		return e.marginExecutor.ClosePosition(true)
+	default:
+		return fmt.Errorf("unknown action: %d", action)
+	}
+}
+
 func (e *HFTEngine) getEntryPrice() float64 {
 	// Would track actual entry price from order history
 	// For now, return current mid price
-	book := e.ws.GetBook()
+	book := e.wsManager.GetBook()
 	if book != nil {
 		bid, ask, _, _ := book.GetSnapshot()
 		return (bid + ask) / 2
@@ -317,7 +409,7 @@ func (e *HFTEngine) GetStatus() map[string]interface{} {
 
 	return map[string]interface{}{
 		"symbol":         e.symbol,
-		"connected":      e.ws.IsConnected(),
+		"connected":      e.wsManager.IsConnected(),
 		"stale":          e.shm.IsStale(),
 		"inventory":      e.inventory,
 		"unrealized_pnl": e.unrealizedPnL,
@@ -338,9 +430,15 @@ func main() {
 		paperTrading = false
 	}
 
+	useMargin := false
+	if len(os.Args) > 3 && os.Args[3] == "margin" {
+		useMargin = true
+	}
+
 	// Create engine
 	config := DefaultConfig(symbol)
 	config.PaperTrading = paperTrading
+	config.UseMargin = useMargin
 
 	engine, err := NewHFTEngine(config)
 	if err != nil {

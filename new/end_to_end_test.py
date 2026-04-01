@@ -218,20 +218,30 @@ except KeyboardInterrupt:
 
         # 停止 Python agent
         if self.agent_process and self.agent_process.poll() is None:
-            self.agent_process.send_signal(signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGTERM)
-            try:
-                self.agent_process.wait(timeout=3)
-            except:
-                self.agent_process.kill()
+            if os.name == 'nt':
+                # Windows: 使用 taskkill 来终止进程树
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.agent_process.pid)],
+                              capture_output=True, check=False)
+            else:
+                self.agent_process.send_signal(signal.SIGTERM)
+                try:
+                    self.agent_process.wait(timeout=3)
+                except:
+                    self.agent_process.kill()
             print("[TEST] Python Agent stopped")
 
         # 停止 Go 引擎
         if self.go_process and self.go_process.poll() is None:
-            self.go_process.send_signal(signal.CTRL_BREAK_EVENT if os.name == 'nt' else signal.SIGTERM)
-            try:
-                self.go_process.wait(timeout=3)
-            except:
-                self.go_process.kill()
+            if os.name == 'nt':
+                # Windows: 使用 taskkill 来终止进程树
+                subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.go_process.pid)],
+                              capture_output=True, check=False)
+            else:
+                self.go_process.send_signal(signal.SIGTERM)
+                try:
+                    self.go_process.wait(timeout=3)
+                except:
+                    self.go_process.kill()
             print("[TEST] Go Engine stopped")
 
     def generate_report(self):
