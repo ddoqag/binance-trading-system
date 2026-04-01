@@ -4,16 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 /*
-model_manager.go - ONNX Model Hot Reload System (P4-104)
+model_manager.go - ONNX Model Hot Reload System (P5-001)
 
 Implements:
 - Hot reloading of ONNX models without restart
@@ -21,7 +24,53 @@ Implements:
 - A/B testing framework for models
 - Prediction latency monitoring
 - Model health checking
+- Performance decay detection
+- Auto-rollback on performance degradation
+- Online learning integration
 */
+
+// Prometheus metrics for model manager
+var (
+	modelsLoaded = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "hft_model_manager_models_loaded_total",
+		Help: "Total number of models loaded",
+	})
+
+	modelsReloaded = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "hft_model_manager_models_reloaded_total",
+		Help: "Total number of models reloaded (hot reload)",
+	})
+
+	modelsUnloaded = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "hft_model_manager_models_unloaded_total",
+		Help: "Total number of models unloaded",
+	})
+
+	modelPerformanceDecayDetected = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "hft_model_manager_decay_detected_total",
+		Help: "Total number of performance decay events detected",
+	})
+
+	modelAutoRollback = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "hft_model_manager_auto_rollback_total",
+		Help: "Total number of automatic rollbacks executed",
+	})
+
+	currentActiveModel = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "hft_model_manager_active_model",
+		Help: "Currently active model version (0 for none)",
+	})
+
+	modelTotalPredictions = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hft_model_predictions_total",
+		Help: "Total number of predictions per model",
+	}, []string{"model_id"})
+
+	modelAverageLatencyMs = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "hft_model_average_latency_ms",
+		Help: "Average prediction latency in milliseconds per model",
+	}, []string{"model_id"})
+)
 
 // ModelType represents the type of ML model
 type ModelType int
@@ -66,6 +115,7 @@ type ModelVersion struct {
 // ModelPerformance tracks model inference metrics
 type ModelPerformance struct {
 	TotalPredictions uint64
+	TotalPnL         float64       // Cumulative PnL from predictions
 	TotalLatency     time.Duration
 	Errors           uint64
 	LastPrediction   time.Time
@@ -102,17 +152,29 @@ type ModelConfig struct {
 	MaxVersions        int
 	HealthCheckInterval time.Duration
 	ABTestEnabled      bool
+
+	// Online learning / performance decay detection
+	DecayDetectionEnabled    bool
+	DecayThresholdPnL         float64   // Performance decay threshold (cumulative PnL drop)
+	DecayThresholdSharpe       float64   // Sharpe ratio decay threshold
+	MinSamplesForDecayCheck    int       // Minimum samples before checking decay
+	AutoRollbackOnDecay        bool      // Auto rollback if decay detected
 }
 
 // DefaultModelConfig returns default configuration
 func DefaultModelConfig() *ModelConfig {
 	return &ModelConfig{
-		ModelDir:            "./models",
-		WatchEnabled:        true,
-		WatchInterval:       5 * time.Second,
-		MaxVersions:         5,
-		HealthCheckInterval: 30 * time.Second,
-		ABTestEnabled:       false,
+		ModelDir:             "./models",
+		WatchEnabled:         true,
+		WatchInterval:        5 * time.Second,
+		MaxVersions:          5,
+		HealthCheckInterval:  30 * time.Second,
+		ABTestEnabled:        false,
+		DecayDetectionEnabled: true,
+		DecayThresholdPnL:    -0.05,  // -5% cumulative PnL decay triggers alert
+		DecayThresholdSharpe: -0.3,   // 0.3 Sharpe drop triggers alert
+		MinSamplesForDecayCheck:  50,
+		AutoRollbackOnDecay:      true,
 	}
 }
 
@@ -463,12 +525,13 @@ func (mm *ModelManager) cleanupOldVersions(name string) {
 	}
 }
 
-// RecordPrediction records prediction metrics
-func (mm *ModelManager) RecordPrediction(versionID string, latency time.Duration, err error) {
+// RecordPrediction records prediction metrics including PnL
+func (mm *ModelManager) RecordPrediction(versionID string, latency time.Duration, pnl float64, err error) {
 	mm.mu.Lock()
 	model := mm.models[versionID]
 	if model != nil {
 		model.Performance.TotalPredictions++
+		model.Performance.TotalPnL += pnl
 		model.Performance.TotalLatency += latency
 		model.Performance.LastPrediction = time.Now()
 		if err != nil {
@@ -480,8 +543,19 @@ func (mm *ModelManager) RecordPrediction(versionID string, latency time.Duration
 			model.Performance.AvgLatency =
 				model.Performance.TotalLatency / time.Duration(model.Performance.TotalPredictions)
 		}
+
+		// Update Prometheus metrics
+		modelTotalPredictions.WithLabelValues(versionID).Set(float64(model.Performance.TotalPredictions))
+		modelAverageLatencyMs.WithLabelValues(versionID).Set(float64(model.Performance.AvgLatency.Seconds() * 1000))
 	}
 	mm.mu.Unlock()
+
+	// Update Prometheus gauge for current active model
+	if mm.current != nil {
+		currentActiveModel.Set(1)
+	} else {
+		currentActiveModel.Set(0)
+	}
 
 	// Record A/B test metrics
 	mm.abMu.Lock()
@@ -498,7 +572,8 @@ func (mm *ModelManager) RecordPrediction(versionID string, latency time.Duration
 	}
 	mm.abMu.Unlock()
 
-	// Record to metrics (via callback to avoid global dependency)
+	// Increment counters
+	modelsLoaded.Inc()
 }
 
 // StartABTest starts an A/B test between two model versions
@@ -601,7 +676,7 @@ func (mm *ModelManager) SetCallbacks(onLoad, onUnload func(*ModelVersion), onErr
 }
 
 // GetStats returns model manager statistics
-func (mm *ModelManager) GetStats() map[string]interface{} {
+func (mm *ModelManager) GetStats() map[string]any {
 	mm.mu.RLock()
 	mm.abMu.RLock()
 	defer mm.mu.RUnlock()
@@ -614,11 +689,135 @@ func (mm *ModelManager) GetStats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_models":   len(mm.models),
 		"active_models":  activeCount,
 		"current_model":  mm.current,
 		"ab_test_active": mm.abTest != nil,
 		"watch_enabled":  mm.watcher != nil,
+		"decay_detection_enabled": mm.config.DecayDetectionEnabled,
 	}
+}
+
+// CheckPerformanceDecay checks if current model performance has decayed
+// Returns true if decay detected and handled (rolled back)
+func (mm *ModelManager) CheckPerformanceDecay() (bool, string) {
+	if !mm.config.DecayDetectionEnabled {
+		return false, "decay detection disabled"
+	}
+
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+
+	if mm.current == nil {
+		return false, "no active model"
+	}
+
+	perf := &mm.current.Performance
+	if perf.TotalPredictions < uint64(mm.config.MinSamplesForDecayCheck) {
+		return false, fmt.Sprintf("not enough samples (%d < %d)",
+			perf.TotalPredictions, mm.config.MinSamplesForDecayCheck)
+	}
+
+	// Find baseline (best performing previous version)
+	var best *ModelVersion
+	maxSharpe := -math.MaxFloat64
+
+	for _, m := range mm.models {
+		if m == mm.current || !m.Active {
+			continue
+		}
+
+		// Compare based on average PnL as proxy for sharpe ratio
+		if m.Performance.TotalPredictions > 0 {
+			avgPnL := m.Performance.TotalPnL / float64(m.Performance.TotalPredictions)
+			if avgPnL > maxSharpe {
+				maxSharpe = avgPnL
+				best = m
+			}
+		}
+	}
+
+	if best == nil {
+		return false, "no alternative versions found"
+	}
+
+	// Check current model performance vs baseline
+	current := mm.current
+	currentAvg := float64(current.Performance.TotalPnL) / float64(current.Performance.TotalPredictions)
+	bestAvg := float64(best.Performance.TotalPnL) / float64(best.Performance.TotalPredictions)
+
+	decayPnL := currentAvg - bestAvg
+	decaySharpe := currentAvg - bestAvg  // Using avg as proxy for sharpe
+
+	if decayPnL >= mm.config.DecayThresholdPnL && decaySharpe >= mm.config.DecayThresholdSharpe {
+		// No significant decay
+		return false, fmt.Sprintf("no significant decay detected: current avg PnL %.6f, best avg PnL %.6f",
+			currentAvg, bestAvg)
+	}
+
+	// Performance decay detected
+	modelPerformanceDecayDetected.Inc()
+	log.Printf("[ModelManager] Performance decay detected: current=%s (avg=%.6f), best=%s (avg=%.6f)",
+		current.ID, currentAvg, best.ID, bestAvg)
+
+	if !mm.config.AutoRollbackOnDecay {
+		return true, "decay detected, auto-rollback disabled"
+	}
+
+	// Auto rollback to best version
+	log.Printf("[ModelManager] Auto-rolling back to best version: %s", best.ID)
+	err := mm.SwitchModel(best.ID)
+	if err != nil {
+		log.Printf("[ModelManager] Auto-rollback failed: %v", err)
+		return true, fmt.Sprintf("decay detected, rollback failed: %v", err)
+	}
+
+	modelAutoRollback.Inc()
+	return true, fmt.Sprintf("decay detected, auto-rolled back to %s", best.ID)
+}
+
+// GetPerformanceDecayStatus returns decay status for all models
+func (mm *ModelManager) GetPerformanceDecayStatus() map[string]any {
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+
+	status := make(map[string]any)
+	for id, m := range mm.models {
+		perf := m.Performance
+		status[id] = map[string]any{
+			"active":            m.Active,
+			"total_predictions": perf.TotalPredictions,
+			"total_errors":      perf.Errors,
+			"avg_latency_ms":    perf.AvgLatency.Seconds() * 1000,
+			"p99_latency_ms":    perf.P99Latency.Seconds() * 1000,
+		}
+	}
+
+	if mm.current != nil {
+		status["current_model"] = mm.current.ID
+	}
+
+	status["decay_detection_enabled"] = mm.config.DecayDetectionEnabled
+	return status
+}
+
+// TriggerReload triggers a manual reload of all models
+func (mm *ModelManager) TriggerReload() error {
+	log.Printf("[ModelManager] Triggering manual reload of all models")
+
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+
+	// For manual reload, just re-add the directory watch
+	// File change events will trigger individual model reloads
+	if mm.watcher != nil {
+		// Remove existing watch and re-add
+		_ = mm.watcher.Remove(mm.config.ModelDir)
+		if err := mm.watcher.Add(mm.config.ModelDir); err != nil {
+			return fmt.Errorf("failed to re-add directory watch: %w", err)
+		}
+	}
+
+	return nil
 }

@@ -261,9 +261,9 @@ func TestRecordPrediction(t *testing.T) {
 
 	// Record predictions
 	for i := 0; i < 10; i++ {
-		mm.RecordPrediction(model.ID, 10*time.Millisecond, nil)
+		mm.RecordPrediction(model.ID, 10*time.Millisecond, 0.01, nil)
 	}
-	mm.RecordPrediction(model.ID, 20*time.Millisecond, errTest)
+	mm.RecordPrediction(model.ID, 20*time.Millisecond, -0.01, errTest)
 
 	// Verify metrics
 	if model.Performance.TotalPredictions != 11 {
