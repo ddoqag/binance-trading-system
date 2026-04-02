@@ -63,6 +63,9 @@ go env GOPATH
 |------|------|----------|
 | `python -m pytest brain_py/test_self_evolving.py -v` | 自进化Meta-Agent测试 | 9项测试 |
 | `python -m pytest brain_py/test_pbt.py -v` | PBT训练器测试 | 9项测试 |
+| `python tests/test_regime_detector_pressure.py` | RegimeDetector压力测试 | 异步/并发测试 |
+| `python tests/test_sharedmemory_benchmark.py` | SharedMemory基准测试 | 序列化性能 |
+| `python tests/test_sharedmemory_with_hmm.py` | 大型模型压力测试 | 10-500KB模型 |
 | `go test ./core_go/... -v` | Go单元测试 | 67+项测试 |
 | `python end_to_end_test.py` | 端到端集成测试 | 全流程验证 |
 
@@ -77,7 +80,9 @@ go env GOPATH
 
 | 命令 | 描述 | 用途 |
 |------|------|------|
-| `python "hft_latency_queue_rl_system_go_python (7).py"` | 运行完整系统 | 主程序入口 |
+| `python start_trader.py --mode paper --symbol BTCUSDT` | 启动交易者 (模拟模式) | 主程序入口 |
+| `python start_trader.py --mode live --symbol BTCUSDT` | 启动交易者 (实盘模式) | 生产环境 |
+| `python "hft_latency_queue_rl_system_go_python (7).py"` | 运行完整系统 | 训练模式 |
 | `python brain_py/meta_agent_example.py` | 运行Meta-Agent示例 | 演示MoE系统 |
 | `python test_portfolio_standalone.py` | 投资组合测试 | 独立测试 |
 
@@ -170,4 +175,4 @@ python e2e_simple.py
 
 ---
 
-*本文档由 Claude Code 自动生成，最后更新: 2026-03-31*
+*本文档由 Claude Code 自动生成，最后更新: 2026-04-02*

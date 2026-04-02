@@ -44,10 +44,13 @@ vim .env
 #### 3. 启动服务
 
 ```bash
-# 方式1: 直接启动
-python "hft_latency_queue_rl_system_go_python (7).py"
+# 方式1: 启动交易者 (推荐)
+python start_trader.py --mode paper --symbol BTCUSDT --interval 5
 
-# 方式2: 使用Go引擎 + Python Agent
+# 方式2: 实盘模式 (谨慎使用)
+python start_trader.py --mode live --symbol BTCUSDT --production
+
+# 方式3: 使用Go引擎 + Python Agent
 cd core_go
 ./hft_engine.exe &
 cd ../brain_py
@@ -80,10 +83,12 @@ tail -f logs/agent.log
 
 | 指标 | 正常范围 | 告警阈值 |
 |------|----------|----------|
+| 检测延迟 | < 1ms | > 2ms |
 | 延迟 | < 10ms | > 50ms |
 | WebSocket重连次数 | 0-1/小时 | > 5/小时 |
 | 订单成功率 | > 99% | < 95% |
 | 内存使用 | < 500MB | > 1GB |
+| HMM训练成功率 | > 95% | < 90% |
 
 ### 监控端点
 
@@ -141,7 +146,24 @@ python -c "from core_go.live_api_client import *; check_balance()"
 cat config/risk_config.yaml
 ```
 
-### 问题4: 高延迟
+### 问题4: RegimeDetector 高延迟
+
+**症状**: 市场状态检测延迟 > 2ms
+
+**修复**:
+1. 检查是否使用 `detect_async()` 而非 `detect()`
+2. 检查后台训练是否阻塞 (查看 `_fit_in_progress`)
+3. 减少 HMM 状态数或特征窗口
+4. 启用 fallback 模式
+
+```python
+# 检查性能统计
+detector = MarketRegimeDetector()
+stats = detector.get_performance_stats()
+print(f"P99: {stats['detection_latency_ms']['p99']:.2f}ms")
+```
+
+### 问题5: 高延迟
 
 **症状**: 延迟持续 > 50ms
 
@@ -236,4 +258,4 @@ python -c "from core_go.live_api_client import *; get_account_status()"
 
 ---
 
-*本文档由 Claude Code 自动生成，最后更新: 2026-03-31*
+*本文档由 Claude Code 自动生成，最后更新: 2026-04-02*
