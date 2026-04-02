@@ -35,6 +35,14 @@ from .meta_brain import (
     StrategySelector,
     StrategyType,
 )
+from .capital_allocator import (
+    CapitalAllocator,
+    CapitalAllocatorConfig,
+    AllocationMethod,
+    StrategyPerformance,
+    AllocationPlan,
+    RebalanceThrottler,
+)
 
 __all__ = [
     "SystemMode",
@@ -63,4 +71,10 @@ __all__ = [
     "SimpleRegimeDetector",
     "StrategySelector",
     "StrategyType",
+    "CapitalAllocator",
+    "CapitalAllocatorConfig",
+    "AllocationMethod",
+    "StrategyPerformance",
+    "AllocationPlan",
+    "RebalanceThrottler",
 ]
