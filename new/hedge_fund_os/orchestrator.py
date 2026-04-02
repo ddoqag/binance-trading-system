@@ -2,6 +2,7 @@
 Hedge Fund OS - 总调度器 (Orchestrator)
 
 系统"大脑中的大脑" - 全局协调所有组件的主循环
+集成 P10Exporter 实时暴露监控指标
 """
 
 import time
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 
 from .hf_types import SystemMode, SystemState, MarketState, MetaDecision
 from .state import StateMachine
+from .exporter import get_exporter, timed_metric
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,8 @@ class Orchestrator:
         risk_kernel: Optional[Any] = None,
         execution_kernel: Optional[Any] = None,
         evolution_engine: Optional[Any] = None,
+        metrics_port: int = 8000,
+        metrics_enabled: bool = True,
     ):
         self.config = config or OrchestratorConfig()
         self.state = StateMachine(initial_mode=SystemMode.INITIALIZING)
@@ -81,6 +85,10 @@ class Orchestrator:
 
         # 注册模式切换回调
         self.state.register_callback(self._on_mode_switch)
+        
+        # 初始化监控 exporter
+        self._exporter = get_exporter(port=metrics_port, enabled=metrics_enabled)
+        self._last_drawdown = 0.0
 
     def _on_mode_switch(self, old_mode: SystemMode, new_mode: SystemMode, reason: str) -> None:
         """内部模式切换处理"""
@@ -111,6 +119,10 @@ class Orchestrator:
         self._running = True
         self._stop_event.clear()
         self.start_time = time.time()
+        
+        # 启动监控 exporter
+        if self._exporter:
+            self._exporter.start()
 
         # 初始化完成后进入 GROWTH 模式
         self.state.switch(SystemMode.GROWTH, "initialization_complete")
@@ -118,7 +130,9 @@ class Orchestrator:
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
-        logger.info("Orchestrator started in %s mode", self.state.mode.name)
+        logger.info("Orchestrator started in %s mode (metrics: %s)", 
+                   self.state.mode.name, 
+                   "enabled" if self._exporter and self._exporter.enabled else "disabled")
         return True
 
     def stop(self, reason: str = "manual") -> None:
@@ -171,20 +185,34 @@ class Orchestrator:
 
     def _execute_cycle(self) -> None:
         """单次执行周期"""
+        cycle_start = time.time()
+        
         # 1. 感知市场
+        perceive_start = time.time()
         market_state = self._perceive()
         self._latest_market_state = market_state
+        perceive_latency = (time.time() - perceive_start) * 1000
 
         # 2. 决策
+        decide_start = time.time()
         decision = self._decide(market_state)
         self._latest_decision = decision
+        decide_latency = (time.time() - decide_start) * 1000
 
         # 3. 分配资金
+        alloc_start = time.time()
         allocation = self._allocate(decision)
+        alloc_latency = (time.time() - alloc_start) * 1000
 
         # 4. 风险检查
-        if allocation and self._check_risk(allocation):
-            # 5. 执行
+        risk_start = time.time()
+        risk_ok = True
+        if allocation:
+            risk_ok = self._check_risk(allocation)
+        risk_latency = (time.time() - risk_start) * 1000
+
+        # 5. 执行
+        if allocation and risk_ok:
             self._execute(allocation)
 
         # 6. 进化
@@ -192,6 +220,16 @@ class Orchestrator:
 
         # 7. 模式切换检查
         self._check_mode_switch(market_state, decision)
+        
+        # 8. 推送监控指标
+        self._push_metrics(
+            decision=decision,
+            allocation=allocation,
+            perceive_latency=perceive_latency,
+            decide_latency=decide_latency,
+            alloc_latency=alloc_latency,
+            risk_latency=risk_latency,
+        )
 
     def _perceive(self) -> Optional[MarketState]:
         """感知市场 - 由 Meta Brain 实现"""
@@ -231,6 +269,53 @@ class Orchestrator:
         """基于市场和决策检查结果，自动模式切换"""
         if decision and decision.mode != self.state.mode:
             self.state.switch(decision.mode, "meta_brain_decision")
+
+    def _push_metrics(self, decision, allocation, perceive_latency, 
+                     decide_latency, alloc_latency, risk_latency) -> None:
+        """推送指标到 Prometheus exporter"""
+        if not self._exporter or not self._exporter.enabled:
+            return
+        
+        try:
+            # 从 Risk Kernel 获取回撤
+            drawdown = 0.0
+            max_drawdown_limit = 0.15
+            if self.risk_kernel and hasattr(self.risk_kernel, 'get_drawdown'):
+                drawdown = self.risk_kernel.get_drawdown()
+                self._last_drawdown = drawdown
+            elif hasattr(self.risk_kernel, 'latest_pnl'):
+                drawdown = getattr(self.risk_kernel.latest_pnl, 'daily_drawdown', 0.0)
+            
+            # 从 Capital Allocator 获取最大回撤限制
+            if self.capital_allocator and hasattr(self.capital_allocator, 'config'):
+                config = self.capital_allocator.config
+                if hasattr(config, 'max_drawdown_by_mode') and decision:
+                    max_drawdown_limit = config.max_drawdown_by_mode.get(
+                        decision.mode, 0.15
+                    )
+            
+            # 更新 Risk Kernel 指标
+            self._exporter.update_from_risk_kernel(
+                drawdown=drawdown,
+                max_drawdown_limit=max_drawdown_limit,
+                check_latency_ms=risk_latency
+            )
+            
+            # 更新 Meta Brain 延迟
+            self._exporter.update_meta_brain_latency(perceive_latency + decide_latency)
+            
+            # 如果有决策，更新决策指标
+            if decision:
+                weights = allocation.allocations if allocation else {}
+                self._exporter.update_from_decision(
+                    decision=decision,
+                    strategy_weights=weights,
+                    drawdown=drawdown,
+                    latency_ms=alloc_latency
+                )
+                
+        except Exception as e:
+            logger.debug("Metrics push error (non-critical): %s", e)
 
     def get_system_state(self) -> SystemState:
         """获取当前系统状态"""

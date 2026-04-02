@@ -1,0 +1,248 @@
+# P10 Hedge Fund OS - Prometheus Alert Rules
+# 用于 AlertManager 的告警配置
+# 
+# 告警级别定义：
+# - P0 (CRITICAL): 需要立即人工干预，可能导致资金损失
+# - P1 (WARNING): 需要关注，系统已自动降级
+# - P2 (INFO): 系统状态变化，仅记录
+
+# 加载命令：
+#   本地测试：promtool check rules alerts.yml
+#   Prometheus：将文件复制到 prometheus/rules/ 目录
+
+groups:
+  - name: hfos_system_alerts
+    interval: 10s
+    rules:
+      # ==================== P0 CRITICAL ====================
+      
+      - alert: HFOS_DailyDrawdown_Critical
+        expr: hfos_daily_drawdown > hfos_max_drawdown_limit
+        for: 5s
+        labels:
+          severity: critical
+          priority: P0
+        annotations:
+          summary: "CRITICAL: Daily drawdown exceeded limit"
+          description: "Current drawdown {{ $value | humanizePercentage }} exceeds limit {{ $labels.limit }}"
+          action: "Immediate shutdown recommended"
+          runbook_url: "https://wiki.internal/hfos/runbooks/drawdown"
+
+      - alert: HFOS_SystemMode_Shutdown
+        expr: hfos_system_mode == 4
+        for: 0s
+        labels:
+          severity: critical
+          priority: P0
+        annotations:
+          summary: "System entered SHUTDOWN mode"
+          description: "System mode is SHUTDOWN. All trading halted."
+          action: "Check logs for shutdown reason"
+
+      - alert: HFOS_Leverage_Abnormal
+        expr: hfos_leverage > 5
+        for: 10s
+        labels:
+          severity: critical
+          priority: P0
+        annotations:
+          summary: "Abnormal leverage detected"
+          description: "Current leverage {{ $value }}x exceeds safe threshold"
+          action: "Verify Capital Allocator configuration"
+
+      # ==================== P1 WARNING ====================
+      
+      - alert: HFOS_DailyDrawdown_Warning
+        expr: hfos_daily_drawdown > 0.10
+        for: 30s
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "WARNING: Significant drawdown"
+          description: "Daily drawdown reached {{ $value | humanizePercentage }}"
+          action: "Monitor closely, system should auto-switch to SURVIVAL mode"
+
+      - alert: HFOS_SystemMode_Crisis
+        expr: hfos_system_mode == 3
+        for: 0s
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "System in CRISIS mode"
+          description: "Only emergency strategies active"
+          action: "Review market conditions and risk parameters"
+
+      - alert: HFOS_MetaBrain_Latency_High
+        expr: hfos_meta_brain_latency_ms > 50
+        for: 1m
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "Meta Brain latency elevated"
+          description: "Decision latency {{ $value }}ms > 50ms threshold"
+          action: "Check Python process CPU/memory"
+
+      - alert: HFOS_RiskCheck_Latency_High
+        expr: hfos_risk_check_latency_ms > 10
+        for: 30s
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "Risk check latency high"
+          description: "Risk check taking {{ $value }}ms > 10ms threshold"
+          action: "May impact pre-trade risk validation"
+
+      - alert: HFOS_WebSocket_Disconnected
+        expr: hft_engine_websocket_connected == 0
+        for: 10s
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "WebSocket disconnected"
+          description: "Market data feed interrupted"
+          action: "Check network connection to Binance"
+
+      - alert: HFOS_Strategy_Weight_Imbalance
+        expr: abs(sum(hfos_strategy_weight) - 1) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "Strategy weights don't sum to 100%"
+          description: "Sum of weights: {{ $value }}"
+          action: "Check Capital Allocator normalization"
+
+      # ==================== P2 INFO ====================
+      
+      - alert: HFOS_SystemMode_Survival
+        expr: hfos_system_mode == 2
+        for: 0s
+        labels:
+          severity: info
+          priority: P2
+        annotations:
+          summary: "System in SURVIVAL mode"
+          description: "Reduced exposure, conservative trading"
+          action: "Normal protective behavior after drawdown"
+
+      - alert: HFOS_RiskAppetite_Conservative
+        expr: hfos_risk_appetite <= 1
+        for: 0s
+        labels:
+          severity: info
+          priority: P2
+        annotations:
+          summary: "Risk appetite reduced"
+          description: "Current appetite level: {{ $value }}"
+          action: "Monitor for recovery signal"
+
+      - alert: HFOS_Market_Regime_Change
+        expr: changes(hfos_market_regime[5m]) > 0
+        labels:
+          severity: info
+          priority: P2
+        annotations:
+          summary: "Market regime changed"
+          description: "New regime detected"
+          action: "Strategy selection may be affected"
+
+      - alert: HFOS_Rebalance_Frequent
+        expr: rate(hfos_rebalances_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: info
+          priority: P2
+        annotations:
+          summary: "Frequent rebalancing"
+          description: "{{ $value }} rebalances per second"
+          action: "Check if drift threshold too tight"
+
+  - name: hfos_go_engine_alerts
+    interval: 5s
+    rules:
+      # Go 引擎特有指标 (端口 9090)
+      
+      - alert: HFOS_Go_High_Latency
+        expr: hft_engine_execution_latency_seconds > 0.01
+        for: 30s
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "Go engine execution latency high"
+          description: "Latency {{ $value }}s > 10ms threshold"
+          action: "Check order queue depth"
+
+      - alert: HFOS_Go_Order_Queue_Depth
+        expr: hft_engine_orders_active > 100
+        for: 1m
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "High number of active orders"
+          description: "{{ $value }} active orders"
+          action: "Verify order lifecycle management"
+
+      - alert: HFOS_Go_API_Errors
+        expr: rate(hft_engine_api_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "Elevated API error rate"
+          description: "{{ $value }} errors/sec"
+          action: "Check Binance API status and rate limits"
+
+      - alert: HFOS_Go_Memory_High
+        expr: hft_engine_memory_usage_bytes > 500000000
+        for: 5m
+        labels:
+          severity: warning
+          priority: P1
+        annotations:
+          summary: "Go engine memory usage high"
+          description: "Memory: {{ $value | humanize1024 }}"
+          action: "Check for memory leaks"
+
+# ==================== AlertManager 路由配置 ====================
+# 建议的 alertmanager.yml 配置：
+#
+# global:
+#   smtp_smarthost: 'localhost:587'
+#   smtp_from: 'alerts@hfos.local'
+#
+# route:
+#   receiver: 'default'
+#   routes:
+#     - match:
+#         severity: critical
+#       receiver: 'critical_alerts'
+#       continue: true
+#     - match:
+#         severity: warning
+#       receiver: 'warning_alerts'
+#
+# receivers:
+#   - name: 'default'
+#     slack_configs:
+#       - channel: '#hfos-alerts'
+#   
+#   - name: 'critical_alerts'
+#     pagerduty_configs:
+#       - service_key: '<pd_key>'
+#     slack_configs:
+#       - channel: '#hfos-critical'
+#         title: '🚨 HFOS CRITICAL'
+#   
+#   - name: 'warning_alerts'
+#     email_configs:
+#       - to: 'ops@example.com'
+#

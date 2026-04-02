@@ -43,6 +43,13 @@ from .capital_allocator import (
     AllocationPlan,
     RebalanceThrottler,
 )
+from .exporter import (
+    P10Exporter,
+    P10MetricsSnapshot,
+    init_metrics,
+    get_exporter,
+    timed_metric,
+)
 
 __all__ = [
     "SystemMode",
@@ -77,4 +84,9 @@ __all__ = [
     "StrategyPerformance",
     "AllocationPlan",
     "RebalanceThrottler",
+    "P10Exporter",
+    "P10MetricsSnapshot",
+    "init_metrics",
+    "get_exporter",
+    "timed_metric",
 ]
