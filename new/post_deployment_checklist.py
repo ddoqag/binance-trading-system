@@ -108,7 +108,7 @@ if checks_failed == 0:
 else:
     print("\n[✗] Some checks failed. Please review the errors above.")
     print("\nTroubleshooting:")
-    print("  - Ensure Go Engine is running: .\core_go\hft_engine_http.exe btcusdt paper")
-    print("  - Ensure Python is running: python hedge_fund_os\demo_full.py")
+    print(r"  - Ensure Go Engine is running: .\core_go\hft_engine_http.exe btcusdt paper")
+    print(r"  - Ensure Python is running: python hedge_fund_os\demo_full.py")
     print("  - Check ports are not blocked by firewall")
     sys.exit(1)

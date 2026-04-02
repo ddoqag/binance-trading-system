@@ -1,396 +1,407 @@
-# HFT System - Project Agents Specification
-高频交易延迟队列RL系统 - AI Coding Agent 开发规范文档
+# HFT Trading System - Agent Specification
+高频交易延迟队列RL系统 - AI Agent开发规范文档
 
-> 最后更新: 2026-04-02
-> 本文档面向 AI Coding Agent，是理解本项目的单一事实来源。
+## 1. Project Overview
 
----
+This is a **High-Frequency Trading (HFT) Latency Queue Reinforcement Learning System** built with a hybrid Go + Python architecture:
 
-## 1. 项目概述
+- **Go Engine**: Microsecond-level market data ingestion, order execution, and shared memory communication
+- **Python Agent**: SAC (Soft Actor-Critic) reinforcement learning agent for trading decisions
+- **Shared Memory**: Zero-copy IPC using 144-byte mmap protocol
+- **Binance Integration**: WebSocket real-time data streaming (testnet/mainnet)
+- **Self-Evolving System**: Multi-phase architecture including regime detection, PBT training, and agent civilization
 
-这是一个**高频交易（HFT）延迟队列强化学习系统**，采用 **Go + Python 混合架构**，通过**零拷贝共享内存（mmap）**实现微秒级跨语言通信。
+## 2. Technology Stack
 
-### 核心哲学
-```
-预测 ≠ Alpha
-执行 = Alpha
-```
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| Execution Engine | Go 1.21+ | WebSocket feeds, order execution, risk management, WAL |
+| RL Agent | Python 3.9+ | SAC algorithm, decision generation |
+| Communication | mmap | Cross-language shared memory (144 bytes) |
+| ML Framework | PyTorch 2.0+ | Neural networks for RL |
+| Data Source | Binance WebSocket/API | L2 order book, trade streams |
+| Configuration | YAML | Runtime configuration |
+| Metrics | Prometheus | Performance monitoring |
 
-系统目标是从静态策略脚本进化为**AI交易生命体**：感知市场微观结构 → 强化学习决策 → 微秒级执行 → 在线进化闭环。
-
-### 架构概览
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Python AI 大脑层                         │
-│  SAC Agent │ Meta-Agent │ MoE │ 组合引擎 │ 对抗训练防御     │
-└─────────────────────────────────────────────────────────────┘
-                              ↑↓
-                    mmap + Sequence Lock (144 bytes, ~0.5-2μs)
-                              ↑↓
-┌─────────────────────────────────────────────────────────────┐
-│                    Go 执行引擎层 (神经末梢)                  │
-│  WebSocket Feed │ OrderExecutor │ RiskMgr │ WAL │ 降级保护  │
-│  QueueDynamics  │ Margin/Leverage │ Prometheus Metrics      │
-└─────────────────────────────────────────────────────────────┘
-                              ↑↓
-                    WebSocket + REST API (Binance Testnet/Mainnet)
-                              ↑↓
-┌─────────────────────────────────────────────────────────────┐
-│                    币安交易所                                │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### 当前版本状态
-- **版本**: v4.5 (工业级执行优化)
-- **代码量**: ~8,200 行 Go + ~3,600 行 Python = **11,800+ 行**
-- **Phase 1-9**: ✅ 全部完成 (100%)
-- **P1-P9 工业级升级**: ✅ 全部完成
-
----
-
-## 2. 技术栈与依赖
-
-| 组件 | 技术/版本 | 职责 |
-|------|-----------|------|
-| 执行引擎 | Go 1.26.1 | WebSocket、订单执行、风控、WAL、降级保护 |
-| RL 智能体 | Python 3.10+ | SAC 算法、决策生成、在线学习 |
-| 深度学习 | PyTorch 2.0+ | Actor-Critic 网络训练 |
-| 通信 | mmap (144-byte struct) | 跨语言零拷贝共享内存 |
-| 交易所 SDK | `github.com/adshao/go-binance/v2` | 币安 REST/WebSocket API |
-| 监控 | Prometheus + Grafana | Execution Alpha 实时监控 |
-| 统计/时序 | numpy, hmmlearn, arch, scikit-learn | 市场状态检测、GARCH、HMM |
-
-### 关键配置文件
-
-| 文件 | 说明 |
-|------|------|
-| `core_go/go.mod` | Go 模块定义（依赖: gorilla/websocket, go-binance/v2, prometheus/client_golang 等） |
-| `brain_py/requirements.txt` | Python 依赖（torch, numpy, pyyaml, hmmlearn, arch, scikit-learn） |
-| `config/default.yaml` | HFT Go 引擎默认配置（交易对、风控、RL参数、SHM路径） |
-| `config/self_evolving_trader.yaml` | 自进化交易系统配置（Phase开关、风险限额、PBT参数） |
-| `protocol.h` | C 风格共享内存协议结构体定义（**144 bytes**，含对齐说明） |
-
-**注意**: 本项目**没有** `pyproject.toml`, `setup.py`, `package.json`, `Cargo.toml` 等文件。依赖管理完全通过 `go.mod` 和 `requirements.txt` 完成。
-
----
-
-## 3. 代码组织与目录结构
+## 3. Directory Structure
 
 ```
 /
-├── core_go/                    # Go 执行引擎（核心）
-│   ├── engine.go               # HFTEngine 主入口，协调所有子系统
-│   ├── protocol.go             # Go 端共享内存协议定义与序列化
-│   ├── shm_manager.go          # 共享内存管理器（mmap 封装）
-│   ├── websocket_manager.go    # WebSocket 连接管理（自动重连）
-│   ├── executor.go             # 订单执行引擎（现货）
-│   ├── margin_executor.go      # 杠杆/保证金交易执行器
-│   ├── risk_manager.go         # 风险管理器
-│   ├── wal.go                  # Write-Ahead Logging 预写日志
-│   ├── degrade.go              # 四级熔断器 + 系统自动降级
-│   ├── metrics.go              # Prometheus 指标收集与导出
-│   ├── ab_testing.go           # A/B 测试框架（模型流量分割）
-│   ├── model_manager.go        # 在线模型热更新（性能衰退检测+自动回滚）
-│   ├── recovery_manager.go     # 崩溃恢复管理器
-│   ├── queue_dynamics.go       # Queue Dynamics v3 (Hazard Rate)
-│   ├── live_api_client.go      # 币安 Live API 客户端（官方 SDK）
-│   ├── leverage/               # 杠杆子模块（计算器、强平监控、风险监控）
-│   └── *_test.go               # Go 单元测试文件
-│
-├── brain_py/                   # Python AI 大脑层
-│   ├── agent.py                # SAC RL Agent（主智能体）
-│   ├── shm_client.py           # Python 端共享内存客户端
-│   ├── self_evolving_meta_agent.py   # Phase 3: 自进化 Meta-Agent
-│   ├── pbt_trainer.py          # Phase 4: 种群训练（PBT）
-│   ├── real_sim_real.py        # Phase 5: 高保真仿真与域适应
-│   ├── world_model.py          # Phase 8: 神经世界模型
-│   ├── agent_civilization.py   # Phase 9: 多智能体文明进化
-│   ├── auto_strategy_synthesis.py    # Phase 5: 算子级遗传编程
-│   ├── self_play_trading.py    # Phase 6: 红蓝对抗训练
-│   ├── regime_detector.py      # Phase 2: HMM+GARCH 市场状态检测
-│   ├── agents/                 # 专家智能体池（趋势跟踪、均值回归、波动率等）
-│   ├── moe/                    # Mixture of Experts 混合专家系统
-│   ├── adversarial/            # 三层对抗训练防御架构（毒流检测/在线学习）
-│   ├── queue_dynamics/         # Python 端队列动力学 v3 实现
-│   ├── portfolio/              # 投资组合优化（Black-Litterman、风险平价）
-│   ├── ab_testing/             # Python 端 A/B 测试框架
-│   ├── features/               # 微观结构特征工程
-│   ├── tests/                  # pytest 单元测试
-│   └── requirements.txt        # Python 依赖
-│
-├── shared/                     # 跨语言共享组件
-│   ├── protocol.h              # C 头文件（与根目录 protocol.h 同步）
-│   └── protocol.py             # Python 端完整协议（MarketSnapshot, OrderCommand 等）
-│
-├── core/                       # Python 核心组件
-│   ├── live_order_manager.py   # 实盘订单管理器
-│   └── live_risk_manager.py    # 实盘风险管理器
-│
-├── strategies/                 # 交易策略目录
-│   ├── base.py                 # 策略基类
-│   ├── dual_ma.py              # 双均线策略
-│   ├── rsi.py                  # RSI 策略
-│   ├── momentum.py             # 动量策略
-│   └── loader.py               # 策略热加载器
-│
-├── self_evolving_trader.py     # Phase 1-9 整合主入口（SelfEvolvingTrader）
-├── start_trader.py             # 自进化交易系统的命令行启动脚本
-├── end_to_end_test.py          # Go + Python 端到端集成测试
-├── test_system.py              # 系统组件快速测试（pre-commit 钩子执行）
-├── integration_test.py         # 集成测试
-├── scripts/                    # 启动脚本
-│   ├── start.sh                # Linux/Mac 启动脚本（含 CPU affinity）
-│   └── start.bat               # Windows 启动脚本
-├── config/                     # 配置文件
-├── data/                       # 数据文件（共享内存文件存放处）
-├── logs/                       # 日志文件
-├── checkpoints/                # 模型检查点
-└── docs/                       # 文档（架构设计、项目管理、监控部署指南）
+├── protocol.h                 # C-style shared memory protocol (144 bytes)
+├── core_go/                   # Go execution engine
+│   ├── engine.go              # Main HFT engine
+│   ├── main_default.go        # Default entry point
+│   ├── main_with_http.go      # HTTP-enabled entry point
+│   ├── live_api_client.go     # Binance Live API client (official SDK)
+│   ├── websocket_manager.go   # WebSocket feed manager
+│   ├── shm_manager.go         # Shared memory manager
+│   ├── executor.go            # Order execution engine
+│   ├── margin_executor.go     # Margin trading executor
+│   ├── risk_manager.go        # Risk management
+│   ├── risk_enhanced.go       # Enhanced risk controls
+│   ├── wal.go                 # Write-ahead logging
+│   ├── degrade.go             # Circuit breaker & degradation
+│   ├── ab_testing.go          # A/B testing framework
+│   ├── model_manager.go       # Model version management
+│   ├── queue_dynamics.go      # Queue position modeling
+│   ├── request_queue.go       # API request queue
+│   ├── order_fsm.go           # Order state machine
+│   ├── recovery_manager.go    # Crash recovery
+│   ├── metrics.go             # Prometheus metrics
+│   ├── mmap_unix.go           # Unix mmap implementation
+│   ├── mmap_windows.go        # Windows mmap implementation
+│   └── *_test.go              # Go test files
+├── brain_py/                  # Python AI brain
+│   ├── agent.py               # SAC RL agent
+│   ├── shm_client.py          # Shared memory client
+│   ├── agent_registry.py      # Agent registry (Phase 1)
+│   ├── regime_detector.py     # Market regime detection (Phase 2)
+│   ├── self_evolving_meta_agent.py  # Meta-agent (Phase 3)
+│   ├── pbt_trainer.py         # Population Based Training (Phase 4)
+│   ├── real_sim_real.py       # Sim-to-real adaptation (Phase 5)
+│   ├── moe/                   # Mixture of Experts (Phase 6)
+│   ├── world_model.py         # World model (Phase 8)
+│   ├── agent_civilization.py  # Agent civilization (Phase 9)
+│   ├── requirements.txt       # Python dependencies
+│   └── tests/                 # Python test files
+├── strategies/                # Trading strategies
+│   ├── base.py                # Strategy base class
+│   ├── dual_ma.py             # Dual moving average
+│   ├── momentum.py            # Momentum strategy
+│   └── rsi.py                 # RSI strategy
+├── core/                      # Python core components
+│   ├── live_order_manager.py  # Live order management
+│   └── live_risk_manager.py   # Live risk management
+├── leverage/                  # Leverage trading components
+├── retail-micro-trader/       # Retail trading components
+├── shared/                    # Shared protocol definitions
+│   ├── protocol.h             # C header
+│   └── protocol.py            # Python bindings
+├── config/                    # Configuration files
+│   ├── default.yaml           # Default configuration
+│   └── self_evolving_trader.yaml  # Self-evolving config
+├── scripts/                   # Startup scripts
+│   ├── start.sh               # Linux/Mac startup
+│   ├── start.bat              # Windows startup
+│   ├── start_go_engine.bat    # Windows Go engine only
+│   └── *.ps1                  # PowerShell scripts
+├── docs/                      # Documentation
+│   ├── ARCHITECTURE_OVERVIEW.md
+│   ├── SELF_EVOLVING_LIVE_DESIGN.md
+│   ├── MONITORING_SETUP.md
+│   └── ...
+├── logs/                      # Log files
+├── data/                      # Data files
+├── checkpoints/               # Model checkpoints
+└── ab_test_results/           # A/B testing results
 ```
 
----
+## 4. Build and Run Commands
 
-## 4. 构建、运行与测试命令
+### Prerequisites
+- Go 1.21+
+- Python 3.9+
+- PyTorch
+- Binance API credentials (for live trading)
 
-### 4.1 初始化项目
+### Initialization
 ```bash
-# 一键初始化（安装依赖、构建引擎、部署 pre-commit 钩子）
+# One-time project initialization
 chmod +x init.sh
 ./init.sh
 ```
 
-### 4.2 构建 Go 引擎
+### Build Commands
 ```bash
-cd core_go
+# Build Go engine (Windows)
+cd core_go && go build -o hft_engine.exe .
 
-# Windows
-go build -o hft_engine.exe .
+# Build Go engine (Linux/Mac)
+cd core_go && go build -o hft_engine .
 
-# Linux/Mac
-go build -o hft_engine -ldflags="-s -w" .
+# Build with optimizations
+cd core_go && go build -o hft_engine -ldflags="-s -w" .
 ```
 
-### 4.3 运行测试
+### Run Commands
 ```bash
-# 系统组件测试（pre-commit 钩子会运行这个）
-python test_system.py
+# Full system startup (Windows)
+cd scripts && start.bat btcusdt paper
 
-# 端到端集成测试（启动真实 Go 引擎 + Python Agent）
-python end_to_end_test.py
+# Full system startup (Linux/Mac)
+cd scripts && ./start.sh btcusdt paper
 
-# Go 单元测试
-cd core_go
-go test -v ./...
-
-# Python 测试（brain_py 内）
-cd brain_py
-pytest tests/ -v
-```
-
-### 4.4 启动系统
-
-**方式 A: 传统 HFT 引擎（Go + Python 分离运行）**
-```bash
-# Windows
-scripts\start.bat btcusdt paper
-
-# Linux/Mac
-scripts/start.sh btcusdt paper
-
-# 手动启动 Go 引擎
-cd core_go
-./hft_engine.exe btcusdt paper margin   # 第3参数 margin 启用杠杆
-
-# 手动启动 Python Agent
-cd brain_py
-python agent.py
-```
-
-**方式 B: 自进化交易系统（推荐，整合 Phase 1-9）**
-```bash
-# 模拟交易（默认）
+# Start self-evolving trader
 python start_trader.py --mode paper --symbol BTCUSDT
 
-# 实盘（会要求二次确认，且必须设置 API Key）
-export BINANCE_API_KEY=xxx
-export BINANCE_API_SECRET=yyy
-python start_trader.py --mode live --symbol BTCUSDT --production
+# Start Go engine only
+cd core_go && ./hft_engine.exe btcusdt
+
+# Start Python agent only
+cd brain_py && python agent.py
 ```
 
----
+### Dependency Installation
+```bash
+# Python dependencies
+pip install -r brain_py/requirements.txt
 
-## 5. 开发规范
-
-### 5.1 代码风格
-- **Go**: 严格遵循 `go fmt` 和 `go vet`
-  - 函数长度 < 50 行
-  - 文件长度 < 800 行
-  - 所有错误必须显式处理，禁止 ` _ = err` 吞掉错误
-- **Python**: PEP 8 + 类型注解
-  - 函数长度 < 50 行
-  - 使用 `typing` 模块标注参数和返回值
-  - 优先创建新对象，避免修改现有对象（不可变性原则）
-
-### 5.2 Git 提交规范
-```
-feat:     新功能
-fix:      修复问题
-docs:     文档更新
-test:     测试相关
-refactor: 重构
-perf:     性能优化
+# Go dependencies (auto-fetched on build)
+cd core_go && go mod tidy
 ```
 
-### 5.3 Pre-commit 钩子（由 init.sh 自动安装）
-`.git/hooks/pre-commit` 会在每次提交前自动执行：
-1. `python test_system.py` — 系统测试
-2. `gofmt -l` — Go 代码格式检查
-3. `python -m py_compile` — Python 语法检查
+## 5. Testing Strategy
 
-**任何一项失败都会阻止提交。**
+### Test Organization
+- **Go Tests**: 199+ test functions in `*_test.go` files
+- **Python Tests**: Located in `brain_py/tests/`
+- **E2E Tests**: `end_to_end_test.py` - Full integration test
+- **System Tests**: `test_system.py` - Component verification
 
-### 5.4 测试要求
-- 所有新功能必须有单元测试
-- 修改核心组件（`core_go/engine.go`, `brain_py/agent.py`, 共享内存协议）必须运行 E2E 测试
-- 提交前必须确保 `test_system.py` 通过
+### Running Tests
+```bash
+# Go unit tests
+cd core_go && go test -v
 
----
+# Go tests with coverage
+cd core_go && go test -v -cover
 
-## 6. 共享内存协议（关键）
+# Specific test
+cd core_go && go test -v -run TestWebSocketReconnection
 
-### 6.1 结构大小
-- **协议文件**: `protocol.h`（根目录）和 `shared/protocol.h` 必须保持一致
-- **实际大小**: **144 bytes**（不是 128 bytes）
-  - Go 的 8-byte 对齐要求在 `ask_queue_pos` 后增加了 4 bytes padding
-  - `decision_seq` 因此从 offset 72 开始
-- **Static_assert**: `sizeof(TradingSharedState) == 144`
+# Python tests
+python test_system.py
 
-### 6.2 布局
-```c
-/* Cache Line 0 (bytes 0-71): Market Data - Written by Go */
-uint64_t seq;           // offset 0
-uint64_t seq_end;       // offset 8
-int64_t  timestamp;     // offset 16
-double   best_bid;      // offset 24
-double   best_ask;      // offset 32
-double   micro_price;   // offset 40
-double   ofi_signal;    // offset 48
-float    trade_imbalance; // offset 56
-float    bid_queue_pos;   // offset 60
-float    ask_queue_pos;   // offset 64
-char     _padding0[4];    // offset 68-71
+# End-to-end test (requires API keys)
+python end_to_end_test.py
 
-/* Cache Line 1 (bytes 72-143): AI Decision - Written by Python */
-uint64_t decision_seq;     // offset 72
-uint64_t decision_ack;     // offset 80 (written by Go)
-int64_t  decision_timestamp; // offset 88
-double   target_position;    // offset 96
-double   target_size;        // offset 104
-double   limit_price;        // offset 112
-float    confidence;         // offset 120
-float    volatility_forecast; // offset 124
-int32_t  action;             // offset 128 (TradingAction enum)
-int32_t  regime;             // offset 132 (MarketRegime enum)
-char     _padding1[8];       // offset 136-143
+# Integration test
+python integration_test.py
 ```
 
-### 6.3 同步机制
-- **Sequence Lock**: 无锁同步
-  - Writer: `seq++` → 写数据 → `seq_end = seq`
-  - Reader: 读 `seq` → 读数据 → 读 `seq_end`，若相等则数据一致
-- **Decision ACK**: Python 写 `decision_seq` 后，Go 执行完订单将 `decision_ack` 设为相同值
+### Pre-commit Hooks
+The `init.sh` script installs a pre-commit hook that runs:
+1. `test_system.py` - System component tests
+2. `gofmt` - Go code formatting check
+3. `py_compile` - Python syntax validation
 
-**警告**: 任何修改 `protocol.h` 或 `protocol.go` 的操作，必须同步更新 Go/Python/C 三端，并重新运行 `test_system.py` 和 `end_to_end_test.py`。
+## 6. Shared Memory Protocol
+
+### Structure Size
+**Total size: 144 bytes** (due to Go's 8-byte alignment requirements)
+
+### Memory Layout
+```
+=== Cache Line 0 (Bytes 0-71): Market Data (Written by Go) ===
+- seq (uint64): Sequence number for lock-free sync
+- seq_end (uint64): End sequence (must match seq)
+- timestamp (int64): Unix timestamp (nanoseconds)
+- best_bid (float64): Best bid price
+- best_ask (float64): Best ask price
+- micro_price (float64): Micro-price (weighted mid)
+- ofi_signal (float64): Order Flow Imbalance signal
+- trade_imbalance (float32): Recent trade flow imbalance
+- bid_queue_pos (float32): Position in bid queue (0-1)
+- ask_queue_pos (float32): Position in ask queue (0-1)
+- _padding0[4]: Padding for 8-byte alignment
+
+=== Cache Line 1 (Bytes 72-143): AI Decision (Written by Python) ===
+- decision_seq (uint64): Decision sequence number
+- decision_ack (uint64): Acknowledgment from Go
+- decision_timestamp (int64): When decision was made
+- target_position (float64): Target position size
+- target_size (float64): Order quantity
+- limit_price (float64): Limit price (0 for market)
+- confidence (float32): AI confidence (0-1)
+- volatility_forecast (float32): Predicted volatility
+- action (int32): TradingAction enum
+- regime (int32): MarketRegime enum
+- _padding1[8]: Padding to reach 144 bytes
+```
+
+### Trading Actions
+```python
+ACTION_WAIT = 0           # Hold position
+ACTION_JOIN_BID = 1       # Place limit buy at bid
+ACTION_JOIN_ASK = 2       # Place limit sell at ask
+ACTION_CROSS_BUY = 3      # Market buy
+ACTION_CROSS_SELL = 4     # Market sell
+ACTION_CANCEL = 5         # Cancel orders
+ACTION_PARTIAL_EXIT = 6   # Take partial profits
+```
+
+### Market Regimes
+```python
+REGIME_UNKNOWN = 0
+REGIME_TREND_UP = 1
+REGIME_TREND_DOWN = 2
+REGIME_RANGE = 3
+REGIME_HIGH_VOL = 4
+REGIME_LOW_VOL = 5
+```
+
+## 7. Configuration
+
+### Default Configuration (`config/default.yaml`)
+```yaml
+# Trading settings
+symbol: btcusdt
+paper_trading: true
+max_position: 1.0
+base_order_size: 0.01
+
+# Risk limits
+daily_loss_limit: -10000  # $10,000 max daily loss
+max_drawdown: 0.15        # 15% max drawdown
+max_orders_per_minute: 60
+
+# RL Agent
+agent:
+  state_dim: 12
+  hidden_dim: 256
+  learning_rate: 0.0003
+  buffer_size: 100000
+
+# Shared memory
+shm:
+  path: /tmp/hft_trading_shm  # Linux/Mac
+  # path: .\data\hft_trading_shm  # Windows
+```
+
+### Environment Variables
+```bash
+# Required for live trading
+export BINANCE_API_KEY=your_api_key
+export BINANCE_API_SECRET=your_api_secret
+
+# Shared memory path override
+export HFT_SHM_PATH=/tmp/hft_trading_shm
+
+# Proxy settings (for mainland China)
+export HTTP_PROXY=http://127.0.0.1:7897
+export HTTPS_PROXY=http://127.0.0.1:7897
+```
+
+## 8. Code Style Guidelines
+
+### Go Code
+- Follow `go fmt` and `go vet`
+- Functions: < 50 lines preferred
+- Files: < 800 lines preferred
+- All errors must be explicitly handled
+- Prefer creating new objects over mutating existing ones
+
+### Python Code
+- Follow PEP 8
+- Use type annotations
+- Functions: < 50 lines preferred
+- Docstrings for all public functions
+
+### Naming Conventions
+- **Go**: PascalCase for exported, camelCase for internal
+- **Python**: snake_case for functions/variables, PascalCase for classes
+- **Files**: snake_case for Python, snake_case or descriptive for Go
+
+## 9. Architecture Components
+
+### Phase 1: Agent Registry (`brain_py/agent_registry.py`)
+Dynamic strategy loading and management
+
+### Phase 2: Regime Detector (`brain_py/regime_detector.py`)
+Market state detection using HMM
+
+### Phase 3: Self-Evolving Meta-Agent (`brain_py/self_evolving_meta_agent.py`)
+Weight adaptation and strategy evolution
+
+### Phase 4: PBT Trainer (`brain_py/pbt_trainer.py`)
+Population Based Training for hyperparameter optimization
+
+### Phase 5: Real-Sim-Real (`brain_py/real_sim_real.py`)
+Domain adaptation between simulation and live trading
+
+### Phase 6: Mixture of Experts (`brain_py/moe/`)
+Multi-agent ensemble system
+
+### Phase 7: Online Learning
+Continuous learning from live market data
+
+### Phase 8: World Model (`brain_py/world_model.py`)
+Model-based planning and simulation
+
+### Phase 9: Agent Civilization (`brain_py/agent_civilization.py`)
+Multi-agent ecosystem with roles and cooperation
+
+## 10. Security Considerations
+
+- **Default Paper Trading**: No real money at risk by default
+- **Kill Switch**: Automatic stop on excessive losses
+- **API Key Security**: Never commit credentials to git
+- **Position Limits**: Hard limits prevent over-leveraging
+- **Rate Limiting**: API call throttling to prevent bans
+
+## 11. Monitoring and Observability
+
+### Metrics Endpoints
+- Go engine exposes Prometheus metrics
+- Grafana dashboard: `core_go/grafana_dashboard.json`
+- Alert rules: `core_go/alert_rules.yml`
+
+### Log Files
+- `logs/go_engine.log` - Go engine logs
+- `logs/python_agent.log` - Python agent logs
+- `logs/wal/` - Write-ahead logs
+
+### Health Checks
+```bash
+# Check if system is running
+python test_system.py
+
+# View recent logs
+tail -f logs/go_engine.log
+tail -f logs/python_agent.log
+```
+
+## 12. Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| WebSocket connection timeout | Check proxy settings, try testnet |
+| Bad handshake | Confirm using correct testnet endpoint |
+| SHM communication failure | Check struct size (144 bytes) and alignment |
+| Permission denied | Ensure write access to `data/` directory |
+| Import errors | Run `pip install -r brain_py/requirements.txt` |
+| Go build errors | Run `cd core_go && go mod tidy` |
+
+## 13. Git Workflow
+
+```
+feat:     New feature
+fix:      Bug fix
+docs:     Documentation updates
+test:     Test-related changes
+refactor: Code refactoring
+perf:     Performance improvements
+```
+
+## 14. Key Entry Points
+
+| File | Purpose |
+|------|---------|
+| `core_go/main_default.go` | Standard Go engine entry point |
+| `core_go/main_with_http.go` | HTTP-enabled Go engine |
+| `brain_py/agent.py` | SAC RL agent main loop |
+| `start_trader.py` | Self-evolving trader CLI |
+| `self_evolving_trader.py` | Integrated trading system |
+| `init.sh` | Project initialization |
+
+## 15. Documentation References
+
+- `README.md` - Project overview and quick start
+- `docs/ARCHITECTURE_OVERVIEW.md` - System architecture
+- `docs/SELF_EVOLVING_LIVE_DESIGN.md` - Self-evolving system design
+- `docs/MONITORING_SETUP.md` - Monitoring configuration
+- `docs/WINDOWS_INTEGRATION_GUIDE.md` - Windows-specific setup
+- `core_go/AB_TESTING.md` - A/B testing framework
 
 ---
-
-## 7. 安全与风控
-
-### 7.1 默认安全设置
-- **默认纸交易**: `paper_trading: true`，不会动用真实资金
-- **API 密钥管理**: 必须通过环境变量 `BINANCE_API_KEY` 和 `BINANCE_API_SECRET` 传入，**禁止硬编码**
-- **代理设置**: 中国大陆用户可设置 `HTTP_PROXY` / `HTTPS_PROXY`
-
-### 7.2 风控机制
-- **每日亏损限制**: 默认 -$10,000
-- **最大回撤**: 15% 触发 kill switch
-- **订单频率限制**: 默认 60 单/分钟
-- **仓位限制**: 默认 max_position = 1.0 BTC
-- **四级熔断降级** (`degrade.go`): Normal → Cautious → Restricted → Emergency → Halt
-- **杠杆/强平**: `margin_executor.go` + `core_go/leverage/` 支持全仓杠杆，实时监控爆仓风险
-
-### 7.3 WAL 与恢复
-- `wal.go` / `recovery_manager.go` 记录所有订单和状态变化
-- 崩溃后可通过 Checkpoint + WAL Replay 恢复状态
-
----
-
-## 8. 监控与可观测性
-
-### 8.1 Prometheus 指标
-Go 引擎在 `metrics.go` 中内置了 Prometheus exporter，端口默认 **2112**，指标包括：
-- `fill_quality` — 成交质量
-- `adverse_selection` — 毒流量检测
-- `order_latency_ms` — 订单延迟
-- `position_size` — 当前仓位
-- `pnl` — 已实现/未实现盈亏
-- `hft_engine_ab_test_requests_total` — A/B 测试流量分布
-
-### 8.2 关键配置文件
-- `core_go/prometheus.yml` — Prometheus 采集配置
-- `core_go/alert_rules.yml` — 告警规则
-- `core_go/grafana_dashboard.json` — Grafana 面板 JSON
-
-详细部署指南见 `docs/MONITORING_SETUP.md` 和 `core_go/MONITORING_SETUP.md`。
-
----
-
-## 9. 关键模块说明
-
-| 模块 | 文件 | 状态 | 说明 |
-|------|------|------|------|
-| P1 实盘一体化架构 | `shared/protocol.*`, `core_go/shm_manager.go` | ✅ | 零拷贝共享内存通信 |
-| P2 Queue Dynamics v3 | `core_go/queue_dynamics.go`, `brain_py/queue_dynamics/` | ✅ | Hazard Rate 概率填充模型 |
-| P3 执行 Alpha 监控 | `core_go/metrics.go` | ✅ | Prometheus + Grafana |
-| P4 A/B 测试框架 | `core_go/ab_testing.go`, `brain_py/ab_testing/` | ✅ | 流量分割 + 统计显著性 |
-| P5 在线模型热更新 | `core_go/model_manager.go` | ✅ | 性能衰退检测 + 自动回滚 |
-| P6 对抗训练 | `brain_py/adversarial/` | ✅ | 三层防御做市商收割 |
-| P7 WAL 预写日志 | `core_go/recovery_manager.go`, `core_go/wal.go` | ✅ | 崩溃恢复 + 检查点 |
-| P8 降级策略 | `core_go/degrade.go` | ✅ | 四级熔断器 + 自动降级 |
-| P9 杠杆全仓交易 | `core_go/margin_executor.go`, `core_go/leverage/` | ✅ | 杠杆/保证金/强平支持 |
-| Phase 1 OrderManager | `core_go/order_fsm.go` | ✅ | WebSocket订单生命周期 |
-| Phase 2 RegimeDetector | `brain_py/regime_detector.py` | ✅ | HMM+GARCH市场状态检测 |
-| Phase 3 Meta-Agent | `brain_py/self_evolving_meta_agent.py` | ✅ | 收益反馈权重更新 |
-| Phase 4 PBT | `brain_py/pbt_trainer.py` | ✅ | 策略种群训练 |
-| Phase 5 Auto-Strategy | `brain_py/auto_strategy_synthesis.py` | ✅ | 算子级遗传编程 |
-| Phase 6 Self-Play | `brain_py/self_play_trading.py` | ✅ | 红蓝对抗 |
-| Phase 7 Real→Sim→Real | `brain_py/real_sim_real.py` | ✅ | 高保真仿真 |
-| Phase 8 World Model | `brain_py/world_model.py` | ✅ | 神经市场模型 |
-| Phase 9 Civilization | `brain_py/agent_civilization.py` | ✅ | 多智能体社会进化 |
-
----
-
-## 10. 故障排除
-
-| 问题 | 解决方案 |
-|------|----------|
-| WebSocket 连接超时 | 检查代理设置，尝试测试网 `wss://stream.testnet.binance.vision` |
-| Bad handshake | 确认使用正确的测试网端点 |
-| SHM 通信失败 | 检查 struct 大小和对齐（必须是 **144 bytes**） |
-| 权限拒绝 | 确保有写入 `data/` 和 `logs/` 目录的权限 |
-| `-2015` / `-1021` API 错误 | 时间戳不同步，检查系统时间或启用 `live_api_client.go` 中的时间同步 |
-| Go 构建失败 | 运行 `cd core_go && go mod tidy`，确保 Go 1.26.1+ |
-| Python 导入错误 | 确认 `sys.path` 包含项目根目录或 `brain_py` 目录 |
-
----
-
-## 11. 协作规范
-
-- **代码审查**: 所有核心修改需通过 code-reviewer agent
-- **测试驱动**: 新功能先用 tdd-guide agent 写测试
-- **安全检查**: 涉及交易执行的代码需 security-reviewer 审查
-- **文档更新**: 修改 `protocol.h`、配置结构或 API 必须同步更新本文档
-
----
-
 *Last Updated: 2026-04-02*

@@ -25,12 +25,8 @@ from .agents.execution_sac import ExecutionSACAgent
 from .ab_testing import ABTestIntegrator, ModelABTest, ModelABTestConfig, StrategyABTest
 from shared.protocol import (
     MarketSnapshot,
-    OrderCommand,
     OrderType,
     OrderSide,
-    unpack_market_snapshot,
-    pack_order_command,
-    HEADER_SIZE,
     HFT_SHM_SIZE_DEFAULT,
 )
 from shared.shm_reader import SharedMemoryReader
@@ -258,7 +254,7 @@ class LiveAIIntegrator:
         ], dtype=np.float32)
         return obs
 
-    def _convert_to_execution_state(self, snapshot: MarketSnapshot, meta_result) -> np.ndarray:
+    def _convert_to_execution_state(self, snapshot: MarketSnapshot, _meta_result) -> np.ndarray:
         """转换为 SAC 执行状态 (10维)
 
         状态: [ofi, queue_ratio, hazard_rate, adverse_score, toxic_prob,

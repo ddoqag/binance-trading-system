@@ -11,7 +11,7 @@
 """
 
 from dataclasses import dataclass
-from typing import Optional, Dict, List, Tuple, Union, Callable
+from typing import Optional, Dict, List, Tuple, Callable
 from enum import Enum
 import numpy as np
 import pandas as pd

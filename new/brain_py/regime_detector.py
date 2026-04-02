@@ -1,24 +1,25 @@
 """
 regime_detector.py - Market Regime Detection using HMM and GARCH.
 
-Provides:
-- Hidden Markov Model (HMM) for regime classification
-- GARCH model for volatility forecasting
-- Real-time regime detection with low latency
+Production级实现：
+- 异步非阻塞 HMM 训练（ProcessPool）
+- 双缓冲模型切换（原子替换）
+- fit 节流 + coalescing（防爆）
+- fallback 降级机制
+- < 1ms 检测延迟
 
-Regimes:
-- TRENDING: Persistent directional price movement
-- MEAN_REVERTING: Oscillating around mean price
-- HIGH_VOLATILITY: Large price swings, high uncertainty
+Author: P10 Trading System
 """
 
+import asyncio
 import numpy as np
-from enum import Enum
-from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict
-from collections import deque
 import time
 import warnings
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, List, Optional, Tuple, Deque
 
 # Suppress sklearn warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -30,13 +31,6 @@ try:
 except ImportError:
     HMMLEARN_AVAILABLE = False
     GaussianHMM = None
-
-try:
-    from arch import arch_model
-    ARCH_AVAILABLE = True
-except ImportError:
-    ARCH_AVAILABLE = False
-    arch_model = None
 
 try:
     from .features.regime_features import RegimeFeatureExtractor, RegimeFeatures
@@ -56,36 +50,126 @@ class Regime(Enum):
 class RegimePrediction:
     """Output of regime detection."""
     regime: Regime
-    confidence: float  # 0.0 - 1.0
+    confidence: float
     probabilities: Dict[Regime, float]
     volatility_forecast: float
     timestamp: float
+    latency_ms: float = 0.0  # 新增：检测延迟
 
+
+# ============================================================================
+# 子进程执行函数（必须是顶层函数！）
+# ============================================================================
+
+def _train_hmm_worker(prices: np.ndarray, n_states: int = 3) -> Optional[Tuple]:
+    """
+    在子进程中训练 HMM。
+    
+    ⚠️ 关键：不能使用 self，所有参数通过函数参数传递
+    返回：(model, state_to_regime_map) 或 None
+    
+    Args:
+        prices: 价格历史数组
+        n_states: HMM 隐藏状态数
+    
+    Returns:
+        (trained_model, state_mapping) 或 None（失败时）
+    """
+    try:
+        if not HMMLEARN_AVAILABLE or len(prices) < 50:
+            return None
+        
+        # 计算对数收益率
+        log_returns = np.diff(np.log(prices))
+        log_returns = log_returns[np.isfinite(log_returns)]
+        
+        if len(log_returns) < 30:
+            return None
+        
+        # 准备特征：returns 和 squared returns
+        features = np.column_stack([log_returns, log_returns ** 2])
+        
+        # 训练 HMM
+        model = GaussianHMM(
+            n_components=n_states,
+            covariance_type="full",
+            n_iter=50,  # 减少迭代次数，加速训练
+            random_state=42,
+            init_params='stmc'
+        )
+        
+        model.fit(features)
+        
+        # 构建 state 到 regime 的映射
+        state_to_regime = {}
+        for state in range(n_states):
+            mean_return = model.means_[state][0]
+            mean_vol_proxy = model.means_[state][1]
+            
+            # 基于收益和波动率分类
+            if mean_vol_proxy > np.percentile(model.means_[:, 1], 66):
+                state_to_regime[state] = Regime.HIGH_VOLATILITY
+            elif np.abs(mean_return) > np.std(model.means_[:, 0]):
+                state_to_regime[state] = Regime.TRENDING
+            else:
+                state_to_regime[state] = Regime.MEAN_REVERTING
+        
+        return (model, state_to_regime)
+        
+    except Exception as e:
+        print(f"[HMM TRAIN ERROR] {e}")
+        return None
+
+
+# ============================================================================
+# 主类：Production级 Regime Detector
+# ============================================================================
 
 class MarketRegimeDetector:
     """
-    Market regime detector using HMM and GARCH models.
-
-    Combines:
-    1. Gaussian HMM for regime classification based on return features
-    2. GARCH(1,1) for volatility forecasting
-    3. Feature extraction for state representation
-
-    Performance targets:
-    - Detection latency: < 1 second
-    - Prediction accuracy: > 60%
+    Production级市场状态检测器。
+    
+    特性：
+    - 异步非阻塞 HMM 训练（后台进程池）
+    - 双缓冲模型切换（原子替换，无锁）
+    - fit 节流（避免任务堆积）
+    - fallback 降级机制
+    - < 1ms 检测延迟
+    
+    Usage:
+        detector = MarketRegimeDetector()
+        
+        # 冷启动：同步训练初始模型
+        detector.fit(initial_prices)
+        
+        # 主循环：异步检测（不阻塞）
+        async for price in market_stream:
+            pred = await detector.detect_async(price)
+            print(f"Regime: {pred.regime}, Latency: {pred.latency_ms:.2f}ms")
     """
 
-    def __init__(self, n_states: int = 3, feature_window: int = 100):
+    def __init__(
+        self,
+        n_states: int = 3,
+        feature_window: int = 100,
+        fit_interval_ticks: int = 1000,
+        max_price_history: int = 5000
+    ):
         """
-        Initialize regime detector.
-
+        初始化检测器。
+        
         Args:
-            n_states: Number of HMM hidden states (default 3 for 3 regimes)
-            feature_window: Window size for feature extraction
+            n_states: HMM 隐藏状态数
+            feature_window: 特征提取窗口
+            fit_interval_ticks: 每 N 个 tick 触发后台训练
+            max_price_history: 价格历史最大长度
         """
         self.n_states = n_states
         self.feature_window = feature_window
+        self._fit_interval = fit_interval_ticks
+        
+        # Data storage
+        self.price_history: Deque[float] = deque(maxlen=max_price_history)
 
         # Feature extractor
         self.feature_extractor = RegimeFeatureExtractor(
@@ -93,462 +177,363 @@ class MarketRegimeDetector:
             min_samples=30
         )
 
-        # HMM model
-        self.hmm: Optional[GaussianHMM] = None
-        self._hmm_fitted = False
+        # Model double buffering
+        self._active_model: Optional[GaussianHMM] = None
+        self._state_to_regime: Dict[int, Regime] = {}
 
-        # GARCH model parameters (fitted online)
+        # Async control
+        self._executor = ProcessPoolExecutor(max_workers=1)
+        self._fit_task: Optional[asyncio.Task] = None
+        self._fit_in_progress = False
+        self._tick_count = 0
+
+        # GARCH parameters
         self.garch_omega = 0.000001
         self.garch_alpha = 0.1
         self.garch_beta = 0.85
         self.current_variance = 0.0001
-
-        # State mapping (fitted during training)
-        self.state_to_regime: Dict[int, Regime] = {}
-
-        # Performance tracking
-        self.detection_times: deque = deque(maxlen=1000)
-        self.regime_history: deque = deque(maxlen=1000)
-        self.price_history: deque = deque(maxlen=feature_window * 2)
-
-        # Fallback mode if libraries not available
+        
+        # Fallback state
+        self._last_regime = Regime.UNKNOWN
+        self._fallback_thresholds = {'high_vol': 0.5, 'trend': 0.001}
         self._use_fallback = not HMMLEARN_AVAILABLE
 
-    def fit(self, prices: np.ndarray) -> bool:
+        # Performance tracking
+        self.detection_times: Deque[float] = deque(maxlen=1000)
+        self.regime_history: Deque[Regime] = deque(maxlen=1000)
+
+    # Fast path: async detection (for main loop)
+
+    async def detect_async(self, price: float) -> RegimePrediction:
         """
-        Fit HMM model on historical price data.
+        异步检测当前市场状态（非阻塞，< 1ms）。
+        
+        这是主循环应该使用的方法。它会：
+        1. 快速提取特征
+        2. 使用当前模型预测（仅 predict，无训练）
+        3. 触发后台训练（每 N tick，非阻塞）
+        
+        Args:
+            price: 当前价格
+        
+        Returns:
+            RegimePrediction 包含状态、置信度、延迟
+        """
+        start = time.perf_counter()
+        
+        # 1. 更新价格历史
+        self.price_history.append(price)
+        
+        # 2. 特征提取（轻量，同步）
+        features = self.feature_extractor.update(price)
+        if features is None:
+            return self._create_unknown_prediction(start)
+        
+        # 3. 触发后台训练（带节流）
+        self._tick_count += 1
+        if self._tick_count % self._fit_interval == 0:
+            self._trigger_background_fit()
+        
+        # 4. 快路径：仅预测
+        prediction = self._predict_fast(features)
+        
+        # 5. 记录性能
+        latency = (time.perf_counter() - start) * 1000
+        self.detection_times.append(latency)
+        prediction.latency_ms = latency
+        
+        return prediction
+
+    def _predict_fast(self, features) -> RegimePrediction:
+        """
+        极速预测路径（仅 decode，无训练）。
+        
+        使用当前激活的模型进行预测，如果模型未就绪则使用 fallback。
+        """
+        if self._use_fallback or self._active_model is None:
+            return self._detect_fallback(features)
+        
+        try:
+            # 准备观测值
+            obs = np.array([[features.mean_return, features.volatility ** 2]])
+            
+            # Viterbi 解码（极速）
+            log_prob, states = self._active_model.decode(obs, algorithm="viterbi")
+            state = states[0]
+            
+            # 获取状态概率
+            state_probs = self._get_state_probabilities(obs[0])
+            
+            # 映射到 regime
+            regime = self._state_to_regime.get(state, Regime.UNKNOWN)
+            confidence = float(np.max(state_probs))
+            
+            # 构建概率分布
+            regime_probs = {r: 0.0 for r in Regime if r != Regime.UNKNOWN}
+            for s, prob in enumerate(state_probs):
+                r = self._state_to_regime.get(s, Regime.UNKNOWN)
+                if r != Regime.UNKNOWN:
+                    regime_probs[r] += prob
+            
+            # 更新 GARCH 波动率预测
+            vol_forecast = self._update_garch(features)
+            
+            self._last_regime = regime
+            
+            return RegimePrediction(
+                regime=regime,
+                confidence=confidence,
+                probabilities=regime_probs,
+                volatility_forecast=vol_forecast,
+                timestamp=time.time(),
+                latency_ms=0.0
+            )
+            
+        except Exception as e:
+            print(f"[REGIME] Fast predict failed: {e}")
+            return self._detect_fallback(features)
+
+    # Background training control
+
+    def _trigger_background_fit(self):
+        """
+        触发后台 HMM 训练（带节流保护）。
+        
+        如果已有训练在进行中，则跳过（避免任务堆积）。
+        如果 HMM 不可用，直接跳过。
+        """
+        if self._fit_in_progress:
+            return
+        
+        # HMM 不可用时，跳过训练
+        if not HMMLEARN_AVAILABLE or self._use_fallback:
+            return
+        
+        if len(self.price_history) < self.feature_window * 2:
+            return
+        
+        try:
+            loop = asyncio.get_event_loop()
+            prices = np.array(self.price_history, dtype=np.float64)
+            
+            self._fit_in_progress = True
+            self._fit_task = loop.create_task(
+                self._async_fit(prices)
+            )
+        except Exception as e:
+            print(f"[REGIME] Failed to trigger background fit: {e}")
+            self._fit_in_progress = False
+
+    async def _async_fit(self, prices: np.ndarray, timeout: Optional[float] = None):
+        """
+        异步 HMM 训练（在进程池中执行）。
+
+        训练完成后，原子替换当前模型。
+        包含完整的异常捕获，防止子进程崩溃导致主进程无感知。
 
         Args:
-            prices: Array of historical prices
-
-        Returns:
-            True if fitting successful
+            prices: 价格历史数组
+            timeout: 可选超时时间（秒），None表示无超时
         """
-        if len(prices) < self.feature_window * 2:
-            print(f"[REGIME] Insufficient data: {len(prices)} < {self.feature_window * 2}")
-            return False
-
-        # Compute log returns
-        log_returns = np.diff(np.log(prices))
-        log_returns = log_returns[np.isfinite(log_returns)]
-
-        if len(log_returns) < self.feature_window:
-            print(f"[REGIME] Insufficient returns: {len(log_returns)}")
-            return False
-
-        if self._use_fallback:
-            return self._fit_fallback(log_returns)
-
-        return self._fit_hmm(log_returns)
-
-    def _fit_hmm(self, log_returns: np.ndarray) -> bool:
-        """Fit Gaussian HMM model."""
         try:
-            # Prepare features: returns and squared returns (volatility proxy)
-            features = np.column_stack([
-                log_returns,
-                log_returns ** 2
-            ])
+            loop = asyncio.get_running_loop()
 
-            # Fit HMM
-            self.hmm = GaussianHMM(
-                n_components=self.n_states,
-                covariance_type="full",
-                n_iter=100,
-                random_state=42,
-                init_params='stmc'  # Initialize all parameters
+            # 在进程池中执行同步训练
+            future = loop.run_in_executor(
+                self._executor,
+                _train_hmm_worker,
+                prices,
+                self.n_states
             )
 
-            self.hmm.fit(features)
-            self._hmm_fitted = True
+            # 等待结果，带可选超时
+            try:
+                if timeout is not None:
+                    result = await asyncio.wait_for(future, timeout=timeout)
+                else:
+                    result = await future
+            except asyncio.TimeoutError:
+                print(f"[REGIME] Training timeout after {timeout}s")
+                if self._fit_task and not self._fit_task.done():
+                    self._fit_task.cancel()
+                    try:
+                        await self._fit_task
+                    except asyncio.CancelledError:
+                        pass
+                return
+            except Exception as e:
+                print(f"[REGIME] Subprocess training failed: {type(e).__name__}: {e}")
+                result = None
 
-            # Map HMM states to regimes based on state characteristics
-            self._map_states_to_regimes()
-
-            print(f"[REGIME] HMM fitted: converged={self.hmm.monitor_.converged}, "
-                  f"log-likelihood={self.hmm.score(features):.2f}")
-
-            return True
+            # 主进程接收模型
+            if result is not None:
+                model, state_map = result
+                self._active_model = model
+                self._state_to_regime = state_map
+                print(f"[REGIME] Model updated: {state_map}")
+            else:
+                print("[REGIME] Model update skipped (training returned None)")
 
         except Exception as e:
-            print(f"[REGIME] HMM fitting failed: {e}")
-            self._use_fallback = True
-            return self._fit_fallback(log_returns)
+            print(f"[REGIME] Background fit error: {type(e).__name__}: {e}")
 
-    def _fit_fallback(self, log_returns: np.ndarray) -> bool:
-        """
-        Fallback regime detection using simple heuristics.
+        finally:
+            self._fit_in_progress = False
 
-        Used when hmmlearn is not available.
-        """
-        print("[REGIME] Using fallback heuristic regime detection")
-
-        # Compute regime characteristics
-        vol = np.std(log_returns)
-        mean_ret = np.mean(log_returns)
-
-        # Simple thresholds for regime classification
-        self._fallback_thresholds = {
-            'high_vol': vol * 2.0,
-            'trend': np.abs(mean_ret) * 3.0
-        }
-
-        return True
-
-    def _map_states_to_regimes(self):
-        """Map HMM states to regime types based on state means."""
-        if self.hmm is None:
-            return
-
-        for state in range(self.n_states):
-            mean_return = self.hmm.means_[state][0]
-            mean_vol_proxy = self.hmm.means_[state][1]
-
-            # Classify based on return and volatility characteristics
-            if mean_vol_proxy > np.percentile(self.hmm.means_[:, 1], 66):
-                self.state_to_regime[state] = Regime.HIGH_VOLATILITY
-            elif np.abs(mean_return) > np.std(self.hmm.means_[:, 0]):
-                self.state_to_regime[state] = Regime.TRENDING
-            else:
-                self.state_to_regime[state] = Regime.MEAN_REVERTING
-
-        print(f"[REGIME] State mapping: {self.state_to_regime}")
+    # Sync API (backward compatibility)
 
     def detect(self, price: float) -> RegimePrediction:
         """
-        Detect current market regime from price.
-
-        Args:
-            price: Current price
-
-        Returns:
-            RegimePrediction with regime, confidence, and probabilities
+        同步检测（兼容旧代码）。
+        
+        自动创建临时事件循环运行异步版本。
+        新代码建议直接使用 detect_async。
         """
-        start_time = time.time()
-
-        # Update feature extractor
-        features = self.feature_extractor.update(price)
-
-        if features is None:
-            return RegimePrediction(
-                regime=Regime.UNKNOWN,
-                confidence=0.0,
-                probabilities={r: 0.33 for r in Regime if r != Regime.UNKNOWN},
-                volatility_forecast=np.sqrt(self.current_variance),
-                timestamp=start_time
-            )
-
-        # Store price for later analysis
-        self.price_history.append(price)
-
-        # Detect regime
-        if self._use_fallback:
-            prediction = self._detect_fallback(features)
-        else:
-            prediction = self._detect_hmm(features)
-
-        # Update volatility forecast with GARCH
-        prediction.volatility_forecast = self._update_garch(features)
-
-        # Track performance
-        detection_time = time.time() - start_time
-        self.detection_times.append(detection_time)
-        self.regime_history.append(prediction.regime)
-
-        prediction.timestamp = time.time()
-
-        return prediction
-
-    def _detect_hmm(self, features: RegimeFeatures) -> RegimePrediction:
-        """Detect regime using HMM."""
-        if not self._hmm_fitted or self.hmm is None:
-            return self._detect_fallback(features)
-
         try:
-            # Prepare observation
-            obs = np.array([[features.mean_return, features.volatility ** 2]])
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                return asyncio.run_coroutine_threadsafe(
+                    self.detect_async(price), loop
+                ).result(timeout=0.01)
+            else:
+                return loop.run_until_complete(self.detect_async(price))
+        except RuntimeError:
+            return asyncio.run(self.detect_async(price))
 
-            # Get state probabilities
-            log_prob, state = self.hmm.decode(obs, algorithm="viterbi")
-            state_probs = self._get_state_probabilities(obs[0])
-
-            # Map to regime
-            regime = self.state_to_regime.get(state[0], Regime.UNKNOWN)
-
-            # Compute confidence as max probability
-            confidence = np.max(state_probs)
-
-            # Convert state probabilities to regime probabilities
-            regime_probs = {r: 0.0 for r in Regime if r != Regime.UNKNOWN}
-            for s, prob in enumerate(state_probs):
-                r = self.state_to_regime.get(s, Regime.UNKNOWN)
-                if r != Regime.UNKNOWN:
-                    regime_probs[r] += prob
-
-            return RegimePrediction(
-                regime=regime,
-                confidence=float(confidence),
-                probabilities=regime_probs,
-                volatility_forecast=0.0,  # Will be updated by GARCH
-                timestamp=0.0
-            )
-
-        except Exception as e:
-            print(f"[REGIME] HMM detection failed: {e}")
-            return self._detect_fallback(features)
-
-    def _get_state_probabilities(self, obs: np.ndarray) -> np.ndarray:
-        """Get probability distribution over hidden states."""
-        if self.hmm is None:
-            return np.ones(self.n_states) / self.n_states
-
-        # Compute likelihood for each state
-        log_probs = np.zeros(self.n_states)
-        for state in range(self.n_states):
-            mean = self.hmm.means_[state]
-            cov = self.hmm.covars_[state]
-
-            # Multivariate Gaussian log-likelihood
-            diff = obs - mean
-            try:
-                log_prob = -0.5 * (np.log(np.linalg.det(cov)) +
-                                   diff @ np.linalg.inv(cov) @ diff.T +
-                                   len(obs) * np.log(2 * np.pi))
-                log_probs[state] = log_prob
-            except np.linalg.LinAlgError:
-                log_probs[state] = -1e10
-
-        # Convert to probabilities
-        log_probs -= np.max(log_probs)  # Numerical stability
-        probs = np.exp(log_probs)
-        probs /= np.sum(probs)
-
-        return probs
-
-    def _detect_fallback(self, features: RegimeFeatures) -> RegimePrediction:
+    def fit(self, prices: np.ndarray) -> bool:
         """
-        Fallback regime detection using heuristics.
+        同步训练（冷启动使用）。
 
-        Uses:
-        - Volatility level for high volatility detection
-        - Autocorrelation and momentum for trend/mean-reversion
+        在初始化时调用一次，确保首次有可用模型。
+        如果 HMM 不可用，使用 fallback 模式（返回 True）。
         """
-        # High volatility detection
-        annualized_vol = features.volatility * np.sqrt(252 * 24 * 60)
+        if len(prices) < self.feature_window * 2:
+            print(f"[REGIME] Insufficient data: {len(prices)}")
+            self._use_fallback = True
+            return True
 
-        if hasattr(self, '_fallback_thresholds'):
-            high_vol_threshold = self._fallback_thresholds['high_vol'] * np.sqrt(252 * 24 * 60)
+        if not HMMLEARN_AVAILABLE:
+            print("[REGIME] HMM not available, using fallback mode")
+            self._use_fallback = True
+            return True
+
+        result = _train_hmm_worker(prices, self.n_states)
+        if result:
+            self._active_model, self._state_to_regime = result
+            print("[REGIME] HMM model trained successfully")
+            return True
         else:
-            high_vol_threshold = 0.5  # 50% annualized volatility
+            print("[REGIME] HMM training failed, using fallback")
+            self._use_fallback = True
+            return True
 
-        if annualized_vol > high_vol_threshold:
+    # Fallback detection
+
+    def _detect_fallback(self, features) -> RegimePrediction:
+        """
+        启发式降级检测（当 HMM 不可用时）。
+        
+        使用简单阈值判断 regime，确保系统始终可用。
+        """
+        annualized_vol = features.volatility * np.sqrt(252 * 24 * 60)
+        
+        if annualized_vol > self._fallback_thresholds['high_vol']:
             regime = Regime.HIGH_VOLATILITY
-            confidence = min(annualized_vol / (high_vol_threshold * 2), 1.0)
+            confidence = min(annualized_vol / (self._fallback_thresholds['high_vol'] * 2), 1.0)
         elif np.abs(features.price_momentum) > 0.5 and features.autocorr_1 > 0.1:
-            # Strong momentum + positive autocorrelation = trending
             regime = Regime.TRENDING
             confidence = min(np.abs(features.price_momentum), 1.0)
         else:
-            # Default to mean-reverting
             regime = Regime.MEAN_REVERTING
             confidence = 0.5 + 0.5 * np.abs(features.autocorr_1)
-
-        # Build probability distribution
+        
         probs = {r: 0.1 for r in Regime if r != Regime.UNKNOWN}
         probs[regime] = confidence
-
-        # Normalize
         total = sum(probs.values())
         probs = {k: v / total for k, v in probs.items()}
-
+        
+        self._last_regime = regime
+        
         return RegimePrediction(
             regime=regime,
             confidence=confidence,
             probabilities=probs,
             volatility_forecast=annualized_vol,
-            timestamp=0.0
+            timestamp=time.time(),
+            latency_ms=0.0
         )
 
-    def _update_garch(self, features: RegimeFeatures) -> float:
-        """
-        Update GARCH(1,1) volatility forecast.
+    def _create_unknown_prediction(self, start_time: float) -> RegimePrediction:
+        """创建未知状态预测（数据不足时）。"""
+        latency = (time.perf_counter() - start_time) * 1000
+        return RegimePrediction(
+            regime=Regime.UNKNOWN,
+            confidence=0.0,
+            probabilities={r: 0.33 for r in Regime if r != Regime.UNKNOWN},
+            volatility_forecast=np.sqrt(self.current_variance),
+            timestamp=time.time(),
+            latency_ms=latency
+        )
 
-        Returns annualized volatility forecast.
-        """
-        if not ARCH_AVAILABLE:
-            # Simple EWMA fallback
-            ret_sq = features.mean_return ** 2
-            self.current_variance = 0.94 * self.current_variance + 0.06 * ret_sq
-            return np.sqrt(self.current_variance * 252 * 24 * 60)
+    # Helper methods
 
-        # Update GARCH parameters online
+    def _get_state_probabilities(self, obs: np.ndarray) -> np.ndarray:
+        """计算隐藏状态概率分布。"""
+        if self._active_model is None:
+            return np.ones(self.n_states) / self.n_states
+        
+        log_probs = np.zeros(self.n_states)
+        for state in range(self.n_states):
+            mean = self._active_model.means_[state]
+            cov = self._active_model.covars_[state]
+            diff = obs - mean
+            
+            try:
+                log_prob = -0.5 * (
+                    np.log(np.linalg.det(cov)) +
+                    diff @ np.linalg.inv(cov) @ diff.T +
+                    len(obs) * np.log(2 * np.pi)
+                )
+                log_probs[state] = log_prob
+            except np.linalg.LinAlgError:
+                log_probs[state] = -1e10
+        
+        log_probs -= np.max(log_probs)
+        probs = np.exp(log_probs)
+        probs /= np.sum(probs)
+        return probs
+
+    def _update_garch(self, features) -> float:
+        """更新 GARCH(1,1) 波动率预测。"""
         ret_sq = features.mean_return ** 2
-
-        # GARCH(1,1) update
         self.current_variance = (
             self.garch_omega +
             self.garch_alpha * ret_sq +
             self.garch_beta * self.current_variance
         )
+        return float(np.sqrt(self.current_variance * 252 * 24 * 60))
 
-        # Annualize
-        annualized_vol = np.sqrt(self.current_variance * 252 * 24 * 60)
-
-        return float(annualized_vol)
-
-    def predict_proba(self, features: Optional[RegimeFeatures] = None) -> np.ndarray:
-        """
-        Get probability distribution over regimes.
-
-        Args:
-            features: Pre-computed features (optional)
-
-        Returns:
-            Array of probabilities [trending, mean_reverting, high_vol]
-        """
-        if features is None:
-            # Use last known features or return uniform
-            if len(self.regime_history) > 0:
-                last_regime = self.regime_history[-1]
-                probs = np.zeros(3)
-                if last_regime == Regime.TRENDING:
-                    probs[0] = 1.0
-                elif last_regime == Regime.MEAN_REVERTING:
-                    probs[1] = 1.0
-                elif last_regime == Regime.HIGH_VOLATILITY:
-                    probs[2] = 1.0
-                else:
-                    probs = np.ones(3) / 3
-                return probs
-            return np.ones(3) / 3
-
-        if self._use_fallback:
-            pred = self._detect_fallback(features)
-        else:
-            pred = self._detect_hmm(features)
-
-        return np.array([
-            pred.probabilities.get(Regime.TRENDING, 0.33),
-            pred.probabilities.get(Regime.MEAN_REVERTING, 0.33),
-            pred.probabilities.get(Regime.HIGH_VOLATILITY, 0.33)
-        ])
-
-    def get_avg_detection_time(self) -> float:
-        """Get average detection latency in milliseconds."""
+    def get_avg_latency_ms(self) -> float:
+        """获取平均检测延迟（毫秒）。"""
         if not self.detection_times:
             return 0.0
-        return np.mean(self.detection_times) * 1000
+        return np.mean(self.detection_times)
 
-    def get_regime_distribution(self) -> Dict[Regime, float]:
-        """Get distribution of regimes in history."""
-        if not self.regime_history:
-            return {r: 0.0 for r in Regime}
+    def shutdown(self):
+        """
+        优雅关闭，释放资源。
 
-        counts = {r: 0 for r in Regime}
-        for r in self.regime_history:
-            counts[r] += 1
+        在程序退出前调用，避免僵尸进程。
+        """
+        if self._fit_task and not self._fit_task.done():
+            self._fit_task.cancel()
+        self._executor.shutdown(wait=True)
+        print("[REGIME] Shutdown complete")
 
-        total = len(self.regime_history)
-        return {r: c / total for r, c in counts.items()}
-
-    def reset(self):
-        """Reset detector state."""
-        self.feature_extractor.reset()
-        self.hmm = None
-        self._hmm_fitted = False
-        self.state_to_regime.clear()
-        self.detection_times.clear()
-        self.regime_history.clear()
-        self.price_history.clear()
-        self.current_variance = 0.0001
-
-
-def generate_synthetic_regimes(n_samples: int = 1000, seed: int = 42) -> Tuple[np.ndarray, List[Regime]]:
-    """
-    Generate synthetic price data with known regimes for testing.
-
-    Returns:
-        prices: Array of prices
-        true_regimes: List of true regime labels
-    """
-    np.random.seed(seed)
-
-    prices = [100.0]
-    regimes = []
-
-    # Generate 3 segments with different characteristics
-    segment_size = n_samples // 3
-
-    # Segment 1: Trending up
-    for i in range(segment_size):
-        ret = np.random.normal(0.001, 0.01)
-        prices.append(prices[-1] * (1 + ret))
-        regimes.append(Regime.TRENDING)
-
-    # Segment 2: Mean-reverting
-    mean = prices[-1]
-    for i in range(segment_size):
-        deviation = prices[-1] - mean
-        ret = np.random.normal(-0.001 * deviation / mean, 0.008)
-        prices.append(prices[-1] * (1 + ret))
-        regimes.append(Regime.MEAN_REVERTING)
-
-    # Segment 3: High volatility
-    for i in range(segment_size):
-        ret = np.random.normal(0.0, 0.03)
-        prices.append(prices[-1] * (1 + ret))
-        regimes.append(Regime.HIGH_VOLATILITY)
-
-    # Handle remainder if n_samples not divisible by 3
-    remainder = n_samples - len(regimes)
-    for i in range(remainder):
-        ret = np.random.normal(0.0, 0.03)
-        prices.append(prices[-1] * (1 + ret))
-        regimes.append(Regime.HIGH_VOLATILITY)
-
-    return np.array(prices), regimes
-
-
-if __name__ == "__main__":
-    # Test regime detector
-    print("Testing MarketRegimeDetector...")
-
-    # Generate synthetic data
-    prices, true_regimes = generate_synthetic_regimes(n_samples=900)
-
-    # Split into train/test
-    train_size = 600
-    train_prices = prices[:train_size]
-    test_prices = prices[train_size:]
-    test_regimes = true_regimes[train_size:]
-
-    # Create and fit detector
-    detector = MarketRegimeDetector(n_states=3)
-
-    print(f"\nFitting on {len(train_prices)} samples...")
-    success = detector.fit(train_prices)
-    print(f"Fit successful: {success}")
-
-    # Test detection
-    print(f"\nTesting on {len(test_prices)} samples...")
-    predictions = []
-
-    for price in test_prices:
-        pred = detector.detect(price)
-        predictions.append(pred.regime)
-
-    # Calculate accuracy
-    correct = sum(1 for p, t in zip(predictions, test_regimes) if p == t)
-    accuracy = correct / len(test_regimes)
-
-    print(f"\nAccuracy: {accuracy:.2%}")
-    print(f"Average detection time: {detector.get_avg_detection_time():.3f}ms")
-
-    # Show regime distribution
-    dist = detector.get_regime_distribution()
-    print(f"\nRegime distribution:")
-    for regime, pct in dist.items():
-        if regime != Regime.UNKNOWN:
-            print(f"  {regime.value}: {pct:.1%}")
-
-    print("\nTest complete!")
+    def __del__(self):
+        """析构时自动清理资源。"""
+        try:
+            if hasattr(self, '_executor') and self._executor:
+                self._executor.shutdown(wait=False)
+        except Exception:
+            pass

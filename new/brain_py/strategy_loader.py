@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Type, Any, Callable
 from pathlib import Path
 from dataclasses import dataclass, field
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+from watchdog.events import FileSystemEventHandler
 
 try:
     from .agent_registry import (
