@@ -33,7 +33,7 @@ Integration:
 type OrderRecoveryManager struct {
 	executor *OrderExecutor
 	client   *LiveAPIClient
-	wal      *WAL
+	wal      interface{} // can be *WAL or *AsyncWAL
 
 	// Configuration
 	checkpointInterval time.Duration
@@ -84,7 +84,7 @@ type Checkpoint struct {
 	Stats       *CheckpointStats       `json:"stats"`
 }
 
-// OrderState represents order state in checkpoint
+// CheckpointOrderState represents order state in checkpoint
 type CheckpointOrderState struct {
 	ID         string    `json:"id"`
 	Symbol     string    `json:"symbol"`
@@ -145,7 +145,7 @@ func DefaultOrderRecoveryManagerConfig() *OrderRecoveryManagerConfig {
 }
 
 // NewOrderRecoveryManager creates a new recovery manager
-func NewOrderRecoveryManager(executor *OrderExecutor, client *LiveAPIClient, wal *WAL, config *OrderRecoveryManagerConfig) *OrderRecoveryManager {
+func NewOrderRecoveryManager(executor *OrderExecutor, client *LiveAPIClient, wal interface{}, config *OrderRecoveryManagerConfig) *OrderRecoveryManager {
 	if config == nil {
 		config = DefaultOrderRecoveryManagerConfig()
 	}
@@ -309,22 +309,235 @@ func (rm *OrderRecoveryManager) recoverFromCheckpoint(checkpoint *Checkpoint) er
 	return nil
 }
 
+// isTerminalStatus checks if order status is terminal (cannot change anymore)
+func isTerminalStatus(status OrderStatus) bool {
+	switch status {
+	case StatusFilled, StatusCancelled, StatusRejected:
+		return true
+	default:
+		return false
+	}
+}
+
 // recoverFromWAL recovers state by replaying WAL logs
 func (rm *OrderRecoveryManager) recoverFromWAL() error {
-	if rm.wal == nil {
-		return fmt.Errorf("WAL not available")
+	// Check if we have AsyncWAL with RecoveryV2
+	asyncWAL, ok := rm.wal.(*AsyncWAL)
+	if !ok {
+		return fmt.Errorf("WAL replay requires AsyncWAL")
 	}
 
 	log.Println("[OrderRecoveryManager] Replaying WAL logs...")
 
-	// Note: This is a simplified version. Full implementation would:
-	// 1. Read all WAL log files
-	// 2. Parse each entry
-	// 3. Replay events in order
-	// 4. Reconstruct order state
+	// Find latest checkpoint file to start from
+	checkpointFile, err := rm.findLatestCheckpoint()
+	if err != nil {
+		return fmt.Errorf("failed to find latest checkpoint: %w", err)
+	}
 
-	// For now, return error to fall back to exchange sync
-	return fmt.Errorf("WAL replay not fully implemented")
+	// Read checkpoint and all WAL entries after checkpoint
+	checkpointEntry, entries, err := asyncWAL.RecoveryV2(checkpointFile)
+	if err != nil {
+		return fmt.Errorf("failed to read WAL recovery data: %w", err)
+	}
+
+	log.Printf("[OrderRecoveryManager] Recovery starting from checkpoint %v, %d entries to replay",
+		time.Unix(0, checkpointEntry.Timestamp), len(entries))
+
+	// First recover base state from checkpoint by converting to our Checkpoint
+	checkpoint := &Checkpoint{
+		Timestamp: time.Unix(0, checkpointEntry.Timestamp),
+		Orders:    make(map[string]*CheckpointOrderState),
+	}
+	for symbol, posEntry := range checkpointEntry.Positions {
+		checkpoint.Position = &PositionState{
+			Symbol:      symbol,
+			Size:        posEntry.Size,
+			AvgPrice:    posEntry.AvgPrice,
+			RealizedPnL: posEntry.RealizedPnL,
+		}
+		break // just use first position for now
+	}
+
+	if err := rm.recoverFromCheckpoint(checkpoint); err != nil {
+		return fmt.Errorf("failed to recover base from checkpoint: %w", err)
+	}
+
+	// Now replay all entries after checkpoint
+	entriesReplayed := 0
+	corrupted := 0
+
+	rm.executor.ordersMu.Lock()
+	defer rm.executor.ordersMu.Unlock()
+
+	for _, entry := range entries {
+		// Get the order - create if doesn't exist
+		order, exists := rm.executor.orders[entry.OrderID]
+		if !exists && entry.Type != "order" {
+			// Entry for non-existent order - skip
+			continue
+		}
+
+		switch entry.Type {
+		case "order":
+			// Order creation/update
+			var orderEntry OrderEntry
+			dataBytes, err := json.Marshal(entry.Data)
+			if err != nil {
+				corrupted++
+				continue
+			}
+			if err := json.Unmarshal(dataBytes, &orderEntry); err != nil {
+				corrupted++
+				continue
+			}
+
+			if !exists {
+				// Create new order - OrderEntry doesn't have Filled, initialize to 0
+				order = &Order{
+					ID:             entry.OrderID,
+					Symbol:         orderEntry.Symbol,
+					Side:           parseSide(orderEntry.Side),
+					Type:           parseType(orderEntry.Type),
+					Price:          orderEntry.Price,
+					Size:           orderEntry.Size,
+					Filled:         0,
+					Status:         parseStatus(orderEntry.Status),
+					CreatedAt:      time.Now(),
+					UpdatedAt:      time.Now(),
+					BinanceOrderID: 0,
+				}
+				rm.executor.orders[entry.OrderID] = order
+			} else {
+				// Update existing order - OrderEntry doesn't have Filled, only update what we have
+				order.Status = parseStatus(orderEntry.Status)
+				order.UpdatedAt = time.Now()
+			}
+			entriesReplayed++
+
+		case "fill":
+			// Fill event - update order and position with VWAP
+			if !exists {
+				continue
+			}
+			var fillEntry FillEntry
+			dataBytes, err := json.Marshal(entry.Data)
+			if err != nil {
+				corrupted++
+				continue
+			}
+			if err := json.Unmarshal(dataBytes, &fillEntry); err != nil {
+				corrupted++
+				continue
+			}
+
+			order.Filled += fillEntry.FillSize
+			order.UpdatedAt = time.Now()
+
+			// Update position using VWAP
+			rm.executor.position.mu.Lock()
+			if order.Side == SideBuy {
+				oldSize := rm.executor.position.Size
+				if oldSize == 0 {
+					rm.executor.position.Size = fillEntry.FillSize
+					rm.executor.position.AvgPrice = fillEntry.FillPrice
+				} else {
+					totalValue := oldSize*rm.executor.position.AvgPrice + fillEntry.FillSize*fillEntry.FillPrice
+					newSize := oldSize + fillEntry.FillSize
+					rm.executor.position.AvgPrice = totalValue / newSize
+					rm.executor.position.Size = newSize
+				}
+			} else {
+				rm.executor.position.Size -= fillEntry.FillSize
+			}
+			rm.executor.position.mu.Unlock()
+
+			if order.Filled >= order.Size {
+				order.Status = StatusFilled
+			} else if order.Filled > 0 {
+				order.Status = StatusPartiallyFilled
+			}
+			entriesReplayed++
+
+		case "cancel":
+			// Order cancellation
+			if !exists {
+				continue
+			}
+			if !isTerminalStatus(order.Status) {
+				order.Status = StatusCancelled
+				order.UpdatedAt = time.Now()
+			}
+			entriesReplayed++
+
+		case "position":
+			// Position snapshot - update directly
+			var posEntry PositionEntry
+			dataBytes, err := json.Marshal(entry.Data)
+			if err != nil {
+				corrupted++
+				continue
+			}
+			if err := json.Unmarshal(dataBytes, &posEntry); err != nil {
+				corrupted++
+				continue
+			}
+
+			rm.executor.position.mu.Lock()
+			rm.executor.position.Symbol = posEntry.Symbol
+			rm.executor.position.Size = posEntry.Size
+			rm.executor.position.AvgPrice = posEntry.AvgPrice
+			rm.executor.position.RealizedPnL = posEntry.RealizedPnL
+			rm.executor.position.mu.Unlock()
+			entriesReplayed++
+
+		case "checkpoint":
+			// Checkpoint entry - skip since we started after this checkpoint
+			continue
+
+		default:
+			// Unknown entry type - skip
+			continue
+		}
+	}
+
+	log.Printf("[OrderRecoveryManager] WAL replay complete: %d entries replayed, %d corrupted",
+		entriesReplayed, corrupted)
+
+	if corrupted > 0 {
+		log.Printf("[OrderRecoveryManager] WARNING: %d corrupted entries skipped", corrupted)
+	}
+
+	return nil
+}
+
+// findLatestCheckpoint finds the latest checkpoint file in checkpoint directory
+func (rm *OrderRecoveryManager) findLatestCheckpoint() (string, error) {
+	files, err := os.ReadDir(rm.checkpointDir)
+	if err != nil {
+		return "", err
+	}
+
+	var checkpoints []os.FileInfo
+	for _, f := range files {
+		if !f.IsDir() && len(f.Name()) > 11 && f.Name()[:11] == "checkpoint_" {
+			info, _ := f.Info()
+			if info != nil {
+				checkpoints = append(checkpoints, info)
+			}
+		}
+	}
+
+	if len(checkpoints) == 0 {
+		return "", fmt.Errorf("no checkpoints found in %s", rm.checkpointDir)
+	}
+
+	// Sort by modification time (newest first)
+	sort.Slice(checkpoints, func(i, j int) bool {
+		return checkpoints[i].ModTime().After(checkpoints[j].ModTime())
+	})
+
+	return filepath.Join(rm.checkpointDir, checkpoints[0].Name()), nil
 }
 
 // recoverFromExchange recovers state by querying the exchange
@@ -332,7 +545,7 @@ func (rm *OrderRecoveryManager) recoverFromExchange(ctx context.Context) error {
 	log.Println("[OrderRecoveryManager] Recovering from exchange...")
 
 	// Get open orders from exchange
-	exchangeOrders, err := rm.client.GetOpenOrders(ctx, "")
+	exchangeOrders, err := rm.client.GetOpenOrders(ctx, rm.executor.symbol)
 	if err != nil {
 		return fmt.Errorf("failed to get open orders from exchange: %w", err)
 	}
@@ -367,7 +580,7 @@ func (rm *OrderRecoveryManager) CreateCheckpoint() error {
 	rm.executor.ordersMu.RLock()
 	for id, order := range rm.executor.orders {
 		// Only checkpoint non-terminal orders
-		if order.Status != StatusFilled && order.Status != StatusCancelled && order.Status != StatusRejected {
+		if !isTerminalStatus(order.Status) {
 			checkpoint.Orders[id] = &CheckpointOrderState{
 				ID:         order.ID,
 				Symbol:     order.Symbol,
@@ -491,7 +704,7 @@ func (rm *OrderRecoveryManager) cleanupOldCheckpoints(keep int) {
 		return checkpoints[i].info.ModTime().After(checkpoints[j].info.ModTime())
 	})
 
-	// Delete old ones
+	// Delete old ones exceeding MaxFiles
 	for i := keep; i < len(checkpoints); i++ {
 		path := filepath.Join(rm.checkpointDir, checkpoints[i].name)
 		os.Remove(path)
@@ -507,12 +720,12 @@ func (rm *OrderRecoveryManager) checkpointLoop() {
 
 	for {
 		select {
-		case <-rm.stopCh:
-			return
 		case <-ticker.C:
 			if err := rm.CreateCheckpoint(); err != nil {
 				log.Printf("[OrderRecoveryManager] Failed to create checkpoint: %v", err)
 			}
+		case <-rm.stopCh:
+			return
 		}
 	}
 }
@@ -557,7 +770,8 @@ func (rm *OrderRecoveryManager) validateRecoveredState(ctx context.Context) *Val
 	return result
 }
 
-// Helper functions
+// Helper functions - parseSide/parseType/parseStatus are needed here
+// sideToString/typeToString are already defined in executor.go
 func parseSide(side string) OrderSide {
 	if side == "SELL" {
 		return SideSell

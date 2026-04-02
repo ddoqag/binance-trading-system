@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"time"
+
+	"hft_engine/leverage"
 )
 
 /*
@@ -49,6 +52,9 @@ type MarginExecutor struct {
 	// 客户端
 	marginClient *MarginClient
 
+	// WebSocket 管理器（获取实时价格）
+	wsManager *WebSocketManager
+
 	// 持仓管理
 	position     *MarginPositionInfo
 	positionMu   sync.RWMutex
@@ -62,6 +68,9 @@ type MarginExecutor struct {
 	liquidationRisk bool
 	minMarginLevel  float64
 
+	// 杠杆计算器
+	calculator *leverage.Calculator
+
 	// 配置
 	commissionRate float64
 	slippage       float64
@@ -71,7 +80,7 @@ type MarginExecutor struct {
 }
 
 // NewMarginExecutor 创建杠杆交易执行器
-func NewMarginExecutor(symbol string, paperTrading bool, apiKey, apiSecret string, maxLeverage float64) *MarginExecutor {
+func NewMarginExecutor(symbol string, paperTrading bool, apiKey, apiSecret string, maxLeverage float64, wsManager *WebSocketManager) *MarginExecutor {
 	if maxLeverage <= 0 || maxLeverage > 10 {
 		maxLeverage = 3.0 // 默认3倍杠杆
 	}
@@ -80,14 +89,19 @@ func NewMarginExecutor(symbol string, paperTrading bool, apiKey, apiSecret strin
 		symbol:         symbol,
 		paperTrading:   paperTrading,
 		maxLeverage:    maxLeverage,
+		wsManager:      wsManager,
 		position:       &MarginPositionInfo{Symbol: symbol},
 		orders:         make(map[string]*Order),
 		history:        make([]*Order, 0),
 		commissionRate: 0.001, // 0.1%
 		slippage:       0.0005, // 0.05%
 		minMarginLevel: 1.25,  // 最低保证金率 125%
+		calculator:      leverage.NewCalculator(),
 		stopSync:       make(chan struct{}),
 	}
+
+	// 设置计算器参数
+	executor.calculator.SetDefaultParams(0.005, executor.minMarginLevel)
 
 	// 初始化杠杆客户端
 	if !paperTrading {
@@ -216,7 +230,7 @@ func (e *MarginExecutor) placeLiveMarginOrder(side MarginSide, size float64, isM
 // 模拟交易
 
 func (e *MarginExecutor) simulateMarginOrder(side MarginSide, size float64, isMarket bool, price float64) error {
-	fillPrice := e.getCurrentPrice()
+	fillPrice := e.GetCurrentPrice()
 
 	if isMarket {
 		// 市价单滑点
@@ -298,40 +312,62 @@ func (e *MarginExecutor) updateMarginPosition(order *Order, side MarginSide) {
 	e.position.LastUpdated = time.Now()
 
 	// 计算未实现盈亏
-	currentPrice := e.getCurrentPrice()
+	currentPrice := e.GetCurrentPrice()
+	var levSide leverage.Side
 	if newSize > 0 {
-		e.position.UnrealizedPnL = (currentPrice - e.position.EntryPrice) * newSize
-	} else if newSize < 0 {
-		e.position.UnrealizedPnL = (e.position.EntryPrice - currentPrice) * (-newSize)
+		levSide = leverage.SideLong
+	} else {
+		levSide = leverage.SideShort
+	}
+
+	if newSize != 0 {
+		e.position.UnrealizedPnL = e.calculator.CalculateUnrealizedPnL(
+			e.position.EntryPrice,
+			currentPrice,
+			math.Abs(newSize),
+			levSide,
+		)
 	} else {
 		e.position.UnrealizedPnL = 0
 	}
 
-	// 计算强平价格（简化公式）
+	// 计算强平价格
 	e.calculateLiquidationPrice()
+
+	// 更新借入数量（用于全仓杠杆）
+	if e.position.Position != 0 {
+		// 借入数量 = 净仓位的绝对值（如果是空头，我们借入基础资产）
+		if e.position.Position < 0 {
+			e.position.Borrowed = -e.position.Position
+		} else {
+			e.position.Borrowed = 0
+		}
+	}
 
 	log.Printf("[MARGIN] Position updated: size=%.4f entry=%.2f pnl=%.2f liq=%.2f",
 		newSize, e.position.EntryPrice, e.position.UnrealizedPnL, e.position.LiquidationPrice)
 }
 
 func (e *MarginExecutor) calculateLiquidationPrice() {
-	// 简化强平价格计算
-	// 实际应该考虑保证金率、维持保证金率等因素
+	// 使用 leverage.Calculator 计算强平价格
 	if e.position.Position == 0 || e.position.EntryPrice == 0 {
 		e.position.LiquidationPrice = 0
 		return
 	}
 
-	maintenanceMargin := 0.005 // 维持保证金率 0.5%
-	leverage := e.maxLeverage
-
+	var levSide leverage.Side
 	if e.position.Position > 0 {
-		// 多头强平价格
-		e.position.LiquidationPrice = e.position.EntryPrice * (1 - 1/leverage + maintenanceMargin)
+		levSide = leverage.SideLong
 	} else {
-		// 空头强平价格
-		e.position.LiquidationPrice = e.position.EntryPrice * (1 + 1/leverage - maintenanceMargin)
+		levSide = leverage.SideShort
 	}
+
+	e.position.LiquidationPrice = e.calculator.CalculateLiquidationPrice(
+		e.position.EntryPrice,
+		e.maxLeverage,
+		levSide,
+		leverage.ModeCross,
+	)
 }
 
 // 同步循环
@@ -445,8 +481,26 @@ func (e *MarginExecutor) recordOrder(order *Order) {
 	e.history = append(e.history, order)
 }
 
-func (e *MarginExecutor) getCurrentPrice() float64 {
-	// TODO: 从order book获取实际价格
+// GetCurrentPrice 获取当前价格（从order book）
+func (e *MarginExecutor) GetCurrentPrice() float64 {
+	// 从 WebSocket order book 获取当前中间价
+	if e.wsManager != nil {
+		book := e.wsManager.GetBook()
+		if book != nil {
+			bestBid, bestAsk, _, _ := book.GetSnapshot()
+			if bestBid > 0 && bestAsk > 0 {
+				return (bestBid + bestAsk) / 2
+			}
+		}
+	}
+	// 后备：如果没有order book，返回入场价格（模拟
+	e.positionMu.RLock()
+	entryPrice := e.position.EntryPrice
+	e.positionMu.RUnlock()
+	if entryPrice > 0 {
+		return entryPrice
+	}
+	// 极端情况，返回默认值（仅模拟交易）
 	return 50000.0
 }
 

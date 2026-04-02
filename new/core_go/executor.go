@@ -770,3 +770,11 @@ func (e *OrderExecutor) GetOrderByID(orderID string) (*Order, bool) {
 	order, exists := e.orders[orderID]
 	return order, exists
 }
+
+// GetOrders returns all orders (count for metrics)
+func (e *OrderExecutor) GetOrders() map[string]*Order {
+	e.ordersMu.RLock()
+	defer e.ordersMu.RUnlock()
+
+	return e.orders
+}

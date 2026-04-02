@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -35,6 +36,8 @@ type HFTEngine struct {
 	marginExecutor *MarginExecutor // 杠杆交易执行器
 	riskMgr        *RiskManager
 	wal            *WAL // Write-ahead logging
+	degradeMgr     *EnhancedDegradeManager // System degradation and circuit breaker
+	metrics        *MetricsCollector // Prometheus metrics collector
 
 	// WebSocket handlers
 	depthHandler   func(bestBid, bestAsk float64, ofi float64)
@@ -98,6 +101,7 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 		shm:      shm,
 		ctx:      ctx,
 		cancel:   cancel,
+		metrics:  NewMetricsCollector(DefaultMetricsConfig()),
 	}
 
 	// Initialize WebSocket manager with LiveAPIClient
@@ -114,7 +118,7 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 
 	// Initialize margin executor if enabled
 	if config.UseMargin {
-		engine.marginExecutor = NewMarginExecutor(config.Symbol, config.PaperTrading, apiKey, apiSecret, config.MaxLeverage)
+		engine.marginExecutor = NewMarginExecutor(config.Symbol, config.PaperTrading, apiKey, apiSecret, config.MaxLeverage, engine.wsManager)
 		log.Printf("[ENGINE] Margin trading enabled with %.1fx leverage", config.MaxLeverage)
 	}
 
@@ -132,6 +136,15 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 		return nil, fmt.Errorf("failed to initialize WAL: %w", err)
 	}
 	engine.wal = wal
+
+	// Initialize degradation manager (system protection)
+	degradeConfig := DefaultDegradeConfig()
+	engine.degradeMgr = NewEnhancedDegradeManager(degradeConfig)
+
+	// Start degradation monitoring
+	engine.degradeMgr.Start()
+
+	log.Printf("[ENGINE] Degradation manager started with default config")
 
 	return engine, nil
 }
@@ -186,6 +199,7 @@ func (e *HFTEngine) Stop() {
 	}
 
 	e.wg.Wait()
+	e.degradeMgr.Stop()
 	e.shm.Close()
 	log.Println("[ENGINE] HFT Engine stopped")
 }
@@ -259,6 +273,31 @@ func (e *HFTEngine) processDecision() {
 	e.decisionMu.Lock()
 	e.lastDecision = time.Now()
 	e.decisionMu.Unlock()
+
+	// Check degradation: can we place this order?
+	// Determine if this is a closing order
+	isClosing := false
+	switch action {
+	case ActionCancel, ActionPartialExit:
+		isClosing = true
+	}
+
+	if !e.degradeMgr.CanTrade(isClosing) {
+		log.Printf("[DEGRADE] Order blocked by degradation manager: level=%s",
+			e.degradeMgr.GetCurrentLevel().String())
+		return
+	}
+
+	// Get adjusted maximum position size
+	maxPos := e.degradeMgr.GetMaxPositionSize(e.config.MaxPosition)
+	if targetSize > maxPos && !isClosing {
+		log.Printf("[DEGRADE] Position size reduced: original=%.4f adjusted=%.4f",
+			targetSize, maxPos)
+		targetSize = maxPos
+		if targetSize <= 0 {
+			return
+		}
+	}
 
 	// Check risk limits
 	if !e.riskMgr.CanExecute(action, targetSize, e.inventory) {
@@ -344,8 +383,67 @@ func (e *HFTEngine) monitorLoop() {
 				log.Println("[MONITOR] WARNING: Market data stale")
 			}
 
-			log.Printf("[MONITOR] connected=%v stale=%v inventory=%.4f unrealized=%.2f",
-				connected, stale, e.inventory, e.unrealizedPnL)
+			// Collect system metrics for degradation manager
+			// TODO: Collect actual CPU/memory usage from runtime
+			openOrders := len(e.executor.GetOrders())
+			if e.config.UseMargin && e.marginExecutor != nil {
+				openOrders += len(e.marginExecutor.GetOpenOrders())
+			}
+
+			metrics := &SystemMetrics{
+				Timestamp:        time.Now(),
+				ErrorRate:        0.0, // Would be updated by API client
+				DailyDrawdown:     0.0, // Would be calculated from daily PnL
+				CPUUsage:          0.0, // Would use runtime.ReadMemStats to estimate
+				MemoryUsage:       0.0,
+				OpenOrders:        openOrders,
+				PositionCount:     0,
+				WebSocketLatency:   0,
+				RateLimitHits:      0,
+				CircuitBreakerOpen: 0,
+			}
+
+			// Update metrics in degradation manager
+			e.degradeMgr.UpdateMetrics(metrics)
+
+			// Update Prometheus margin metrics if margin enabled
+			if e.config.UseMargin && e.marginExecutor != nil && e.metrics != nil {
+				pos := e.marginExecutor.GetPosition()
+				if pos.Position != 0 {
+					// Calculate margin usage ratio based on position size and leverage
+					// marginUsage = (position_size * entry_price) / (available_margin + position_size * entry_price / maxLeverage)
+					currentPrice := e.marginExecutor.GetCurrentPrice()
+					notional := math.Abs(pos.Position) * currentPrice
+					marginRequired := notional / e.config.MaxLeverage
+					if pos.AvailableMargin + pos.Margin > 0 {
+						marginUsage := marginRequired / (pos.AvailableMargin + pos.Margin)
+						e.metrics.SetMarginUsage(marginUsage)
+					}
+				} else {
+					e.metrics.SetMarginUsage(0)
+				}
+
+				// Log liquidation risk warning
+				if e.marginExecutor.HasLiquidationRisk() {
+					log.Printf("[MONITOR] WARNING: Liquidation risk detected in margin position")
+				}
+			}
+
+			// Current degradation level
+			level := e.degradeMgr.GetCurrentLevel()
+			if level != LevelNormal {
+				log.Printf("[DEGRADE] Current degradation level: %s", level.String())
+			}
+
+			if e.config.UseMargin && e.marginExecutor != nil {
+				pos := e.marginExecutor.GetPosition()
+				log.Printf("[MONITOR] connected=%v stale=%v inventory=%.4f unrealized=%.2f degrade=%s margin_position=%.4f margin_pnl=%.2f liq_price=%.2f risk=%v",
+					connected, stale, e.inventory, e.unrealizedPnL, level.String(),
+					pos.Position, pos.UnrealizedPnL, pos.LiquidationPrice, e.marginExecutor.HasLiquidationRisk())
+			} else {
+				log.Printf("[MONITOR] connected=%v stale=%v inventory=%.4f unrealized=%.2f degrade=%s",
+					connected, stale, e.inventory, e.unrealizedPnL, level.String())
+			}
 		}
 	}
 }
@@ -402,18 +500,20 @@ func (e *HFTEngine) getEntryPrice() float64 {
 }
 
 // GetStatus returns current engine status
-func (e *HFTEngine) GetStatus() map[string]interface{} {
+func (e *HFTEngine) GetStatus() map[string]any {
 	e.decisionMu.RLock()
 	lastDecision := e.lastDecision
 	e.decisionMu.RUnlock()
 
-	return map[string]interface{}{
-		"symbol":         e.symbol,
-		"connected":      e.wsManager.IsConnected(),
-		"stale":          e.shm.IsStale(),
-		"inventory":      e.inventory,
-		"unrealized_pnl": e.unrealizedPnL,
-		"last_decision":  lastDecision,
+	return map[string]any{
+		"symbol":          e.symbol,
+		"connected":       e.wsManager.IsConnected(),
+		"stale":           e.shm.IsStale(),
+		"inventory":       e.inventory,
+		"unrealized_pnl":  e.unrealizedPnL,
+		"last_decision":   lastDecision,
+		"degrade_level":    e.degradeMgr.GetCurrentLevel().String(),
+		"degrade_status":   e.degradeMgr.GetStatus(),
 	}
 }
 
