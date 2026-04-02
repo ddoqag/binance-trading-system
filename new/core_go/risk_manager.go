@@ -245,16 +245,29 @@ func (r *RiskManager) GetDailyStats() map[string]interface{} {
 		drawdown = (r.peakEquity - r.currentEquity) / r.peakEquity
 	}
 
+	// 检查数据新鲜度（超过5秒视为过期）
+	isStale := time.Since(r.lastUpdated) > 5*time.Second
+
 	return map[string]interface{}{
-		"timestamp":         time.Now().Format(time.RFC3339),
-		"realized_pnl":      r.dailyPnL,
-		"unrealized_pnl":    0.0, // 需要持仓数据计算
-		"daily_pnl":         r.dailyPnL,
-		"total_equity":      r.currentEquity,
-		"peak_equity":       r.peakEquity,
-		"daily_drawdown":    drawdown,
+		"timestamp":          time.Now().Format(time.RFC3339),
+		"data_timestamp":     r.lastUpdated.Format(time.RFC3339),
+		"realized_pnl":       r.dailyPnL,
+		"unrealized_pnl":     0.0, // 需要持仓数据计算
+		"daily_pnl":          r.dailyPnL,
+		"total_equity":       r.currentEquity,
+		"peak_equity":        r.peakEquity,
+		"daily_drawdown":     drawdown,
 		"kill_switch_active": r.killSwitchActive,
+		"is_stale":           isStale,
+		"stale_seconds":      time.Since(r.lastUpdated).Seconds(),
 	}
+}
+
+// IsDataStale 检查数据是否过期
+func (r *RiskManager) IsDataStale(threshold time.Duration) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return time.Since(r.lastUpdated) > threshold
 }
 
 func (s RiskStatus) String() string {

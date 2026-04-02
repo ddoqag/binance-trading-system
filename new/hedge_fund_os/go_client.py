@@ -20,31 +20,57 @@ class GoEngineClient:
     Go 引擎 HTTP 客户端
     
     用于 Risk Kernel 轮询获取 PnL 和系统指标
+    
+    Stale Data 处理:
+    - 如果 Go 端返回 is_stale: true 或 HTTP 503，表示数据过期
+    - Python 端应立即强制进入 SURVIVAL 模式
     """
     
     def __init__(self, base_url: str = "http://localhost:8080"):
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
         self.session.timeout = 2.0  # 2秒超时
+        self._last_data_stale = False
         
     def get_risk_stats(self) -> Optional[PnLSignal]:
         """获取风险统计数据"""
         try:
             resp = self.session.get(f"{self.base_url}/api/v1/risk/stats")
-            resp.raise_for_status()
+            
+            # 处理 HTTP 503 (Service Unavailable) - 数据过期
+            if resp.status_code == 503:
+                logger.warning("Go engine reports stale risk data (HTTP 503)")
+                self._last_data_stale = True
+                # 仍然尝试解析数据
+            else:
+                self._last_data_stale = False
+                resp.raise_for_status()
+                
             data = resp.json()
             
             if "error" in data:
                 logger.error(f"Risk stats error: {data['error']}")
                 return None
+            
+            # 检查 is_stale 标志
+            if data.get("is_stale", False):
+                stale_seconds = data.get("stale_seconds", 0)
+                logger.warning(f"Go engine data is stale ({stale_seconds:.1f}s old)")
+                self._last_data_stale = True
                 
             return PnLSignal.from_dict(data)
         except requests.RequestException as e:
             logger.debug(f"Failed to get risk stats: {e}")
+            self._last_data_stale = True
             return None
         except Exception as e:
             logger.error(f"Unexpected error getting risk stats: {e}")
+            self._last_data_stale = True
             return None
+            
+    def is_data_stale(self) -> bool:
+        """检查最近一次数据是否过期"""
+        return self._last_data_stale
             
     def get_system_metrics(self) -> Optional[SystemMetrics]:
         """获取系统指标"""
@@ -94,6 +120,8 @@ class MockGoEngineClient:
             daily_pnl=0.0,
             total_equity=100000.0,
             daily_drawdown=0.0,
+            is_stale=False,
+            stale_seconds=0.0,
         )
         self._metrics = SystemMetrics(
             timestamp=datetime.now(),
@@ -105,6 +133,7 @@ class MockGoEngineClient:
             open_orders=0,
         )
         self._healthy = True
+        self._data_stale = False
         
     def set_pnl(self, pnl: PnLSignal) -> None:
         """设置 Mock PnL 数据"""
@@ -118,8 +147,20 @@ class MockGoEngineClient:
         """设置健康状态"""
         self._healthy = healthy
         
+    def set_data_stale(self, stale: bool, stale_seconds: float = 10.0) -> None:
+        """设置数据过期状态（用于测试 Stale Data Protection）"""
+        self._data_stale = stale
+        if stale:
+            self._pnl.is_stale = True
+            self._pnl.stale_seconds = stale_seconds
+        else:
+            self._pnl.is_stale = False
+            self._pnl.stale_seconds = 0.0
+        
     def get_risk_stats(self) -> Optional[PnLSignal]:
-        return self._pnl if self._healthy else None
+        if not self._healthy:
+            return None
+        return self._pnl
         
     def get_system_metrics(self) -> Optional[SystemMetrics]:
         return self._metrics if self._healthy else None
@@ -131,3 +172,6 @@ class MockGoEngineClient:
         
     def is_healthy(self) -> bool:
         return self._healthy
+        
+    def is_data_stale(self) -> bool:
+        return self._data_stale

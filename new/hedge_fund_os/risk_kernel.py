@@ -44,6 +44,8 @@ class PnLSignal:
     daily_pnl: float
     total_equity: float
     daily_drawdown: float
+    is_stale: bool = False
+    stale_seconds: float = 0.0
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "PnLSignal":
@@ -54,6 +56,8 @@ class PnLSignal:
             daily_pnl=float(data.get("daily_pnl", 0)),
             total_equity=float(data.get("total_equity", 0)),
             daily_drawdown=float(data.get("daily_drawdown", 0)),
+            is_stale=bool(data.get("is_stale", False)),
+            stale_seconds=float(data.get("stale_seconds", 0)),
         )
 
 
@@ -197,6 +201,27 @@ class DynamicRiskMonitor:
         metrics: Optional[SystemMetrics]
     ) -> Optional[RiskEvent]:
         """检查风险条件，返回最高优先级的风险事件"""
+        
+        # 优先级 0: 数据过期检查 (Stale Data Protection)
+        if pnl is None:
+            # Go 端数据不可用，强制进入 SURVIVAL
+            return RiskEvent(
+                timestamp=datetime.now(),
+                event_type="DATA_STALE",
+                severity=RiskLevel.CONSERVATIVE,
+                message="Risk data unavailable from Go engine, forcing SURVIVAL mode",
+                triggered_mode=SystemMode.SURVIVAL,
+            )
+        
+        # 检查 PnL 数据中的 is_stale 标志
+        if hasattr(pnl, 'is_stale') and pnl.is_stale:
+            return RiskEvent(
+                timestamp=datetime.now(),
+                event_type="PNL_DATA_STALE",
+                severity=RiskLevel.CONSERVATIVE,
+                message=f"PnL data is stale ({getattr(pnl, 'stale_seconds', 0):.1f}s old), forcing SURVIVAL mode",
+                triggered_mode=SystemMode.SURVIVAL,
+            )
         
         # 优先级 1: 回撤检查 (选项 B 核心)
         if pnl:

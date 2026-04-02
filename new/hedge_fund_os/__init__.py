@@ -19,6 +19,15 @@ from .types import (
 )
 from .state import StateMachine
 from .orchestrator import Orchestrator
+from .risk_kernel import (
+    DynamicRiskMonitor,
+    RiskCheckEngine,
+    RiskThresholds,
+    PnLSignal,
+    SystemMetrics,
+    RiskEvent,
+)
+from .go_client import GoEngineClient, MockGoEngineClient
 
 __all__ = [
     "SystemMode",
@@ -34,4 +43,12 @@ __all__ = [
     "PerformanceRecord",
     "StateMachine",
     "Orchestrator",
+    "DynamicRiskMonitor",
+    "RiskCheckEngine",
+    "RiskThresholds",
+    "PnLSignal",
+    "SystemMetrics",
+    "RiskEvent",
+    "GoEngineClient",
+    "MockGoEngineClient",
 ]

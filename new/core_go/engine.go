@@ -577,8 +577,16 @@ func (e *HFTEngine) StartHTTPServer(port int) {
 
 	// Risk stats endpoint for Python Risk Kernel
 	mux.HandleFunc("/api/v1/risk/stats", func(w http.ResponseWriter, r *http.Request) {
+		// 使用非阻塞方式获取数据，避免阻塞交易goroutine
 		stats := e.GetRiskStats()
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		
+		// 如果数据过期，返回503警告
+		if isStale, ok := stats["is_stale"].(bool); ok && isStale {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		
 		json.NewEncoder(w).Encode(stats)
 	})
 
@@ -586,6 +594,7 @@ func (e *HFTEngine) StartHTTPServer(port int) {
 	mux.HandleFunc("/api/v1/system/metrics", func(w http.ResponseWriter, r *http.Request) {
 		metrics := e.GetSystemMetrics()
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		json.NewEncoder(w).Encode(metrics)
 	})
 
