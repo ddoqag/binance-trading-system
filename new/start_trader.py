@@ -12,22 +12,51 @@ import asyncio
 import argparse
 import os
 import sys
+import logging
 import yaml
 from pathlib import Path
+
+# Configure root logger for startup messages
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Load environment variables from .env file if it exists
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent / '.env'
+    # load_dotenv returns True if file was loaded successfully
+    if load_dotenv(env_path):
+        logger.info(f"Loaded environment from {env_path}")
+except ImportError:
+    # python-dotenv not installed, skip - environment already set by caller
+    pass
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from self_evolving_trader import (
     SelfEvolvingTrader, TraderConfig, TradingMode,
-    create_trader, run_trader
+    create_trader, run_trader,
 )
 
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file"""
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+    try:
+        with open(config_path, 'r') as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        logger.error(f"Configuration file not found: {config_path}")
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        logger.error(f"Invalid YAML in configuration file: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Failed to load configuration: {e}")
+        sys.exit(1)
 
 
 def create_config_from_args(args) -> TraderConfig:
@@ -46,8 +75,12 @@ def create_config_from_args(args) -> TraderConfig:
     config.api_key = os.getenv("BINANCE_API_KEY", args.api_key or "")
     config.api_secret = os.getenv("BINANCE_API_SECRET", args.api_secret or "")
 
-    # Testnet
-    config.use_testnet = not args.production
+    # Testnet - use USE_TESTNET from environment if available
+    env_use_testnet = os.getenv("USE_TESTNET")
+    if env_use_testnet is not None:
+        config.use_testnet = env_use_testnet.lower() in ("true", "1", "yes")
+    else:
+        config.use_testnet = not args.production
 
     # Capital
     if args.capital:
@@ -58,11 +91,11 @@ def create_config_from_args(args) -> TraderConfig:
         config.check_interval_seconds = args.interval
 
     # Max leverage
-    if hasattr(args, 'max_leverage') and args.max_leverage:
+    if args.max_leverage:
         config.max_leverage = int(args.max_leverage)
 
     # Strategy switch cooldown
-    if hasattr(args, 'strategy_switch_cooldown') and args.strategy_switch_cooldown:
+    if args.strategy_switch_cooldown:
         config.strategy_switch_cooldown = float(args.strategy_switch_cooldown)
 
     return config
@@ -112,6 +145,20 @@ async def main():
     )
 
     parser.add_argument(
+        '--max-leverage',
+        type=int,
+        default=3,
+        help='Maximum leverage (default: 3)'
+    )
+
+    parser.add_argument(
+        '--strategy-switch-cooldown',
+        type=float,
+        default=60.0,
+        help='Strategy switch cooldown in seconds (default: 60)'
+    )
+
+    parser.add_argument(
         '--api-key',
         help='Binance API Key (or set BINANCE_API_KEY env var)'
     )
@@ -137,15 +184,15 @@ async def main():
 
     # Load config file if provided
     if args.config:
-        print(f"Loading configuration from: {args.config}")
+        logger.info(f"Loading configuration from: {args.config}")
         file_config = load_config(args.config)
         # Merge file config with args (CLI args take precedence over file config defaults)
-        defaults = {a.dest: a.default for a in parser._actions if hasattr(a, 'default')}
+        # Use parser.get_default() which is public API
         for key, value in file_config.items():
             if not hasattr(args, key):
                 continue
             current = getattr(args, key)
-            default_val = defaults.get(key)
+            default_val = parser.get_default(key)
             if current == default_val or current is None:
                 setattr(args, key, value)
 
@@ -155,13 +202,13 @@ async def main():
     # Validate API credentials for live trading
     if config.trading_mode == TradingMode.LIVE:
         if not config.api_key or not config.api_secret:
-            print("ERROR: API key and secret required for live trading")
-            print("Set BINANCE_API_KEY and BINANCE_API_SECRET environment variables")
+            logger.error("API key and secret required for live trading")
+            logger.error("Set BINANCE_API_KEY and BINANCE_API_SECRET environment variables")
             sys.exit(1)
 
         confirm = input("WARNING: You are about to start LIVE trading. Continue? (yes/no): ")
         if confirm.lower() != 'yes':
-            print("Aborted")
+            logger.info("Aborted")
             sys.exit(0)
 
     # Print banner
@@ -178,7 +225,7 @@ async def main():
 
     try:
         # Create and initialize trader
-        print("Initializing trader...")
+        logger.info("Initializing trader...")
         trader = SelfEvolvingTrader(config)
         await trader.initialize()
 
@@ -205,7 +252,7 @@ async def main():
     except KeyboardInterrupt:
         print("\nInterrupted by user")
     except Exception as e:
-        print(f"\nError: {e}")
+        logger.exception(f"Unexpected error: {e}")
         raise
 
 
