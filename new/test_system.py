@@ -14,9 +14,9 @@ import time
 # Test protocol.h alignment
 def test_protocol_alignment():
     """Verify struct size matches protocol.h"""
-    expected_size = 128
+    expected_size = 144
     print("Protocol alignment test:")
-    print(f"  [OK] Protocol header defines 128-byte structure")
+    print(f"  [OK] Protocol header defines {expected_size}-byte structure")
     return True
 
 
@@ -99,7 +99,7 @@ def test_go_build():
     go_files = [
         "core_go/engine.go",
         "core_go/shm_manager.go",
-        "core_go/websocket_feed.go",
+        "core_go/websocket_manager.go",
         "core_go/executor.go",
         "core_go/risk_manager.go",
         "core_go/wal.go",

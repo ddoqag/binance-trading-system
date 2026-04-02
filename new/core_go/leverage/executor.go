@@ -1,6 +1,7 @@
 package leverage
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -39,6 +40,10 @@ type Executor struct {
 
 	// 价格源
 	getCurrentPrice func() float64
+
+	// 实盘下单函数（由外部注入，避免包循环依赖）
+	placeLiveMarketOrder func(ctx context.Context, symbol, side string, quantity float64, autoRepay bool) error
+	placeLiveLimitOrder  func(ctx context.Context, symbol, side string, price, quantity float64, timeInForce string, autoRepay bool) error
 }
 
 // NewExecutor 创建杠杆交易执行器
@@ -74,6 +79,15 @@ func NewExecutor(symbol string, paperTrading bool, maxLeverage float64) *Executo
 // SetPriceSource 设置价格源
 func (e *Executor) SetPriceSource(fn func() float64) {
 	e.getCurrentPrice = fn
+}
+
+// SetLiveOrderFuncs 注入实盘下单函数（用于集成 MarginClient）
+func (e *Executor) SetLiveOrderFuncs(
+	marketFn func(ctx context.Context, symbol, side string, quantity float64, autoRepay bool) error,
+	limitFn func(ctx context.Context, symbol, side string, price, quantity float64, timeInForce string, autoRepay bool) error,
+) {
+	e.placeLiveMarketOrder = marketFn
+	e.placeLiveLimitOrder = limitFn
 }
 
 // OpenLong 开多仓
@@ -248,16 +262,69 @@ func (e *Executor) simulateClosePosition(exitPrice float64) error {
 	return nil
 }
 
-// placeLiveOrder 实盘下单（占位符）
+// placeLiveOrder 实盘下单
 func (e *Executor) placeLiveOrder(params OrderParams) error {
-	// TODO: 集成 MarginClient 进行实盘交易
-	return fmt.Errorf("live trading not implemented in leverage module")
+	if e.placeLiveMarketOrder == nil || e.placeLiveLimitOrder == nil {
+		return fmt.Errorf("live trading not configured: SetLiveOrderFuncs must be called first")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var sideStr string
+	var autoRepay bool
+
+	if params.Side == SideLong {
+		sideStr = "BUY"
+		autoRepay = false // 开仓时不自动还款
+	} else {
+		sideStr = "SELL"
+		autoRepay = false // 开仓时自动借贷由 MARGIN_BUY 处理
+	}
+
+	if params.IsMarket {
+		return e.placeLiveMarketOrder(ctx, e.symbol, sideStr, params.Size, autoRepay)
+	}
+	return e.placeLiveLimitOrder(ctx, e.symbol, sideStr, params.Price, params.Size, "GTC", autoRepay)
 }
 
-// placeLiveCloseOrder 实盘平仓（占位符）
+// placeLiveCloseOrder 实盘平仓
 func (e *Executor) placeLiveCloseOrder(exitPrice float64) error {
-	// TODO: 集成 MarginClient 进行实盘交易
-	return fmt.Errorf("live trading not implemented in leverage module")
+	if e.placeLiveMarketOrder == nil || e.placeLiveLimitOrder == nil {
+		return fmt.Errorf("live trading not configured: SetLiveOrderFuncs must be called first")
+	}
+
+	e.positionMu.RLock()
+	pos := e.position
+	e.positionMu.RUnlock()
+
+	if pos == nil || pos.Status != PositionOpen {
+		return fmt.Errorf("no open position to close")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var sideStr string
+	var autoRepay bool
+	var size float64
+
+	if pos.Side == SideLong {
+		// 平多 = 卖出基础资产，自动还款
+		sideStr = "SELL"
+		autoRepay = true
+		size = pos.Size
+	} else {
+		// 平空 = 买入基础资产，自动还款
+		sideStr = "BUY"
+		autoRepay = true
+		size = pos.Size
+	}
+
+	if exitPrice == 0 {
+		return e.placeLiveMarketOrder(ctx, e.symbol, sideStr, size, autoRepay)
+	}
+	return e.placeLiveLimitOrder(ctx, e.symbol, sideStr, exitPrice, size, "GTC", autoRepay)
 }
 
 // GetPosition 获取当前持仓

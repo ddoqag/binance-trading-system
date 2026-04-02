@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -124,6 +125,24 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 
 	// Initialize risk manager
 	engine.riskMgr = NewRiskManager(config.MaxPosition)
+
+	// Register kill switch callbacks for emergency stop
+	engine.riskMgr.RegisterKillSwitchCallback(func() {
+		if err := engine.executor.CancelAll(); err != nil {
+			log.Printf("[RISK] Failed to cancel all orders: %v", err)
+		}
+		log.Println("[RISK] Kill switch: all open orders cancelled")
+	})
+
+	if config.UseMargin && engine.marginExecutor != nil {
+		engine.riskMgr.RegisterKillSwitchCallback(func() {
+			if err := engine.marginExecutor.ClosePosition(true); err != nil {
+				log.Printf("[RISK] Failed to close margin position: %v", err)
+			} else {
+				log.Println("[RISK] Kill switch: margin position closed")
+			}
+		})
+	}
 
 	// Initialize WAL for disaster recovery
 	walDir := os.Getenv("HFT_WAL_DIR")
@@ -384,7 +403,9 @@ func (e *HFTEngine) monitorLoop() {
 			}
 
 			// Collect system metrics for degradation manager
-			// TODO: Collect actual CPU/memory usage from runtime
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+
 			openOrders := len(e.executor.GetOrders())
 			if e.config.UseMargin && e.marginExecutor != nil {
 				openOrders += len(e.marginExecutor.GetOpenOrders())
@@ -394,8 +415,8 @@ func (e *HFTEngine) monitorLoop() {
 				Timestamp:        time.Now(),
 				ErrorRate:        0.0, // Would be updated by API client
 				DailyDrawdown:     0.0, // Would be calculated from daily PnL
-				CPUUsage:          0.0, // Would use runtime.ReadMemStats to estimate
-				MemoryUsage:       0.0,
+				CPUUsage:          0.0, // runtime does not provide CPU usage; use gopsutil for production
+				MemoryUsage:       float64(m.Alloc) / (1024 * 1024 * 1024), // GB used
 				OpenOrders:        openOrders,
 				PositionCount:     0,
 				WebSocketLatency:   0,

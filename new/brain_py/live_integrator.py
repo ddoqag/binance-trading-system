@@ -48,6 +48,7 @@ class IntegratorConfig:
     log_level: int = 1  # 0=quiet, 1=info, 2=debug
     ab_test_enabled: bool = False
     ab_test_result_dir: str = "./ab_test_results"
+    base_order_size: float = 0.01
 
 
 class LiveAIIntegrator:
@@ -318,7 +319,7 @@ class LiveAIIntegrator:
                 price = snapshot.best_ask  # 挂在卖一
 
         # 计算数量 = base size * size_scale * abs(combined_direction)
-        base_size = 0.01  # TODO: 从配置读取
+        base_size = self.config.base_order_size
         quantity = base_size * size_scale * abs(combined_direction)
         quantity = max(0.001, min(quantity, 1.0))  # 限制范围
 

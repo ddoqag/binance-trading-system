@@ -35,6 +35,9 @@ type RiskManager struct {
 	killSwitchActive  bool
 	lastUpdated       time.Time
 
+	// Kill switch callbacks
+	killSwitchCallbacks []func()
+
 	// Mutex
 	mu                sync.RWMutex
 }
@@ -93,6 +96,7 @@ func (r *RiskManager) CanExecute(action int32, size float64, currentPosition flo
 	// Check daily loss limit
 	if r.dailyPnL < r.maxDailyLoss {
 		log.Printf("[RISK] Daily loss limit reached: %.2f", r.dailyPnL)
+		r.mu.RUnlock()
 		r.activateKillSwitch("daily_loss_limit")
 		return false
 	}
@@ -102,6 +106,7 @@ func (r *RiskManager) CanExecute(action int32, size float64, currentPosition flo
 		drawdown := (r.peakEquity - r.currentEquity) / r.peakEquity
 		if drawdown > r.maxDrawdown {
 			log.Printf("[RISK] Max drawdown reached: %.2f%%", drawdown*100)
+			r.mu.RUnlock()
 			r.activateKillSwitch("max_drawdown")
 			return false
 		}
@@ -155,14 +160,28 @@ func (r *RiskManager) checkRateLimit() bool {
 	return true
 }
 
+// RegisterKillSwitchCallback registers a callback to be invoked when kill switch is activated
+func (r *RiskManager) RegisterKillSwitchCallback(cb func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.killSwitchCallbacks = append(r.killSwitchCallbacks, cb)
+}
+
 // ActivateKillSwitch activates the emergency stop
 func (r *RiskManager) activateKillSwitch(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.killSwitchActive {
+		return
+	}
+
 	r.killSwitchActive = true
 	log.Printf("[RISK] KILL SWITCH ACTIVATED: %s", reason)
 
-	// TODO: Cancel all open orders
-	// TODO: Close all positions (optional)
-	// TODO: Send alert notification
+	for _, cb := range r.killSwitchCallbacks {
+		go cb()
+	}
 }
 
 // DeactivateKillSwitch deactivates the kill switch (requires manual intervention)

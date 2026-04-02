@@ -57,6 +57,14 @@ def create_config_from_args(args) -> TraderConfig:
     if args.interval:
         config.check_interval_seconds = args.interval
 
+    # Max leverage
+    if hasattr(args, 'max_leverage') and args.max_leverage:
+        config.max_leverage = int(args.max_leverage)
+
+    # Strategy switch cooldown
+    if hasattr(args, 'strategy_switch_cooldown') and args.strategy_switch_cooldown:
+        config.strategy_switch_cooldown = float(args.strategy_switch_cooldown)
+
     return config
 
 
@@ -131,7 +139,15 @@ async def main():
     if args.config:
         print(f"Loading configuration from: {args.config}")
         file_config = load_config(args.config)
-        # TODO: Merge file config with args
+        # Merge file config with args (CLI args take precedence over file config defaults)
+        defaults = {a.dest: a.default for a in parser._actions if hasattr(a, 'default')}
+        for key, value in file_config.items():
+            if not hasattr(args, key):
+                continue
+            current = getattr(args, key)
+            default_val = defaults.get(key)
+            if current == default_val or current is None:
+                setattr(args, key, value)
 
     # Create configuration
     config = create_config_from_args(args)

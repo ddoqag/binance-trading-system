@@ -351,9 +351,7 @@ func (m *PartialFillModel) SampleFillSize(totalSize float64, queuePressure float
 	mean := m.ExpectedFillRatio * (1.0 + queuePressure*0.5)
 	mean = clamp(mean, m.MinFillRatio, m.MaxFillRatio)
 
-	// Sample from exponential: -mean * ln(U)
-	// In practice, use uniform for now for simplicity
-	// TODO: proper exponential sampling
+	// Sample from exponential distribution: -mean * ln(U)
 	u := uniformRandom()
 	fillRatio := mean * (-math.Log(u))
 	fillRatio = clamp(fillRatio, m.MinFillRatio, m.MaxFillRatio)

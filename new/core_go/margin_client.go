@@ -182,11 +182,13 @@ func (c *MarginClient) PlaceMarginLimitOrder(ctx context.Context, symbol, side s
 	params.Set("price", strconv.FormatFloat(price, 'f', -1, 64))
 	params.Set("quantity", strconv.FormatFloat(quantity, 'f', -1, 64))
 
-	// 自动借贷：做空时需要借入基础资产
-	if side == "SELL" {
-		params.Set("sideEffectType", "MARGIN_BUY") // 自动借贷
+	// 自动借贷/还款
+	if side == "SELL" && autoRepay {
+		params.Set("sideEffectType", "AUTO_REPAY") // 卖出平多，自动还款
+	} else if side == "SELL" {
+		params.Set("sideEffectType", "MARGIN_BUY") // 做空借入基础资产
 	} else if autoRepay {
-		params.Set("sideEffectType", "AUTO_REPAY") // 买入时自动还款
+		params.Set("sideEffectType", "AUTO_REPAY") // 买入平空，自动还款
 	}
 
 	var response MarginOrderResponse
@@ -216,10 +218,12 @@ func (c *MarginClient) PlaceMarginMarketOrder(ctx context.Context, symbol, side 
 	params.Set("quantity", strconv.FormatFloat(quantity, 'f', -1, 64))
 
 	// 自动借贷/还款
-	if side == "SELL" {
-		params.Set("sideEffectType", "MARGIN_BUY")
+	if side == "SELL" && autoRepay {
+		params.Set("sideEffectType", "AUTO_REPAY") // 卖出平多，自动还款
+	} else if side == "SELL" {
+		params.Set("sideEffectType", "MARGIN_BUY") // 做空借入基础资产
 	} else if autoRepay {
-		params.Set("sideEffectType", "AUTO_REPAY")
+		params.Set("sideEffectType", "AUTO_REPAY") // 买入平空，自动还款
 	}
 
 	var response MarginOrderResponse
