@@ -28,6 +28,13 @@ from .risk_kernel import (
     RiskEvent,
 )
 from .go_client import GoEngineClient, MockGoEngineClient
+from .meta_brain import (
+    MetaBrain,
+    MetaBrainConfig,
+    SimpleRegimeDetector,
+    StrategySelector,
+    StrategyType,
+)
 
 __all__ = [
     "SystemMode",
@@ -51,4 +58,9 @@ __all__ = [
     "RiskEvent",
     "GoEngineClient",
     "MockGoEngineClient",
+    "MetaBrain",
+    "MetaBrainConfig",
+    "SimpleRegimeDetector",
+    "StrategySelector",
+    "StrategyType",
 ]
