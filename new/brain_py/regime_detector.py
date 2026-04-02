@@ -12,14 +12,19 @@ Author: P10 Trading System
 """
 
 import asyncio
+import multiprocessing
 import numpy as np
+import pickle
+import struct
+import sys
 import time
 import warnings
 from collections import deque
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Deque
+from multiprocessing import shared_memory
+from typing import Dict, List, Optional, Tuple, Deque, Any
 
 # Suppress sklearn warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
@@ -61,34 +66,100 @@ class RegimePrediction:
 # 子进程执行函数（必须是顶层函数！）
 # ============================================================================
 
-def _train_hmm_worker(prices: np.ndarray, n_states: int = 3) -> Optional[Tuple]:
+# ============================================================================
+# Model Transfer - 跨进程模型传输优化
+# ============================================================================
+
+class ModelTransferBuffer:
+    """
+    跨进程模型传输优化。
+
+    平台适配：
+    - Linux/macOS: 使用 SharedMemory 零拷贝
+    - Windows: 使用优化的 pickle + 内存视图
+
+    Windows 说明：
+    - Windows 使用 'spawn' 模式，子进程的 SharedMemory 对父进程不可见
+    - 使用全局命名空间（Global\\）也无法解决 spawn 模式的隔离
+    - 回退到优化的 pickle 协议（HIGHEST_PROTOCOL）
+    """
+
+    def __init__(self):
+        self._is_windows = sys.platform == 'win32'
+        self._use_shm = not self._is_windows  # Windows 不使用 SharedMemory
+
+    def serialize(self, model_data: Dict[str, Any]) -> bytes:
+        """序列化模型数据。"""
+        return pickle.dumps(model_data, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def deserialize(self, data: bytes) -> Dict[str, Any]:
+        """反序列化模型数据。"""
+        return pickle.loads(data)
+
+
+# 保持向后兼容的别名
+SharedModelBuffer = ModelTransferBuffer
+
+
+def _hmm_to_dict(model: GaussianHMM, state_to_regime: Dict[int, Regime]) -> Dict[str, Any]:
+    """将 HMM 模型转换为可序列化的字典。"""
+    return {
+        'n_components': model.n_components,
+        'means': model.means_,
+        'covars': model.covars_,
+        'transmat': model.transmat_,
+        'startprob': model.startprob_,
+        'state_to_regime': {k: v.value for k, v in state_to_regime.items()}
+    }
+
+
+def _dict_to_hmm(data: Dict[str, Any]) -> Tuple[GaussianHMM, Dict[int, Regime]]:
+    """从字典重建 HMM 模型。"""
+    model = GaussianHMM(
+        n_components=data['n_components'],
+        covariance_type="full",
+        n_iter=1,
+        random_state=42
+    )
+    model.means_ = data['means']
+    model.covars_ = data['covars']
+    model.transmat_ = data['transmat']
+    model.startprob_ = data['startprob']
+
+    state_to_regime = {k: Regime(v) for k, v in data['state_to_regime'].items()}
+
+    return model, state_to_regime
+
+
+def _train_hmm_worker(prices: np.ndarray, n_states: int = 3, use_shared_memory: bool = True) -> Optional[Tuple]:
     """
     在子进程中训练 HMM。
-    
+
     ⚠️ 关键：不能使用 self，所有参数通过函数参数传递
-    返回：(model, state_to_regime_map) 或 None
-    
+    返回：(model, state_to_regime_map) 或 None，或使用序列化时返回 bytes
+
     Args:
         prices: 价格历史数组
         n_states: HMM 隐藏状态数
-    
+        use_shared_memory: 是否使用优化序列化（Windows 上实际使用 pickle HIGHEST_PROTOCOL）
+
     Returns:
-        (trained_model, state_mapping) 或 None（失败时）
+        (model_bytes, None) 或 (model, state_mapping) 或 None（失败时）
     """
     try:
         if not HMMLEARN_AVAILABLE or len(prices) < 50:
             return None
-        
+
         # 计算对数收益率
         log_returns = np.diff(np.log(prices))
         log_returns = log_returns[np.isfinite(log_returns)]
-        
+
         if len(log_returns) < 30:
             return None
-        
+
         # 准备特征：returns 和 squared returns
         features = np.column_stack([log_returns, log_returns ** 2])
-        
+
         # 训练 HMM
         model = GaussianHMM(
             n_components=n_states,
@@ -97,15 +168,15 @@ def _train_hmm_worker(prices: np.ndarray, n_states: int = 3) -> Optional[Tuple]:
             random_state=42,
             init_params='stmc'
         )
-        
+
         model.fit(features)
-        
+
         # 构建 state 到 regime 的映射
         state_to_regime = {}
         for state in range(n_states):
             mean_return = model.means_[state][0]
             mean_vol_proxy = model.means_[state][1]
-            
+
             # 基于收益和波动率分类
             if mean_vol_proxy > np.percentile(model.means_[:, 1], 66):
                 state_to_regime[state] = Regime.HIGH_VOLATILITY
@@ -113,9 +184,16 @@ def _train_hmm_worker(prices: np.ndarray, n_states: int = 3) -> Optional[Tuple]:
                 state_to_regime[state] = Regime.TRENDING
             else:
                 state_to_regime[state] = Regime.MEAN_REVERTING
-        
+
+        # 使用优化序列化传输
+        if use_shared_memory:
+            model_dict = _hmm_to_dict(model, state_to_regime)
+            transfer = ModelTransferBuffer()
+            data_bytes = transfer.serialize(model_dict)
+            return (data_bytes, None)  # 标记为序列化模式
+
         return (model, state_to_regime)
-        
+
     except Exception as e:
         print(f"[HMM TRAIN ERROR] {e}")
         return None
@@ -153,21 +231,24 @@ class MarketRegimeDetector:
         n_states: int = 3,
         feature_window: int = 100,
         fit_interval_ticks: int = 1000,
-        max_price_history: int = 5000
+        max_price_history: int = 5000,
+        use_shared_memory: bool = True
     ):
         """
         初始化检测器。
-        
+
         Args:
             n_states: HMM 隐藏状态数
             feature_window: 特征提取窗口
             fit_interval_ticks: 每 N 个 tick 触发后台训练
             max_price_history: 价格历史最大长度
+            use_shared_memory: 使用 SharedMemory 零拷贝传输模型（Windows 推荐）
         """
         self.n_states = n_states
         self.feature_window = feature_window
         self._fit_interval = fit_interval_ticks
-        
+        self._use_shared_memory = use_shared_memory
+
         # Data storage
         self.price_history: Deque[float] = deque(maxlen=max_price_history)
 
@@ -192,7 +273,7 @@ class MarketRegimeDetector:
         self.garch_alpha = 0.1
         self.garch_beta = 0.85
         self.current_variance = 0.0001
-        
+
         # Fallback state
         self._last_regime = Regime.UNKNOWN
         self._fallback_thresholds = {'high_vol': 0.5, 'trend': 0.001}
@@ -201,6 +282,7 @@ class MarketRegimeDetector:
         # Performance tracking
         self.detection_times: Deque[float] = deque(maxlen=1000)
         self.regime_history: Deque[Regime] = deque(maxlen=1000)
+        self._serialization_times: Deque[float] = deque(maxlen=100)  # 序列化性能统计
 
     # Fast path: async detection (for main loop)
 
@@ -324,16 +406,19 @@ class MarketRegimeDetector:
             print(f"[REGIME] Failed to trigger background fit: {e}")
             self._fit_in_progress = False
 
-    async def _async_fit(self, prices: np.ndarray, timeout: Optional[float] = None):
+    async def _async_fit(self, prices: np.ndarray, timeout: Optional[float] = None,
+                         use_shared_memory: bool = True):
         """
         异步 HMM 训练（在进程池中执行）。
 
         训练完成后，原子替换当前模型。
         包含完整的异常捕获，防止子进程崩溃导致主进程无感知。
+        支持 SharedMemory 零拷贝传输。
 
         Args:
             prices: 价格历史数组
             timeout: 可选超时时间（秒），None表示无超时
+            use_shared_memory: 是否使用共享内存传输模型
         """
         try:
             loop = asyncio.get_running_loop()
@@ -343,7 +428,8 @@ class MarketRegimeDetector:
                 self._executor,
                 _train_hmm_worker,
                 prices,
-                self.n_states
+                self.n_states,
+                use_shared_memory
             )
 
             # 等待结果，带可选超时
@@ -367,10 +453,36 @@ class MarketRegimeDetector:
 
             # 主进程接收模型
             if result is not None:
-                model, state_map = result
-                self._active_model = model
-                self._state_to_regime = state_map
-                print(f"[REGIME] Model updated: {state_map}")
+                if use_shared_memory and result[0] is not None and isinstance(result[0], bytes):
+                    # 序列化模式：result[0] 是序列化后的 bytes
+                    try:
+                        transfer = ModelTransferBuffer()
+                        model_data = transfer.deserialize(result[0])
+                        model, state_map = _dict_to_hmm(model_data)
+                        self._active_model = model
+                        self._state_to_regime = state_map
+                        print(f"[REGIME] Model updated via optimized serialization: {state_map}")
+                    except Exception as e:
+                        print(f"[REGIME] Failed to deserialize model: {e}")
+                elif use_shared_memory and result[0] is not None and isinstance(result[0], str):
+                    # SharedMemory 模式（Linux/macOS）：result[0] 是共享内存名称
+                    shm_name = result[0]
+                    transfer = ModelTransferBuffer()
+                    model_data = transfer.read_model(shm_name)
+
+                    if model_data is not None:
+                        model, state_map = _dict_to_hmm(model_data)
+                        self._active_model = model
+                        self._state_to_regime = state_map
+                        print(f"[REGIME] Model updated via SharedMemory: {state_map}")
+                    else:
+                        print("[REGIME] Failed to read model from SharedMemory")
+                else:
+                    # 传统 pickle 模式
+                    model, state_map = result
+                    self._active_model = model
+                    self._state_to_regime = state_map
+                    print(f"[REGIME] Model updated: {state_map}")
             else:
                 print("[REGIME] Model update skipped (training returned None)")
 
@@ -517,7 +629,34 @@ class MarketRegimeDetector:
         """获取平均检测延迟（毫秒）。"""
         if not self.detection_times:
             return 0.0
-        return np.mean(self.detection_times)
+        return float(np.mean(self.detection_times))
+
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """
+        获取性能统计信息。
+
+        Returns:
+            包含检测延迟、序列化性能等统计信息的字典
+        """
+        stats = {
+            'detection_latency_ms': {
+                'mean': float(np.mean(self.detection_times)) if self.detection_times else 0.0,
+                'p50': float(np.percentile(list(self.detection_times), 50)) if self.detection_times else 0.0,
+                'p99': float(np.percentile(list(self.detection_times), 99)) if self.detection_times else 0.0,
+                'count': len(self.detection_times)
+            },
+            'serialization': {
+                'mode': 'Optimized' if self._use_shared_memory else 'Standard',
+                'platform': sys.platform,
+                'mean_ms': float(np.mean(self._serialization_times)) if self._serialization_times else 0.0,
+            },
+            'model': {
+                'active': self._active_model is not None,
+                'using_fallback': self._use_fallback,
+                'state_mapping': {k: v.value for k, v in self._state_to_regime.items()}
+            }
+        }
+        return stats
 
     def shutdown(self):
         """

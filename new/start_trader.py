@@ -257,4 +257,9 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    multiprocessing.freeze_support()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested by user")
+        sys.exit(0)
