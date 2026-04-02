@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from .hf_types import SystemMode, SystemState, MarketState, MetaDecision
 from .state import StateMachine
 from .exporter import get_exporter, timed_metric
+from .decision_logger import DecisionLogger, create_default_logger
 
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,10 @@ class Orchestrator:
         # 初始化监控 exporter
         self._exporter = get_exporter(port=metrics_port, enabled=metrics_enabled)
         self._last_drawdown = 0.0
+        
+        # 初始化决策日志记录器 (为 Evolution Engine 积累数据)
+        self._decision_logger = create_default_logger(log_dir="logs/decisions")
+        logger.info("[Orchestrator] Decision logger initialized for Evolution Engine data collection")
 
     def _on_mode_switch(self, old_mode: SystemMode, new_mode: SystemMode, reason: str) -> None:
         """内部模式切换处理"""
@@ -149,6 +154,10 @@ class Orchestrator:
             self._thread.join(timeout=2.0)
 
         self._emit("on_shutdown", reason)
+        # 关闭决策日志记录器
+        if hasattr(self, '_decision_logger'):
+            self._decision_logger.close()
+        
         logger.info("Orchestrator stopped")
 
     def emergency_shutdown(self, reason: str = "emergency") -> None:
@@ -229,6 +238,19 @@ class Orchestrator:
             decide_latency=decide_latency,
             alloc_latency=alloc_latency,
             risk_latency=risk_latency,
+        )
+        
+        # 9. 持久化决策快照 (用于 Evolution Engine)
+        self._log_decision_snapshot(
+            market_state=market_state,
+            decision=decision,
+            allocation=allocation,
+            latencies={
+                'perceive': perceive_latency,
+                'decide': decide_latency,
+                'allocate': alloc_latency,
+                'risk_check': risk_latency,
+            }
         )
 
     def _perceive(self) -> Optional[MarketState]:
@@ -317,6 +339,40 @@ class Orchestrator:
         except Exception as e:
             logger.debug("Metrics push error (non-critical): %s", e)
 
+    def _log_decision_snapshot(self, market_state, decision, allocation, latencies):
+        """记录决策快照到 JSONL 日志 (供 Evolution Engine 使用)"""
+        try:
+            from datetime import datetime
+            
+            # 获取风险指标
+            risk_metrics = {
+                'daily_drawdown': self._last_drawdown,
+                'system_mode': self.state.mode.name if self.state else 'UNKNOWN',
+            }
+            
+            # 如果 Risk Kernel 有更多信息，添加
+            if self.risk_kernel:
+                if hasattr(self.risk_kernel, 'latest_pnl'):
+                    pnl = self.risk_kernel.latest_pnl
+                    if hasattr(pnl, 'daily_pnl'):
+                        risk_metrics['daily_pnl'] = pnl.daily_pnl
+                    if hasattr(pnl, 'total_equity'):
+                        risk_metrics['total_equity'] = pnl.total_equity
+            
+            self._decision_logger.log_decision(
+                timestamp=datetime.now(),
+                cycle=self.cycle_count,
+                market_state=market_state,
+                meta_decision=decision,
+                allocation_plan=allocation,
+                risk_metrics=risk_metrics,
+                latency_ms=latencies
+            )
+            
+        except Exception as e:
+            # 日志记录失败不应影响主交易循环
+            logger.debug("Decision logging error (non-critical): %s", e)
+
     def get_system_state(self) -> SystemState:
         """获取当前系统状态"""
         return SystemState(
@@ -324,3 +380,9 @@ class Orchestrator:
             active_strategies=1 if self.meta_brain else 0,
             total_strategies=1 if self.meta_brain else 0,
         )
+    
+    def get_logging_stats(self) -> dict:
+        """获取决策日志统计"""
+        if hasattr(self, '_decision_logger'):
+            return self._decision_logger.get_stats()
+        return {}

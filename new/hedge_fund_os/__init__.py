@@ -8,13 +8,11 @@ from .hf_types import (
     SystemMode,
     RiskLevel,
     MarketRegime,
-    StrategyStatus,
     MarketState,
     MetaDecision,
     AllocationPlan,
     RiskCheckResult,
     SystemState,
-    StrategyGenome,
     PerformanceRecord,
 )
 from .state import StateMachine
@@ -50,8 +48,20 @@ from .exporter import (
     get_exporter,
     timed_metric,
 )
+from .decision_logger import (
+    DecisionLogger,
+    create_default_logger,
+)
+from .strategy_lifecycle import (
+    StrategyStatus,
+    StrategyGenome,
+    StrategyLifecycleManager,
+    create_lifecycle_manager,
+    LifecycleConfig,
+)
 
 __all__ = [
+    # Types
     "SystemMode",
     "RiskLevel",
     "MarketRegime",
@@ -63,30 +73,43 @@ __all__ = [
     "SystemState",
     "StrategyGenome",
     "PerformanceRecord",
+    # Core
     "StateMachine",
     "Orchestrator",
+    # Risk
     "DynamicRiskMonitor",
     "RiskCheckEngine",
     "RiskThresholds",
     "PnLSignal",
     "SystemMetrics",
     "RiskEvent",
+    # Client
     "GoEngineClient",
     "MockGoEngineClient",
+    # Meta Brain
     "MetaBrain",
     "MetaBrainConfig",
     "SimpleRegimeDetector",
     "StrategySelector",
     "StrategyType",
+    # Allocator
     "CapitalAllocator",
     "CapitalAllocatorConfig",
     "AllocationMethod",
     "StrategyPerformance",
     "AllocationPlan",
     "RebalanceThrottler",
+    # Monitoring
     "P10Exporter",
     "P10MetricsSnapshot",
     "init_metrics",
     "get_exporter",
     "timed_metric",
+    # Logging
+    "DecisionLogger",
+    "create_default_logger",
+    # Lifecycle (Evolution Engine preparation)
+    "StrategyLifecycleManager",
+    "create_lifecycle_manager",
+    "LifecycleConfig",
 ]
