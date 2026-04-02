@@ -9,18 +9,21 @@
 
 import asyncio
 import logging
+import os
 from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 
 try:
+    import aiohttp
     from binance import AsyncClient, BinanceSocketManager
     from binance.enums import *
     from binance.exceptions import BinanceAPIException
     HAS_BINANCE = True
 except ImportError:
     HAS_BINANCE = False
+    aiohttp = None
 
 from trading.order import Order, OrderType, OrderSide, OrderStatus
 
@@ -111,10 +114,14 @@ class AsyncSpotMarginExecutor:
 
     async def connect(self) -> 'AsyncSpotMarginExecutor':
         """建立连接（异步）"""
+        # 获取代理配置
+        https_proxy = os.getenv('HTTPS_PROXY') or os.getenv('HTTP_PROXY')
+
         self.client = await AsyncClient.create(
             api_key=self.api_key,
             api_secret=self.api_secret,
-            testnet=self.testnet
+            testnet=self.testnet,
+            https_proxy=https_proxy
         )
         self.logger.info("AsyncSpotMarginExecutor connected")
         await self._load_exchange_info()
@@ -203,8 +210,27 @@ class AsyncSpotMarginExecutor:
 
     # ==================== 持仓接口 ====================
 
-    async def get_position(self, symbol: str) -> Optional[MarginPosition]:
-        """获取指定交易对的持仓"""
+    async def get_position(self, symbol: str, max_retries: int = 3) -> Optional[MarginPosition]:
+        """获取指定交易对的持仓，带重试机制"""
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                return await self._get_position_internal(symbol)
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    wait_time = 0.5 * (2 ** attempt)  # 指数退避: 0.5s, 1s, 2s
+                    self.logger.warning(f"get_position attempt {attempt + 1} failed: {e}, retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    break
+
+        self.logger.error(f"get_position failed after {max_retries} attempts: {last_error}")
+        raise last_error  # 重试耗尽后抛出异常，让调用者知道是查询失败
+
+    async def _get_position_internal(self, symbol: str) -> Optional[MarginPosition]:
+        """内部方法：获取指定交易对的持仓"""
         # 解析资产
         base_asset, quote_asset = self._parse_symbol(symbol)
 
@@ -214,16 +240,32 @@ class AsyncSpotMarginExecutor:
             self.get_balance(quote_asset)
         )
 
-        # 净持仓不为零才算有持仓
-        net_position = base_balance.net_asset
-        if abs(net_position) < 1e-10:
+        # 判断是否有持仓：
+        # 1. 净持仓不为零（多头或空头）
+        # 2. 有借币（做空时 net_asset=0 但 borrowed>0）
+        has_position = (
+            abs(base_balance.net_asset) > 1e-10 or  # 净多头/空头
+            base_balance.borrowed > 1e-10 or         # 借币做空
+            base_balance.free > 1e-10                # 持有资产（可能是刚借的）
+        )
+
+        if not has_position:
             return None
+
+        # 对于做空：net_asset=0，但 borrowed>0
+        # position 应该反映实际的风险敞口
+        # 如果 borrowed > free，说明是做空
+        position_size = base_balance.net_asset
+        if abs(position_size) < 1e-10 and base_balance.borrowed > 1e-10:
+            # 做空状态：net_asset=0，但有借币
+            # 实际敞口是 -borrowed（空头）
+            position_size = -base_balance.borrowed
 
         return MarginPosition(
             symbol=symbol,
             base_asset=base_asset,
             quote_asset=quote_asset,
-            position=net_position,
+            position=position_size,  # 正=多头，负=空头
             borrowed=base_balance.borrowed,
             free=base_balance.free,
             locked=base_balance.locked

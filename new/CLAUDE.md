@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **毒流防御**：实时检测 adverse selection，避免被高频流量收割
 - **队列动力学**：基于 Hazard Rate 的随机填充概率建模
 - **端到端延迟优化**：Go 执行引擎 + Python 决策引擎，mmap 零拷贝通信
+- **在线演化**：A/B 测试框架 + 模型热更新 + 自动回滚
 
 ---
 
@@ -67,9 +68,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │   │   WebSocket  │  │   WebSocket  │  │   REST API   │  │  Manager     │   │
 │   └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘   │
 │                                                                              │
+│   ┌────────────────┐  ┌────────────┐  ┌────────────────┐                   │
+│   │ A/B Testing    │  │ ModelMgr   │  │  Prometheus     │                   │
+│   │  在线对比验证  │  │ 热更新回滚  │  │  监控指标       │                   │
+│   └────────────────┘  └────────────┘  └────────────────┘                   │
+│                                                                              │
 │   Prometheus Metrics:                                                        │
 │   - fill_quality, adverse_selection, queue_survival_rate                    │
 │   - order_latency_ms, inventory_pnl, execution_alpha                        │
+│   - model_performance, ab_test_pnl, sharpe_ratio                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,15 +84,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## File Structure
 
-### 核心文件 (按迭代版本)
+### 核心模块
 
-| 文件 | 说明 | 状态 |
-|------|------|------|
-| `hft_latency_queue_rl_system_go_python.py` | 最简原型：基础 RL + FIFO 撮合 | 已归档 |
-| `(2).py` → `(6).py` | 渐进增强：延迟引擎、特征工程、部分成交 | 已归档 |
-| `(7).py` | **HFT v4.0**：完整 SAC + Queue v3 训练框架 | 当前基线 |
-| `core_go/` | **Go 执行引擎**（mmap IPC, 微秒级延迟） | 活跃开发 |
-| `brain_py/` | **Python AI 引擎**（SAC Agent, 特征工程） | 活跃开发 |
+| 模块 | 目录 | 说明 | 状态 |
+|------|------|------|------|
+| **core_go/** | `core_go/` | Go 执行引擎（微秒级延迟） | 活跃开发 |
+| **brain_py/** | `brain_py/` | Python AI 决策引擎（SAC/AB测试） | 活跃开发 |
+| **shared/** | `shared/` | 跨语言共享内存协议 | 设计中 |
+
+### core_go (Go Execution Engine)
+
+| 文件 | 说明 |
+|------|------|
+| `engine.go` | 主引擎入口 |
+| `binance_client.go` | 币安 API 客户端（WebSocket + REST）|
+| `websocket_manager.go` | WebSocket 连接管理（自动重连）|
+| `reconnectable_ws.go` | 可重连 WebSocket 实现 |
+| `risk_config.go` | 风险配置与风控检查 |
+| `queue_dynamics.go` | Queue Dynamics v3（Hazard Rate 引擎）|
+| `ab_testing.go` | A/B 测试框架（Go 端）|
+| `model_manager.go` | ONNX 模型管理器（热更新+性能衰退检测+自动回滚）|
+| `model_manager_test.go` | 模型管理器单元测试 |
+| `request_queue.go` | 请求排队与限流控制 |
+| `order_fsm.go` | 订单状态机 |
+| `live_api_client.go` | 实盘 API 客户端 |
+| `metrics.go` | Prometheus 指标定义 |
+
+### brain_py (Python AI Engine)
+
+| 文件/目录 | 说明 |
+|-----------|------|
+| `ab_testing/` | A/B 测试框架（Python 端）|
+| `ab_testing/core.py` | 核心统计引擎（Welch's t-test 显著性检验）|
+| `ab_testing/integrator.py` | 模型/策略 A/B 测试集成器 |
+| `ab_testing/test_ab_testing.py` | A/B 测试单元测试 |
+| `queue_dynamics/` | Queue Dynamics 训练仿真 |
+| `features/` | 微观结构特征工程 |
+| `agents/` | SAC 专家策略实现 |
+| `meta_agent.py` | 元智能体调度器 |
+| `moe/` | Mixture of Experts 混合专家系统 |
+| `live_integrator.py` | 实盘主循环集成 |
 
 ### 架构文档
 
@@ -93,6 +131,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |------|------|
 | `docs/ARCHITECTURE_OVERVIEW.md` | 系统架构 v4.5（工业级HFT标准） |
 | `docs/MONITORING_SETUP.md` | Prometheus + Grafana 监控配置 |
+| `docs/SELF_EVOLVING_LIVE_DESIGN.md` | 自我演化实盘架构设计 |
 | `总纲.txt` | 开发路线图和任务跟踪 |
 | `新文件11.txt` | **设计蓝图**：Hazard Rate、ShadowMatcher、SAC训练 |
 
@@ -222,7 +261,143 @@ class AdverseSelectionDetector:
         return avg_adverse > threshold
 ```
 
-### 5. Go + Python 混合架构
+### 5. A/B Testing 框架 (P4-001)
+
+**统计显著性验证框架**：支持模型/策略在线对比验证
+
+支持三种分流策略：
+
+```go
+// Go API 示例
+import "core_go"
+
+// 1. 固定比例分流 (SplitFixed)
+config := &ABTestConfig{
+    TestName:           "model_v2_vs_v1",
+    Description:        "Compare new model against baseline",
+    Strategy:            SplitFixed,
+    Variants: []ABTestVariant{
+        {Name: "control", Description: "v1 model", TrafficPct: 0.5, IsControl: true},
+        {Name: "variant", Description: "v2 model", TrafficPct: 0.5, IsControl: false},
+    },
+    MinSampleSize:       200,
+    SignificanceLevel:   0.05,  // p-value < 0.05 认为显著
+    MaxDurationHours:    168,   // 最多运行 7 天
+}
+
+ab := NewABTest(config)
+ab.Start()
+
+// 2. 流量分流
+variant := ab.SelectVariant()
+
+// 3. 记录结果
+ab.RecordResult(variant.Name, pnl, isWin, alphaBps, volume)
+
+// 4. 获取统计结论
+if ab.HasEnoughData() {
+    conclusion := ab.GetConclusion()
+    // conclusion.Significant 表示统计显著
+    // conclusion.BeatControl 表示 variant 是否击败控制组
+    // conclusion.PValue 给出 p 值
+    // conclusion.UpliftBps 给出阿尔法提升幅度
+}
+```
+
+**支持的分流策略**：
+| 策略 | 说明 | 使用场景 |
+|------|------|----------|
+| `SplitFixed` | 固定比例分流 | 标准 A/B 测试 |
+| `SplitCanary` | 金丝雀发布（逐步增加流量）| 新版本灰度上线 |
+| `SplitAdaptive` | 自适应分流（性能好的版本获得更多流量）| 多版本探索 |
+
+**统计方法**：
+- **Welch's t-test**：不等方差 t 检验，适用于交易数据
+- **计算**：胜率、平均 PnL、夏普比率、最大回撤
+- **自动结论**：达到最小样本量后自动给出接受/拒绝结论
+
+**Python 集成**：
+```python
+from brain_py.ab_testing import ABTest, ABTestConfig, ABTestVariant, SplitStrategyType
+from brain_py.ab_testing import ModelABTest
+
+# 模型 A/B 测试便捷封装
+ab_test = ModelABTest(
+    test_name="new_model_vs_baseline",
+    control_model=baseline_model,
+    variant_model=new_model,
+    control_traffic_pct=0.5
+)
+
+# 启动测试
+ab_test.start()
+
+# 在线推理时自动分流
+model = ab_test.select_model()
+prediction = model.predict(state)
+
+# 记录结果
+ab_test.record_result(model_name, pnl, is_win, alpha_bps)
+
+# 获取结论
+conclusion = ab_test.get_conclusion()
+print(conclusion)
+```
+
+### 6. Model Manager (模型热更新管理器)
+
+**ONNX 模型在线热更新 + 性能衰退检测 + 自动回滚**
+
+```go
+// Go API 示例
+config := DefaultModelConfig()
+config.ModelDir = "./models"
+config.MaxVersions = 5         // 保留最多 5 个版本
+config.WatchEnabled = true     // 自动监控文件变化
+config.AutoRollback = true    // 性能衰退自动回滚
+
+mm, err := NewModelManager(config)
+if err != nil {
+    log.Fatal(err)
+}
+defer mm.Stop()
+
+// 加载新模型
+ctx := context.Background()
+err = mm.LoadModel(ctx, "sac_agent", "./models/sac_agent_v2.onnx", ModelTypeDQN)
+
+// 切换模型
+err = mm.SwitchModel(modelID)
+
+// 获取当前模型用于推理
+current := mm.GetCurrentModel()
+// current.Session 是 ONNX Runtime session
+
+// 记录预测性能
+mm.RecordPrediction(modelID, latency, pnl, err)
+
+// 检查性能衰退
+decayed, reason := mm.CheckPerformanceDecay()
+if decayed {
+    // 自动回滚到历史最佳版本（已启用 AutoRollback）
+    log.Printf("[ModelManager] Rollback: %s", reason)
+}
+
+// A/B 测试集成
+mm.StartABTest(abConfig)
+selected, isAB := mm.SelectModelForPrediction()
+```
+
+**核心特性**：
+- ✅ 热重载：不重启引擎加载新模型
+- ✅ 版本管理：保留 N 个历史版本，快速回滚
+- ✅ 文件监控：检测目录变化自动加载新模型
+- ✅ 性能追踪：记录每个版本的预测延迟、盈亏、错误率
+- ✅ 衰退检测：对比历史基准，自动检测性能衰减
+- ✅ 自动回滚：衰退后自动切回最佳版本
+- ✅ A/B 测试集成：支持多模型在线对比
+
+### 7. Go + Python 混合架构
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -240,6 +415,9 @@ class AdverseSelectionDetector:
 │  │  │  State       │        │   Commands   │       │  │
 │  │  └──────────────┘        └──────────────┘       │  │
 │  └──────────────────────────────────────────────────┘  │
+│  ┌────────────────┐  ┌────────────┐  ┌──────────────┐  │
+│  │  A/B Testing   │  │ ModelMgr   │  │  Prometheus  │  │
+│  └────────────────┘  └────────────┘  └──────────────┘  │
 └─────────────────────────┬───────────────────────────────┘
                           │ mmap (zero-copy)
 ┌─────────────────────────┴───────────────────────────────┐
@@ -247,6 +425,9 @@ class AdverseSelectionDetector:
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
 │  │   Feature    │  │    SAC       │  │   Position   │  │
 │  │   Engine     │  │   Agent      │  │  Tracker     │  │
+│  ├──────────────┤  ├──────────────┤  ├──────────────┤  │
+│  │  A/B Test    │  │ Meta-Agent   │  │  MoE Experts │  │
+│  │  Integrator  │  │  Scheduler   │  │  混合投票    │  │
 │  └──────────────┘  └──────────────┘  └──────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -313,6 +494,7 @@ R = α₁×PnL + α₂×MakerRebate - β₁×InventoryPenalty - β₂×AdverseCo
 | Queue Survival | 成交订单 / 提交订单 | 20-60% | < 10% |
 | Cancel Efficiency | 有效撤单占比 | > 70% | < 50% |
 | Order Latency | 下单→确认延迟 | < 100ms | > 200ms |
+| Model Prediction Latency | 模型推理延迟 | < 5ms | > 20ms |
 
 ### PnL 分解
 
@@ -340,56 +522,91 @@ python "hft_latency_queue_rl_system_go_python (7).py"
 curl http://localhost:2112/metrics
 ```
 
-### Go Engine 命令
+### Go Engine 编译和测试
 
 ```bash
-# 编译 Go 引擎
 cd core_go
+
+# 下载依赖
+go mod download
+
+# 编译 Go 引擎
 go build -o hft_engine.exe .
+
+# 运行所有单元测试
+go test -v ./...
+
+# 运行特定测试文件
+go test -v -run TestModelManager .
+go test -v -run TestABTest .
 
 # 运行（带 Prometheus 指标）
 ./hft_engine.exe --metrics-port=2112
 ```
 
+### Python A/B 测试运行
+
+```bash
+# 运行 A/B 测试单元测试
+cd brain_py
+python -m pytest ab_testing/test_ab_testing.py -v -s
+
+# 简单演示
+python test_ab_simple.py
+```
+
 ### 实盘模式（⚠️ 谨慎使用）
 
 ```python
-# 在 (7).py 末尾取消注释：
-# asyncio.run(run_full_system())
+# 在 live_integrator.py 配置 API Key
+# asyncio.run(live_integrator.run_full_system())
 
 # 实盘前检查清单：
 # 1. 确认 API Key 权限（仅交易权限，禁止提现）
 # 2. 设置 risk_manager.max_position = 最小测试仓位
 # 3. 启用 kill_switch（回撤 > 2% 自动停止）
 # 4. 检查延迟指标（order_latency_ms < 200）
+# 5. 确认 A/B 测试配置正确
 ```
 
 ---
 
 ## Development Roadmap
 
-### Phase 1-4: 已完成 ✅
+### Phase 1: 基础架构 (P1) - 已完成 ✅
 - [x] ShadowMatcher v1-v3（Level 2.5 撮合）
 - [x] Queue Dynamics with Hazard Rate
 - [x] SAC Agent 训练框架
 - [x] Go + Python mmap IPC
-
-### Phase 5-7: 已完成 ✅
 - [x] Binance Live API 集成
 - [x] Prometheus 监控
 - [x] WebSocket 重连机制
-
-### Phase 8-9: 已完成 ✅
 - [x] Adverse Selection 检测
 - [x] Toxic Flow 预测
 - [x] Reward Decomposition 分析
 
-### Phase 10-14: 进行中 🚧
-- [ ] **P2-001**: Meta-Agent 架构（多策略动态切换）
-- [ ] **P2-002**: MoE (Mixture of Experts) 执行网络
-- [ ] **P2-003**: 在线学习（Online Learning）
-- [ ] **P2-004**: Multi-Asset 执行优化
-- [ ] **P2-005**: A/B Testing 框架
+### Phase 2: 在线演化架构 (P2) - 进行中 🚧
+
+| ID | 任务 | 状态 |
+|----|------|------|
+| P2-001 | Meta-Agent 架构（多策略动态切换） | ✅ 完成 |
+| P2-002 | MoE (Mixture of Experts) 执行网络 | ✅ 完成 |
+| P2-003 | 在线学习（Online Learning） | ⏳ 进行中 |
+| P2-004 | Multi-Asset 执行优化 | ⏳ 进行中 |
+| P2-005 | A/B Testing 框架（Go/Python） | ✅ 完成 |
+| P2-006 | Model Manager（热更新+自动回滚） | ✅ 完成 |
+
+### Phase 3: 对抗鲁棒性 (P3) - 待开始
+- [ ] 对抗训练（做市商收割防御）
+- [ ] 暗池流动性检测
+- [ ] 队列博弈纳什均衡
+
+### Phase 4: 工程可靠性 (P4) - 待开始
+- [ ] WAL 预写日志（崩溃恢复）
+- [ ] 多级降级策略（网络拥塞/高延迟应对）
+- [ ] 杠杆全仓交易支持
+
+**总计: P1 完成 (10/10), P2 完成 (4/6), 总计 14/20 = 70%**
 
 ---
 
@@ -419,6 +636,24 @@ if latency_monitor.get_total_latency() > LATENCY_BUDGET:
     feature_engine.use_fast_mode()
 ```
 
+### 4. Online Model Evolution
+```python
+# 新模型上线流程
+model_manager.LoadModel(ctx, "sac_agent", new_model_path)
+ab_test.Start()  # 开始 A/B 测试对比
+
+while ab_test.Running():
+    selected = model_manager.SelectModelForPrediction()
+    # ... 执行预测 ...
+    model_manager.RecordPrediction(selected.ID, latency, pnl, err)
+
+# 达到样本量后自动结论
+if ab_test.Conclusion().BeatControl && ab_test.Conclusion().Significant:
+    model_manager.SwitchModel(new_version)  # 切到新版本
+else:
+    model_manager.UnloadModel(new_version)  # 回滚
+```
+
 ---
 
 ## Important Notes
@@ -430,6 +665,7 @@ if latency_monitor.get_total_latency() > LATENCY_BUDGET:
   - [ ] 延迟指标 < 200ms
   - [ ] 仓位限制验证
   - [ ] 毒流检测启用
+  - [ ] A/B 测试配置验证
 
 ### 2. 性能基准
 - **Go Engine**: 订单处理 < 50μs
@@ -441,11 +677,25 @@ if latency_monitor.get_total_latency() > LATENCY_BUDGET:
 - 设置 `target_entropy = -3`（平衡探索与利用）
 - 启用 `reward_scaling = 10.0`（稳定训练）
 
+### 4. A/B 测试最佳实践
+- **最小样本量**: 至少 200 笔交易才能得出结论
+- **显著性水平**: 使用 0.05（95% 置信度）
+- **流量分配**: 新版本先用 10-20% 流量，再逐步提升
+- **时长**: 至少运行 24 小时，覆盖不同市场时段
+
+### 5. 模型衰退检测
+- 对比夏普比率相对于基准下降 > 20% 触发衰退
+- 对比胜率下降 > 10% 触发衰退
+- 错误率上升 > 5% 触发衰退
+- 自动回滚到历史最佳版本
+
 ---
 
 ## Reference
 
 - **ShadowMatcher Theory**: 新文件11.txt (Line 200-400)
-- **Hazard Rate Math**: ARCHITECTURE_OVERVIEW.md v4.5
+- **Hazard Rate Math**: docs/ARCHITECTURE_OVERVIEW.md v4.5
 - **Monitoring Setup**: docs/MONITORING_SETUP.md
+- **Self-Evolving Design**: docs/SELF_EVOLVING_LIVE_DESIGN.md
 - **Task Tracking**: 总纲.txt / docs/project_management/
+- **A/B Testing Statistical**: Welch's t-test for unequal variances

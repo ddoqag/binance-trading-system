@@ -9,7 +9,7 @@ import logging
 from typing import Optional, Callable, List
 from dataclasses import dataclass
 
-from .types import SystemMode
+from .hf_types import SystemMode
 
 
 logger = logging.getLogger(__name__)

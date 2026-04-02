@@ -12,7 +12,7 @@ import time
 import pytest
 from unittest.mock import MagicMock
 
-from hedge_fund_os.types import (
+from hedge_fund_os.hf_types import (
     SystemMode, RiskLevel, MarketRegime, StrategyStatus,
     MarketState, MetaDecision, AllocationPlan, RiskCheckResult,
     SystemState, StrategyGenome, PerformanceRecord,

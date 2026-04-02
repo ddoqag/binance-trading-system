@@ -17,7 +17,7 @@ from enum import Enum
 
 import numpy as np
 
-from .types import (
+from .hf_types import (
     SystemMode, RiskLevel, MarketRegime, MarketState, MetaDecision,
     TrendDirection, LiquidityState
 )

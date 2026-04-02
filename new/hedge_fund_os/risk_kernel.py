@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Callable, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .types import (
+from .hf_types import (
     RiskLevel, SystemMode, RiskCheckRequest, RiskCheckResult,
     SystemState, PerformanceRecord
 )

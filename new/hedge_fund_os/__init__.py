@@ -4,7 +4,7 @@ Hedge Fund OS - 完整自主决策架构
 P10 核心包：将 P1-P9 的所有能力整合为一个自主决策的有机整体。
 """
 
-from .types import (
+from .hf_types import (
     SystemMode,
     RiskLevel,
     MarketRegime,

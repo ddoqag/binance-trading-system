@@ -199,7 +199,7 @@ class TestCapitalAllocator:
         config = CapitalAllocatorConfig(method=AllocationMethod.EQUAL_WEIGHT)
         allocator = CapitalAllocator(config)
         
-        from hedge_fund_os.types import MetaDecision
+        from hedge_fund_os.hf_types import MetaDecision
         decision = MetaDecision(
             selected_strategies=["s1", "s2", "s3"],
             strategy_weights={"s1": 0.33, "s2": 0.33, "s3": 0.34},
@@ -239,7 +239,7 @@ class TestCapitalAllocator:
             win_rate=0.50,
         ))
         
-        from hedge_fund_os.types import MetaDecision
+        from hedge_fund_os.hf_types import MetaDecision
         decision = MetaDecision(
             selected_strategies=["s1", "s2"],
             strategy_weights={"s1": 0.5, "s2": 0.5},
@@ -266,7 +266,7 @@ class TestCapitalAllocator:
             config = CapitalAllocatorConfig()
             allocator = CapitalAllocator(config)
             
-            from hedge_fund_os.types import MetaDecision
+            from hedge_fund_os.hf_types import MetaDecision
             decision = MetaDecision(
                 selected_strategies=["s1"],
                 strategy_weights={"s1": 1.0},
@@ -284,7 +284,7 @@ class TestCapitalAllocator:
         config = CapitalAllocatorConfig()
         allocator = CapitalAllocator(config)
         
-        from hedge_fund_os.types import MetaDecision
+        from hedge_fund_os.hf_types import MetaDecision
         
         # GROWTH 模式
         decision_growth = MetaDecision(
@@ -322,7 +322,7 @@ class TestCapitalAllocatorWithMetaBrain:
         allocator = CapitalAllocator(config)
         
         # Meta Brain 决策: 高置信度选择趋势策略
-        from hedge_fund_os.types import MetaDecision
+        from hedge_fund_os.hf_types import MetaDecision
         decision = MetaDecision(
             selected_strategies=["trend", "mean_reversion"],
             strategy_weights={"trend": 0.7, "mean_reversion": 0.3},  # 高置信度

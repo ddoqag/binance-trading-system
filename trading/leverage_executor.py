@@ -70,6 +70,9 @@ class LeverageTradingExecutor:
         if binance_client is None:
             raise ValueError("binance_client required for real leverage trading")
 
+        # 从交易所同步余额
+        self._sync_balance_from_exchange()
+
         self.logger.info(f"Leverage Trading Executor initialized (Max Leverage: {max_leverage}x)")
         self.logger.warning("REAL LEVERAGE TRADING MODE - USING REAL MONEY!")
 
@@ -516,3 +519,54 @@ class LeverageTradingExecutor:
         if symbol:
             orders = [o for o in orders if o.symbol == symbol]
         return orders
+
+    def _sync_balance_from_exchange(self):
+        """从交易所同步合约账户余额"""
+        try:
+            # 获取币安底层客户端
+            if hasattr(self.binance_client, '_client'):
+                client = self.binance_client._client
+            else:
+                client = self.binance_client
+
+            if client is None:
+                self.logger.warning("Binance client not available, using default balance")
+                return
+
+            # 获取合约账户余额
+            account = client.futures_account()
+
+            # 计算总权益（以 USDT 计）
+            total_balance = 0.0
+            available_balance = 0.0
+
+            # 从账户信息中获取 USDT 余额
+            if 'assets' in account:
+                for asset in account['assets']:
+                    if asset.get('asset') == 'USDT':
+                        total_balance = float(asset.get('walletBalance', 0))
+                        available_balance = float(asset.get('availableBalance', 0))
+                        break
+
+            # 如果 assets 中没有找到，尝试其他字段
+            if total_balance == 0 and 'totalWalletBalance' in account:
+                total_balance = float(account.get('totalWalletBalance', 0))
+                available_balance = float(account.get('availableBalance', 0))
+
+            if total_balance > 0:
+                self.total_balance = total_balance
+                self.available_balance = available_balance
+                self.logger.info(
+                    f"Futures balance synced from exchange: "
+                    f"total={total_balance:.2f} USDT, "
+                    f"available={available_balance:.2f} USDT"
+                )
+            else:
+                self.logger.warning(
+                    f"Could not sync balance from exchange, "
+                    f"using default: {self.initial_margin}"
+                )
+
+        except Exception as e:
+            self.logger.error(f"Failed to sync futures balance from exchange: {e}")
+            self.logger.warning(f"Using default initial_margin: {self.initial_margin}")

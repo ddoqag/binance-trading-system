@@ -117,7 +117,7 @@ class TestE2ERiskResponsePipeline:
         6. 风险检查限制新订单大小
         """
         from hedge_fund_os.risk_kernel import RiskCheckEngine
-        from hedge_fund_os.types import RiskCheckRequest, OrderSide
+        from hedge_fund_os.hf_types import RiskCheckRequest, OrderSide
         
         # 初始化组件
         state = StateMachine(cooldown_seconds=0.0)

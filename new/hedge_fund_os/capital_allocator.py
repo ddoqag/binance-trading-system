@@ -18,7 +18,7 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
-from .types import AllocationPlan, MetaDecision, SystemMode, RiskLevel
+from .hf_types import AllocationPlan, MetaDecision, SystemMode, RiskLevel
 
 
 logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import MagicMock
 
-from hedge_fund_os.types import SystemMode, RiskLevel
+from hedge_fund_os.hf_types import SystemMode, RiskLevel
 from hedge_fund_os.state import StateMachine
 from hedge_fund_os.risk_kernel import (
     RiskThresholds, PnLSignal, SystemMetrics,
@@ -228,7 +228,7 @@ class TestRiskCheckEngine:
         
         engine = RiskCheckEngine(state)
         
-        from hedge_fund_os.types import RiskCheckRequest, OrderSide
+        from hedge_fund_os.hf_types import RiskCheckRequest, OrderSide
         request = RiskCheckRequest(
             strategy_id="test",
             order_size=0.1,
@@ -248,7 +248,7 @@ class TestRiskCheckEngine:
         
         engine = RiskCheckEngine(state)
         
-        from hedge_fund_os.types import RiskCheckRequest, OrderSide
+        from hedge_fund_os.hf_types import RiskCheckRequest, OrderSide
         request = RiskCheckRequest(
             strategy_id="test",
             order_size=0.1,
@@ -267,7 +267,7 @@ class TestRiskCheckEngine:
         
         engine = RiskCheckEngine(state)
         
-        from hedge_fund_os.types import RiskCheckRequest, OrderSide
+        from hedge_fund_os.hf_types import RiskCheckRequest, OrderSide
         request = RiskCheckRequest(
             strategy_id="test",
             order_size=0.1,
@@ -283,7 +283,7 @@ class TestRiskCheckEngine:
         state = StateMachine(cooldown_seconds=0.0)
         engine = RiskCheckEngine(state)
         
-        from hedge_fund_os.types import RiskCheckRequest, OrderSide
+        from hedge_fund_os.hf_types import RiskCheckRequest, OrderSide
         
         # Growth 模式: 允许 1.0
         state.switch(SystemMode.GROWTH, "test")
@@ -393,7 +393,7 @@ class TestIntegration:
         assert execution_params["retry_limit"] == 1  # 更少的重试
         
         # 6. 验证风险检查引擎限制订单大小
-        from hedge_fund_os.types import RiskCheckRequest, OrderSide
+        from hedge_fund_os.hf_types import RiskCheckRequest, OrderSide
         request = RiskCheckRequest(
             strategy_id="test",
             order_size=1.0,  # 大订单

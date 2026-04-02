@@ -10,7 +10,7 @@ import threading
 from typing import Optional, Callable, List, Dict, Any
 from dataclasses import dataclass, field
 
-from .types import SystemMode, SystemState, MarketState, MetaDecision
+from .hf_types import SystemMode, SystemState, MarketState, MetaDecision
 from .state import StateMachine
 
 
