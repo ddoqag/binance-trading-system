@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -536,6 +538,71 @@ func (e *HFTEngine) GetStatus() map[string]any {
 		"degrade_level":    e.degradeMgr.GetCurrentLevel().String(),
 		"degrade_status":   e.degradeMgr.GetStatus(),
 	}
+}
+
+// GetRiskStats returns PnL and risk stats for Risk Kernel
+func (e *HFTEngine) GetRiskStats() map[string]interface{} {
+	if e.riskMgr == nil {
+		return map[string]interface{}{
+			"error": "risk manager not initialized",
+		}
+	}
+	return e.riskMgr.GetDailyStats()
+}
+
+// GetSystemMetrics returns system metrics for Risk Kernel
+func (e *HFTEngine) GetSystemMetrics() map[string]interface{} {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	openOrders := len(e.executor.GetOrders())
+	if e.config.UseMargin && e.marginExecutor != nil {
+		openOrders += len(e.marginExecutor.GetOpenOrders())
+	}
+
+	return map[string]interface{}{
+		"timestamp":          time.Now().Format(time.RFC3339),
+		"memory_usage_gb":    float64(m.Alloc) / (1024 * 1024 * 1024),
+		"memory_usage_percent": float64(m.Alloc) / float64(m.Sys) * 100,
+		"ws_latency_ms":      0, // TODO: measure actual latency
+		"rate_limit_hits_1min": 0, // TODO: track rate limit hits
+		"cpu_usage":          0.0, // TODO: use gopsutil
+		"open_orders":        openOrders,
+	}
+}
+
+// StartHTTPServer starts HTTP API server for Risk Kernel integration
+func (e *HFTEngine) StartHTTPServer(port int) {
+	mux := http.NewServeMux()
+
+	// Risk stats endpoint for Python Risk Kernel
+	mux.HandleFunc("/api/v1/risk/stats", func(w http.ResponseWriter, r *http.Request) {
+		stats := e.GetRiskStats()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(stats)
+	})
+
+	// System metrics endpoint
+	mux.HandleFunc("/api/v1/system/metrics", func(w http.ResponseWriter, r *http.Request) {
+		metrics := e.GetSystemMetrics()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(metrics)
+	})
+
+	// Engine status endpoint
+	mux.HandleFunc("/api/v1/status", func(w http.ResponseWriter, r *http.Request) {
+		status := e.GetStatus()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(status)
+	})
+
+	addr := fmt.Sprintf(":%d", port)
+	log.Printf("[HTTP] Risk Kernel API server starting on %s", addr)
+	go func() {
+		if err := http.ListenAndServe(addr, mux); err != nil {
+			log.Printf("[HTTP] Server error: %v", err)
+		}
+	}()
 }
 
 // main is the entry point for the Go HFT Engine

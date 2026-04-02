@@ -235,6 +235,28 @@ type RiskStatus struct {
 	OrdersThisMinute int
 }
 
+// DailyStats 返回完整的每日统计（用于 Risk Kernel 接口）
+func (r *RiskManager) GetDailyStats() map[string]interface{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	drawdown := 0.0
+	if r.peakEquity > 0 {
+		drawdown = (r.peakEquity - r.currentEquity) / r.peakEquity
+	}
+
+	return map[string]interface{}{
+		"timestamp":         time.Now().Format(time.RFC3339),
+		"realized_pnl":      r.dailyPnL,
+		"unrealized_pnl":    0.0, // 需要持仓数据计算
+		"daily_pnl":         r.dailyPnL,
+		"total_equity":      r.currentEquity,
+		"peak_equity":       r.peakEquity,
+		"daily_drawdown":    drawdown,
+		"kill_switch_active": r.killSwitchActive,
+	}
+}
+
 func (s RiskStatus) String() string {
 	return fmt.Sprintf(
 		"Risk Status: PnL=%.2f Equity=%.2f Drawdown=%.2f%% KillSwitch=%v",
