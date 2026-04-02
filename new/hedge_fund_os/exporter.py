@@ -267,18 +267,22 @@ class P10Exporter:
         
         # 更新市场状态
         regime_map = {
-            MarketRegime.LOW_VOLATILITY: 0,
+            MarketRegime.LOW_VOL: 0,
             MarketRegime.TRENDING: 1,
-            MarketRegime.HIGH_VOLATILITY: 2,
+            MarketRegime.HIGH_VOL: 2,
             MarketRegime.RANGE_BOUND: 3,
-            MarketRegime.UNKNOWN: 4,
+            MarketRegime.CRASH: 4,
         }
-        self.market_regime.set(regime_map.get(decision.regime, 4))
+        # regime may be in decision or market_state
+        regime = getattr(decision, 'regime', None)
+        if regime is None:
+            regime = MarketRegime.TRENDING  # default
+        self.market_regime.set(regime_map.get(regime, 4))
         
         # 更新风险指标
         self.daily_drawdown.set(drawdown)
-        self.leverage.set(decision.leverage)
-        self.target_exposure.set(decision.target_exposure)
+        self.leverage.set(getattr(decision, 'leverage', 1.0))
+        self.target_exposure.set(getattr(decision, 'target_exposure', 0.5))
         
         # 更新策略权重
         for strategy, weight in strategy_weights.items():
@@ -296,11 +300,11 @@ class P10Exporter:
                 timestamp=time.time(),
                 system_mode=decision.mode,
                 risk_appetite=decision.risk_appetite,
-                market_regime=decision.regime,
+                market_regime=getattr(decision, 'regime', MarketRegime.TRENDING),
                 daily_drawdown=drawdown,
-                leverage=decision.leverage,
+                leverage=getattr(decision, 'leverage', 1.0),
                 strategy_weights=strategy_weights,
-                target_exposure=decision.target_exposure,
+                target_exposure=getattr(decision, 'target_exposure', 0.5),
                 max_drawdown_limit=0.0,  # 从 config 获取
                 allocator_latency_ms=latency_ms
             )
