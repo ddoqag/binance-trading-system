@@ -1,0 +1,95 @@
+flowchart TD
+
+subgraph group_grp_offline["Offline research"]
+  node_n_data_sources[("Market data<br/>ingest")]
+  node_n_data_gen["Data prep<br/>pipeline"]
+  node_n_features["Feature layer<br/>features<br/>[models/features.py]"]
+  node_n_training["Training"]
+  node_n_backtest["Backtest<br/>simulation"]
+end
+
+subgraph group_grp_live_py["Python live stack"]
+  node_n_strategy_py["Strategy logic<br/>signal generation"]
+  node_n_risk_py["Risk control"]
+  node_n_exec_py["Python execution"]
+  node_n_trading_system["Trading system<br/>orchestration<br/>[main_trading_system.py]"]
+  node_n_margin_py["Margin stack<br/>margin trading"]
+end
+
+subgraph group_grp_live_go["Go live engine"]
+  node_n_go_engine["Go engine<br/>low-latency engine"]
+  node_n_go_ws["WS client<br/>exchange client"]
+  node_n_go_orders["Order FSM<br/>state machine<br/>[order_fsm.go]"]
+  node_n_go_risk["Go risk<br/>risk engine<br/>[risk_config.go]"]
+  node_n_go_obs["Observability<br/>monitoring<br/>[metrics.go]"]
+  node_n_shared["Shared protocol<br/>ipc<br/>[protocol.py]"]
+end
+
+subgraph group_grp_ai_new["New AI control plane"]
+  node_n_ai_plane["AI control<br/>decision plane"]
+  node_n_portfolio["Portfolio alloc<br/>capital allocation"]
+  node_n_hedge_os["Hedge OS<br/>orchestrator"]
+end
+
+subgraph group_grp_rust["Rust execution"]
+  node_n_rust_exec["Rust executor<br/>high-performance exec<br/>[engine.rs]"]
+end
+
+node_n_data_sources -->|"raw inputs"| node_n_data_gen
+node_n_data_gen -->|"features"| node_n_features
+node_n_features -->|"train sets"| node_n_training
+node_n_features -->|"signals"| node_n_backtest
+node_n_training -->|"models"| node_n_strategy_py
+node_n_backtest -->|"validated logic"| node_n_strategy_py
+node_n_strategy_py -->|"trade intent"| node_n_risk_py
+node_n_risk_py -->|"approved orders"| node_n_exec_py
+node_n_trading_system -->|"strategy core"| node_n_strategy_py
+node_n_trading_system -->|"safety"| node_n_risk_py
+node_n_trading_system -->|"margin config"| node_n_margin_py
+node_n_margin_py -->|"margin flow"| node_n_exec_py
+node_n_ai_plane -->|"allocates"| node_n_portfolio
+node_n_ai_plane -->|"triggers strategy selection"| node_n_strategy_py
+node_n_portfolio -->|"capital plan"| node_n_hedge_os
+node_n_hedge_os -->|"risk budget"| node_n_go_risk
+node_n_hedge_os -->|"decisions"| node_n_shared
+node_n_shared -->|"ipc"| node_n_go_engine
+node_n_go_engine -->|"market access"| node_n_go_ws
+node_n_go_engine -->|"orders"| node_n_go_orders
+node_n_go_engine -->|"pre-trade checks"| node_n_go_risk
+node_n_go_engine -->|"telemetry"| node_n_go_obs
+node_n_exec_py -->|"fast path"| node_n_rust_exec
+node_n_rust_exec -->|"orders"| node_n_go_engine
+node_n_go_orders -->|"reconciliation"| node_n_go_obs
+
+click node_n_data_sources "https://github.com/ddoqag/binance-trading-system/tree/main/data"
+click node_n_data_gen "https://github.com/ddoqag/binance-trading-system/tree/main/data"
+click node_n_features "https://github.com/ddoqag/binance-trading-system/blob/main/models/features.py"
+click node_n_training "https://github.com/ddoqag/binance-trading-system/tree/main/models"
+click node_n_backtest "https://github.com/ddoqag/binance-trading-system/blob/main/strategy_backtest_fixed.py"
+click node_n_strategy_py "https://github.com/ddoqag/binance-trading-system/tree/main/strategy"
+click node_n_risk_py "https://github.com/ddoqag/binance-trading-system/tree/main/risk"
+click node_n_exec_py "https://github.com/ddoqag/binance-trading-system/tree/main/trading"
+click node_n_trading_system "https://github.com/ddoqag/binance-trading-system/blob/main/main_trading_system.py"
+click node_n_margin_py "https://github.com/ddoqag/binance-trading-system/blob/main/demo_leverage_trading.py"
+click node_n_go_engine "https://github.com/ddoqag/binance-trading-system/tree/main/new/core_go"
+click node_n_go_ws "https://github.com/ddoqag/binance-trading-system/blob/main/new/core_go/websocket_manager.go"
+click node_n_go_orders "https://github.com/ddoqag/binance-trading-system/blob/main/new/core_go/order_fsm.go"
+click node_n_go_risk "https://github.com/ddoqag/binance-trading-system/blob/main/new/core_go/risk_config.go"
+click node_n_go_obs "https://github.com/ddoqag/binance-trading-system/blob/main/new/core_go/metrics.go"
+click node_n_shared "https://github.com/ddoqag/binance-trading-system/blob/main/new/shared/protocol.py"
+click node_n_ai_plane "https://github.com/ddoqag/binance-trading-system/tree/main/new/brain_py"
+click node_n_portfolio "https://github.com/ddoqag/binance-trading-system/tree/main/new/brain_py/portfolio"
+click node_n_rust_exec "https://github.com/ddoqag/binance-trading-system/blob/main/rust_execution/src/engine.rs"
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_n_data_sources,node_n_data_gen,node_n_features,node_n_training,node_n_backtest toneBlue
+class node_n_strategy_py,node_n_risk_py,node_n_exec_py,node_n_trading_system,node_n_margin_py toneAmber
+class node_n_go_engine,node_n_go_ws,node_n_go_orders,node_n_go_risk,node_n_go_obs,node_n_shared toneMint
+class node_n_ai_plane,node_n_portfolio,node_n_hedge_os toneRose
+class node_n_rust_exec toneIndigo
