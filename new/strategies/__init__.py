@@ -6,6 +6,9 @@
 
 from .base import StrategyBase, StrategyMetadata, Signal, SignalType
 from .loader import StrategyLoader, get_strategy_loader
+from .volatility_breakout import VolatilityBreakoutStrategy
+from .bollinger_bands import BollingerBandsStrategy
+from .ml_momentum import MLMomentumStrategy
 
 __all__ = [
     'StrategyBase',
@@ -14,4 +17,7 @@ __all__ = [
     'SignalType',
     'StrategyLoader',
     'get_strategy_loader',
+    'VolatilityBreakoutStrategy',
+    'BollingerBandsStrategy',
+    'MLMomentumStrategy',
 ]

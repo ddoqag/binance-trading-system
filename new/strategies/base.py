@@ -149,18 +149,37 @@ class StrategyBase(BaseAgent):
             return {'direction': 0, 'confidence': 0}
 
         signal = self.generate_signal(df)
-        self.last_signal = signal
-        self.signal_history.append(signal)
 
-        # 限制历史长度
-        if len(self.signal_history) > 1000:
-            self.signal_history = self.signal_history[-1000:]
+        # 处理两种返回类型：Signal 对象或 dict
+        if isinstance(signal, dict):
+            # 新策略返回 dict 格式
+            self.last_signal = signal
+            self.signal_history.append(signal)
 
-        return {
-            'direction': signal.type.value,
-            'confidence': signal.confidence,
-            'metadata': signal.metadata
-        }
+            # 限制历史长度
+            if len(self.signal_history) > 1000:
+                self.signal_history = self.signal_history[-1000:]
+
+            return {
+                'direction': signal.get('direction', 0),
+                'confidence': signal.get('confidence', 0.5),
+                'strength': signal.get('strength', 0.5),
+                'metadata': signal.get('metadata', {})
+            }
+        else:
+            # 旧策略返回 Signal 对象
+            self.last_signal = signal
+            self.signal_history.append(signal)
+
+            # 限制历史长度
+            if len(self.signal_history) > 1000:
+                self.signal_history = self.signal_history[-1000:]
+
+            return {
+                'direction': signal.type.value,
+                'confidence': signal.confidence,
+                'metadata': signal.metadata
+            }
 
     def execute(self, state: Any) -> Dict[str, Any]:
         """执行（brain_py.BaseAgent 接口，同 predict）"""
