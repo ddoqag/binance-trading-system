@@ -557,6 +557,52 @@ class PBTTrainer:
             json.dump(state, f, indent=2)
         print(f"[PBT] Checkpoint saved to {filepath}")
 
+    def load_checkpoint(self, filepath: str) -> bool:
+        """Load checkpoint from disk.
+
+        Note: strategy instances themselves are not persisted.
+        After loading, you must re-create strategies via initialize_population
+        or manually assign them to each Individual.
+        """
+        try:
+            with open(filepath, 'r') as f:
+                state = json.load(f)
+
+            with self._lock:
+                # Rebuild population from saved dicts (strategy=None)
+                self.population = {}
+                for ind_id, ind_dict in state.get('population', {}).items():
+                    ind = Individual(
+                        id=ind_dict['id'],
+                        strategy=None,  # strategy not persisted
+                        hyperparams=ind_dict['hyperparams'],
+                        performance_history=deque(
+                            ind_dict.get('performance', []),
+                            maxlen=100
+                        ),
+                        step_count=ind_dict.get('step_count', 0),
+                        last_eval_step=ind_dict.get('last_eval_step', 0),
+                        is_ready=ind_dict.get('is_ready', False),
+                        is_elite=ind_dict.get('is_elite', False),
+                        parent_id=ind_dict.get('parent_id'),
+                        generation=ind_dict.get('generation', 0),
+                        total_reward=ind_dict.get('total_reward', 0.0),
+                        best_reward=ind_dict.get('best_reward', -float('inf')),
+                        worst_reward=ind_dict.get('worst_reward', float('inf')),
+                    )
+                    self.population[ind_id] = ind
+
+                self.total_steps = state.get('stats', {}).get('total_steps', 0)
+                self.evolution_count = state.get('stats', {}).get('evolution_count', 0)
+                self.start_time = state.get('timestamp', time.time())
+                # Note: generation_history and elite_individuals are not fully persisted
+
+            print(f"[PBT] Checkpoint loaded from {filepath} ({len(self.population)} individuals)")
+            return True
+        except Exception as e:
+            print(f"[PBT] Failed to load checkpoint: {e}")
+            return False
+
     def reset_population(self):
         """重置种群"""
         with self._lock:

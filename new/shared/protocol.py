@@ -177,6 +177,23 @@ ACCOUNT_INFO_SIZE = struct.calcsize('<ddddddI')
 
 
 @dataclass
+class AIContext:
+    """AI 决策上下文 (Python -> Go)"""
+    ai_position: float
+    ai_confidence: float
+    moe_weight_0: float
+    moe_weight_1: float
+    moe_weight_2: float
+    moe_weight_3: float
+    regime_code: int
+    num_active_experts: int
+
+
+AI_CONTEXT_SIZE = struct.calcsize('<ddddddIIII')
+AI_CONTEXT_OFFSET = 4096
+
+
+@dataclass
 class SharedMemoryHeader:
     """共享内存头部"""
     magic: int
@@ -194,6 +211,7 @@ class SharedMemoryHeader:
     last_heartbeat: Heartbeat
     account_info: AccountInfo
     last_market_snapshot: MarketSnapshot
+    ai_context: AIContext = None
 
 
 # 计算总头部大小
@@ -456,4 +474,36 @@ def unpack_account_info(data: bytes) -> AccountInfo:
         unrealized_pnl=unpacked[4],
         realized_pnl_today=unpacked[5],
         trades_today=unpacked[6]
+    )
+
+
+def pack_ai_context(ctx: AIContext) -> bytes:
+    """打包 AI 决策上下文"""
+    return struct.pack(
+        '<ddddddIIII',
+        ctx.ai_position,
+        ctx.ai_confidence,
+        ctx.moe_weight_0,
+        ctx.moe_weight_1,
+        ctx.moe_weight_2,
+        ctx.moe_weight_3,
+        ctx.regime_code,
+        ctx.num_active_experts,
+        0,
+        0
+    )
+
+
+def unpack_ai_context(data: bytes) -> AIContext:
+    """解包 AI 决策上下文"""
+    unpacked = struct.unpack('<ddddddIIII', data[:AI_CONTEXT_SIZE])
+    return AIContext(
+        ai_position=unpacked[0],
+        ai_confidence=unpacked[1],
+        moe_weight_0=unpacked[2],
+        moe_weight_1=unpacked[3],
+        moe_weight_2=unpacked[4],
+        moe_weight_3=unpacked[5],
+        regime_code=unpacked[6],
+        num_active_experts=unpacked[7]
     )

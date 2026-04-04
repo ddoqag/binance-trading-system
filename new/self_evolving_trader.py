@@ -43,6 +43,8 @@ import json
 import time
 import signal
 import logging
+import os
+import datetime
 from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -72,6 +74,28 @@ from brain_py.agent_civilization import AgentCivilization, AgentRole
 # Import core components
 from core.live_order_manager import LiveOrderManager, Order, OrderSide, Position
 from core.live_risk_manager import LiveRiskManager, RiskLimits, RiskMetrics, RiskLevel
+from core.binance_rest_client import BinanceRESTClient
+from core.binance_ws_client import BinanceWSClient
+from core.execution_policy import ExecutionPolicy, ExecutionAction
+from core.queue_model import QueueModel
+from core.fill_model import FillModel
+from core.slippage_model import SlippageModel
+
+try:
+    from rl.sac_execution_agent import SACExecutionAgent
+except Exception:
+    SACExecutionAgent = None  # type: ignore
+
+# Import Phase C execution core
+from execution_core import (
+    BinanceUserDataClient,
+    OrderStateMachine,
+    PositionManager,
+    QueueTracker,
+    CancelManager,
+    RepriceEngine,
+    LifecycleManager,
+)
 
 
 class TradingMode(Enum):
@@ -110,6 +134,12 @@ class TraderConfig:
     initial_capital: float = 10000.0
     max_leverage: int = 3
 
+    # 现货杠杆配置
+    enable_spot_margin: bool = False       # 是否启用现货杠杆
+    margin_mode: str = "cross"             # 杠杆模式: cross(全仓) / isolated(逐仓)
+    auto_transfer_margin: bool = True      # 是否自动转入保证金
+    min_margin_level: float = 1.3          # 最小保证金水平
+
     # 风险限额
     risk_limits: RiskLimits = field(default_factory=RiskLimits)
 
@@ -127,6 +157,16 @@ class TraderConfig:
     enable_phase_7_online_learning: bool = True
     enable_phase_8_world_model: bool = False  # 计算密集，默认关闭
     enable_phase_9_civilization: bool = True
+
+    # 状态持久化配置
+    checkpoint_dir: str = "checkpoints"
+    checkpoint_interval_seconds: float = 300.0
+    auto_resume: bool = True
+
+    # SAC Execution RL 配置
+    use_sac_execution: bool = False
+    sac_model_path: Optional[str] = None
+    sac_shadow_log_path: str = "logs/sac_shadow.log"
 
 
 @dataclass
@@ -199,22 +239,72 @@ class SelfEvolvingTrader:
         self.stats = TradingStats()
         self.price_history: deque = deque(maxlen=500)
 
+        # Checkpoint
+        self._checkpoint_task: Optional[asyncio.Task] = None
+
+        # Phase C: Live Execution Core
+        self.rest_client: Optional[BinanceRESTClient] = None
+        self.ws_client: Optional[BinanceWSClient] = None
+        self.user_data_client: Optional[BinanceUserDataClient] = None
+        self.order_state_machine: Optional[OrderStateMachine] = None
+        self.position_manager_phase_c: Optional[PositionManager] = None
+        self.queue_tracker: Optional[QueueTracker] = None
+        self.cancel_manager: Optional[CancelManager] = None
+        self.reprice_engine: Optional[RepriceEngine] = None
+        self.lifecycle_manager: Optional[LifecycleManager] = None
+        self.execution_policy: Optional[ExecutionPolicy] = None
+        self.queue_model: Optional[QueueModel] = None
+        self.fill_model: Optional[FillModel] = None
+        self.slippage_model: Optional[SlippageModel] = None
+        self.sac_agent: Optional[Any] = None
+        self._shadow_log: List[Dict] = []
+        self._listen_key: Optional[str] = None
+        self._backtest_price: float = 50000.0  # synthetic starting price for backtest
+
         logger.info("[SelfEvolvingTrader] Initializing...")
 
     async def initialize(self):
         """初始化所有组件"""
         try:
-            # 1. 初始化 Live Order Manager
-            if self.config.trading_mode != TradingMode.BACKTEST:
-                self.order_manager = LiveOrderManager(
-                    api_key=self.config.api_key,
-                    api_secret=self.config.api_secret,
-                    use_testnet=self.config.use_testnet,
-                    max_leverage=self.config.max_leverage,
-                    on_order_filled=self._on_order_filled
+            # 1. 初始化 Order Manager
+            if self.config.trading_mode == TradingMode.BACKTEST:
+                from core.mock_order_manager import MockOrderManager
+                self.order_manager = MockOrderManager(
+                    initial_capital=self.config.initial_capital,
+                    commission_rate=0.001,
+                    on_order_filled=self._on_order_filled,
                 )
                 await self.order_manager.start()
-                logger.info("[SelfEvolvingTrader] LiveOrderManager initialized")
+                logger.info("[SelfEvolvingTrader] MockOrderManager initialized for backtest")
+            else:
+                if self.config.enable_spot_margin:
+                    from core.spot_margin_order_manager import (
+                        SpotMarginOrderManager, MarginMode
+                    )
+                    self.order_manager = SpotMarginOrderManager(
+                        api_key=self.config.api_key,
+                        api_secret=self.config.api_secret,
+                        use_testnet=self.config.use_testnet,
+                        max_leverage=self.config.max_leverage,
+                        margin_mode=MarginMode.CROSS if self.config.margin_mode == "cross" else MarginMode.ISOLATED,
+                        on_order_filled=self._on_order_filled,
+                        min_margin_level=self.config.min_margin_level,
+                    )
+                    await self.order_manager.start()
+                    logger.info(
+                        f"[SelfEvolvingTrader] SpotMarginOrderManager initialized "
+                        f"(mode={self.config.margin_mode}, leverage={self.config.max_leverage}x)"
+                    )
+                else:
+                    self.order_manager = LiveOrderManager(
+                        api_key=self.config.api_key,
+                        api_secret=self.config.api_secret,
+                        use_testnet=self.config.use_testnet,
+                        max_leverage=self.config.max_leverage,
+                        on_order_filled=self._on_order_filled
+                    )
+                    await self.order_manager.start()
+                    logger.info("[SelfEvolvingTrader] LiveOrderManager initialized")
 
             # 2. 初始化 Live Risk Manager
             if self.order_manager:
@@ -250,7 +340,32 @@ class SelfEvolvingTrader:
                         learning_rate=0.01
                     )
                 )
-                logger.info("[SelfEvolvingTrader] Phase 3: MetaAgent initialized")
+                # Register agents from registry into meta-agent
+                if self.agent_registry:
+                    from brain_py.agent_registry import AgentStatus
+                    from brain_py.meta_agent import StrategyBaseAdapter
+                    registered_count = 0
+                    for agent_info in self.agent_registry.list_agents(status=AgentStatus.ACTIVE):
+                        instance = agent_info.instance
+                        if hasattr(instance, 'name'):
+                            ok = self.meta_agent.register_strategy(instance)
+                            if ok:
+                                registered_count += 1
+                        else:
+                            try:
+                                adapter = StrategyBaseAdapter(instance)
+                                ok = self.meta_agent.register_strategy(adapter)
+                                if ok:
+                                    registered_count += 1
+                            except Exception as e:
+                                logger.warning(f"[SelfEvolvingTrader] Agent {agent_info.name} cannot be adapted: {e}")
+                    logger.info(f"[SelfEvolvingTrader] MetaAgent registered {registered_count} strategies from registry")
+                # Initialize equal weights so strategies are selectable
+                self.meta_agent.update_allocations()
+                logger.info(
+                    f"[SelfEvolvingTrader] Phase 3: MetaAgent initialized "
+                    f"(strategies={list(self.meta_agent.get_weights().keys())})"
+                )
 
             # 6. Phase 4: PBT Trainer
             if self.config.enable_phase_4_pbt:
@@ -290,6 +405,30 @@ class SelfEvolvingTrader:
                 self.civilization = AgentCivilization(n_agents=30)
                 logger.info("[SelfEvolvingTrader] Phase 9: Civilization initialized")
 
+            # 10. Initialize Phase C: Live Execution Core
+            if self.config.trading_mode != TradingMode.BACKTEST:
+                await self._init_phase_c_execution_core()
+                logger.info("[SelfEvolvingTrader] Phase C: Execution Core initialized")
+
+            # 11. Resume from checkpoint if enabled
+            if self.config.auto_resume:
+                await self._maybe_load_checkpoint()
+
+            # Ensure Meta-Agent has valid weights after checkpoint restore
+            if self.meta_agent:
+                self.meta_agent.update_allocations()
+
+            # Pre-seed backtest price history so strategies can generate signals immediately
+            # Need at least 60 bars for slowest strategy (DualMA slow_period=30)
+            if self.config.trading_mode == TradingMode.BACKTEST and len(self.price_history) < 60:
+                price = self._backtest_price
+                for _ in range(60):
+                    price *= (1 + np.random.normal(0, 0.001))
+                    self.price_history.append(price)
+                self._backtest_price = price
+                if self.order_manager and hasattr(self.order_manager, 'set_latest_price'):
+                    self.order_manager.set_latest_price(price)
+
             self.state = SystemState.IDLE
             logger.info("[SelfEvolvingTrader] All components initialized successfully")
 
@@ -297,6 +436,115 @@ class SelfEvolvingTrader:
             self.state = SystemState.ERROR
             logger.error(f"[SelfEvolvingTrader] Initialization failed: {e}")
             raise
+
+    async def _init_phase_c_execution_core(self):
+        """初始化 Phase C 实盘执行核心"""
+        import requests
+
+        base_url = "https://testnet.binance.vision" if self.config.use_testnet else "https://api.binance.com"
+
+        # 1. REST Client
+        self.rest_client = BinanceRESTClient(
+            api_key=self.config.api_key,
+            api_secret=self.config.api_secret,
+            base_url=base_url,
+        )
+
+        # 2. 获取 listenKey
+        try:
+            resp = requests.post(
+                f"{base_url}/api/v3/userDataStream",
+                headers={"X-MBX-APIKEY": self.config.api_key},
+                timeout=10,
+            )
+            data = resp.json()
+            self._listen_key = data.get("listenKey")
+            if not self._listen_key:
+                logger.warning(f"[SelfEvolvingTrader] Failed to get listenKey: {data}")
+                return
+        except Exception as e:
+            logger.warning(f"[SelfEvolvingTrader] Could not obtain listenKey: {e}")
+            return
+
+        # 3. User Data Stream Client
+        self.user_data_client = BinanceUserDataClient(self._listen_key)
+
+        # 4. OSM + Position Manager
+        self.order_state_machine = OrderStateMachine()
+        self.position_manager_phase_c = PositionManager()
+
+        # 5. Queue + Cancel + Reprice
+        self.queue_tracker = QueueTracker()
+        self.cancel_manager = CancelManager(
+            max_queue_wait_seconds=10.0,
+            max_queue_ratio=0.8,
+            price_drift_ticks=2,
+            tick_size=0.01,
+        )
+        self.reprice_engine = RepriceEngine(tick_size=0.01)
+
+        # 6. Execution Policy (Route B)
+        self.queue_model = QueueModel()
+        self.fill_model = FillModel()
+        self.slippage_model = SlippageModel()
+        self.execution_policy = ExecutionPolicy(
+            queue_model=self.queue_model,
+            fill_model=self.fill_model,
+            slippage_model=self.slippage_model,
+            max_slippage_bps=5.0,
+            min_fill_prob=0.3,
+            latency_ms=50.0,
+        )
+
+        # 7. Lifecycle Manager
+        self.lifecycle_manager = LifecycleManager(
+            osm=self.order_state_machine,
+            pm=self.position_manager_phase_c,
+            queue_tracker=self.queue_tracker,
+            cancel_mgr=self.cancel_manager,
+            reprice_engine=self.reprice_engine,
+            rest=self.rest_client,
+            ws_book=None,
+            symbol=self.config.symbol,
+        )
+
+        # 7. SAC Execution Agent (Shadow Mode)
+        if SACExecutionAgent is not None and self.config.use_sac_execution:
+            self.sac_agent = SACExecutionAgent(
+                state_dim=10,
+                action_dim=3,
+                model_path=self.config.sac_model_path,
+                device="cpu",
+            )
+            if self.sac_agent.available:
+                logger.info("[SelfEvolvingTrader] SAC Execution Agent initialized (Shadow Mode)")
+            else:
+                logger.warning("[SelfEvolvingTrader] SACExecutionAgent created but PyTorch unavailable")
+        else:
+            logger.info("[SelfEvolvingTrader] SAC Execution Agent disabled")
+
+        # 8. WebSocket L2 Book Client
+        self.ws_client = BinanceWSClient(self.config.symbol)
+
+        def on_book(book):
+            self.queue_tracker.update_on_book(book)
+            self.lifecycle_manager.ws_book = book
+
+        def on_trade(payload):
+            self.queue_tracker.update_on_trade(payload)
+            if self.fill_model:
+                trade_vol = float(payload.get("q", 0))
+                # 简化：cancel volume 未知，设为 0
+                self.fill_model.update_market_flow(trade_vol=trade_vol, cancel_vol=0)
+
+        self.ws_client.on_book_callback = on_book
+        self.ws_client.on_trade_callback = on_trade
+        self.ws_client.start()
+        logger.info("[SelfEvolvingTrader] L2 Book WebSocket started")
+
+        # 8. 绑定用户数据流到 LifecycleManager
+        self.user_data_client.subscribe(self.lifecycle_manager.on_event)
+        self.user_data_client.start()
 
     def _load_default_agents(self):
         """加载默认策略（从 strategies/ 目录）"""
@@ -370,10 +618,15 @@ class SelfEvolvingTrader:
             return
 
         self._running = True
+        self._shutdown_event.clear()
         logger.info("[SelfEvolvingTrader] Starting...")
 
         # 启动主循环
         self._main_task = asyncio.create_task(self._main_loop())
+
+        # 启动自动保存
+        if self.config.checkpoint_interval_seconds > 0:
+            self._checkpoint_task = asyncio.create_task(self._auto_save_loop())
 
         # 设置信号处理
         self._setup_signal_handlers()
@@ -397,6 +650,32 @@ class SelfEvolvingTrader:
             except asyncio.CancelledError:
                 pass
 
+        # 停止自动保存
+        if self._checkpoint_task:
+            self._checkpoint_task.cancel()
+            try:
+                await self._checkpoint_task
+            except asyncio.CancelledError:
+                pass
+
+        # 保存最终状态
+        try:
+            await self.save_checkpoint()
+        except Exception as e:
+            logger.error(f"[SelfEvolvingTrader] Failed to save checkpoint on shutdown: {e}")
+
+        # Flush shadow log
+        try:
+            self._flush_shadow_log()
+        except Exception as e:
+            logger.error(f"[SelfEvolvingTrader] Failed to flush shadow log on shutdown: {e}")
+
+        # 停止 Phase C 组件
+        if self.user_data_client:
+            self.user_data_client.stop()
+        if self.ws_client:
+            self.ws_client.stop()
+
         # 停止组件
         if self.risk_manager:
             await self.risk_manager.stop()
@@ -416,12 +695,197 @@ class SelfEvolvingTrader:
         signal.signal(signal.SIGINT, handle_signal)
         signal.signal(signal.SIGTERM, handle_signal)
 
+    async def _auto_save_loop(self):
+        """自动保存循环"""
+        while self._running:
+            try:
+                await asyncio.wait_for(
+                    self._shutdown_event.wait(),
+                    timeout=self.config.checkpoint_interval_seconds
+                )
+            except asyncio.TimeoutError:
+                try:
+                    await self.save_checkpoint()
+                except Exception as e:
+                    logger.error(f"[SelfEvolvingTrader] Auto-save failed: {e}")
+
+    # ==================== 状态持久化 ====================
+
+    def _get_checkpoint_base_dir(self) -> str:
+        """获取检查点基础目录"""
+        return self.config.checkpoint_dir
+
+    def _get_latest_checkpoint_dir(self) -> Optional[str]:
+        """获取最新检查点目录"""
+        base_dir = self._get_checkpoint_base_dir()
+        if not os.path.isdir(base_dir):
+            return None
+
+        # Try latest index file first (Windows-friendly)
+        index_path = os.path.join(base_dir, "latest_index.json")
+        if os.path.exists(index_path):
+            try:
+                with open(index_path, "r") as f:
+                    index = json.load(f)
+                latest = index.get("latest_dir")
+                if latest and os.path.isdir(latest):
+                    return latest
+            except Exception:
+                pass
+
+        # Fallback: find most recent timestamped directory
+        dirs = [
+            d for d in os.listdir(base_dir)
+            if os.path.isdir(os.path.join(base_dir, d)) and d.startswith("checkpoint_")
+        ]
+        if not dirs:
+            return None
+        dirs.sort(reverse=True)
+        return os.path.join(base_dir, dirs[0])
+
+    def _ensure_checkpoint_dir(self) -> str:
+        """创建带时间戳的检查点目录"""
+        base_dir = self._get_checkpoint_base_dir()
+        os.makedirs(base_dir, exist_ok=True)
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        checkpoint_dir = os.path.join(base_dir, f"checkpoint_{timestamp}")
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        return checkpoint_dir
+
+    def _update_latest_index(self, checkpoint_dir: str):
+        """更新最新检查点索引"""
+        base_dir = self._get_checkpoint_base_dir()
+        index_path = os.path.join(base_dir, "latest_index.json")
+        try:
+            with open(index_path, "w") as f:
+                json.dump({"latest_dir": checkpoint_dir}, f)
+        except Exception as e:
+            logger.warning(f"[SelfEvolvingTrader] Failed to update checkpoint index: {e}")
+
+    async def save_checkpoint(self):
+        """保存所有状态到检查点目录"""
+        checkpoint_dir = self._ensure_checkpoint_dir()
+
+        # 1. TradingStats
+        stats_path = os.path.join(checkpoint_dir, "trader_state.json")
+        with open(stats_path, "w") as f:
+            json.dump({
+                "stats": {
+                    "start_time": self.stats.start_time,
+                    "total_cycles": self.stats.total_cycles,
+                    "total_trades": self.stats.total_trades,
+                    "total_pnl": self.stats.total_pnl,
+                    "win_count": self.stats.win_count,
+                    "loss_count": self.stats.loss_count,
+                    "regime_switches": self.stats.regime_switches,
+                    "strategy_updates": self.stats.strategy_updates,
+                    "pbt_generations": self.stats.pbt_generations,
+                },
+                "config": {
+                    "symbol": self.config.symbol,
+                    "trading_mode": self.config.trading_mode.value,
+                    "initial_capital": self.config.initial_capital,
+                    "check_interval_seconds": self.config.check_interval_seconds,
+                },
+                "price_history": list(self.price_history),
+                "timestamp": time.time(),
+            }, f, indent=2)
+
+        # 2. MetaAgent
+        if self.meta_agent:
+            meta_path = os.path.join(checkpoint_dir, "meta_agent.json")
+            with open(meta_path, "w") as f:
+                json.dump(self.meta_agent.export_state(), f, indent=2)
+
+        # 3. PBT Trainer
+        if self.pbt_trainer:
+            pbt_path = os.path.join(checkpoint_dir, "pbt_population.json")
+            self.pbt_trainer.save_checkpoint(pbt_path)
+
+        # 4. Regime Detector
+        if self.regime_detector:
+            regime_path = os.path.join(checkpoint_dir, "regime_detector.pkl")
+            self.regime_detector.save(regime_path)
+
+        # 5. Civilization
+        if self.civilization:
+            civ_path = os.path.join(checkpoint_dir, "civilization.json")
+            with open(civ_path, "w") as f:
+                json.dump(self.civilization.export_state(), f, indent=2)
+
+        self._update_latest_index(checkpoint_dir)
+        logger.info(f"[SelfEvolvingTrader] Checkpoint saved to {checkpoint_dir}")
+
+    async def _maybe_load_checkpoint(self):
+        """尝试从最新检查点恢复状态"""
+        latest_dir = self._get_latest_checkpoint_dir()
+        if not latest_dir:
+            logger.info("[SelfEvolvingTrader] No checkpoint found, starting fresh")
+            return
+
+        logger.info(f"[SelfEvolvingTrader] Loading checkpoint from {latest_dir}")
+
+        try:
+            # 1. TradingStats
+            stats_path = os.path.join(latest_dir, "trader_state.json")
+            if os.path.exists(stats_path):
+                with open(stats_path, "r") as f:
+                    state = json.load(f)
+                s = state.get("stats", {})
+                self.stats.start_time = s.get("start_time", time.time())
+                self.stats.total_cycles = s.get("total_cycles", 0)
+                self.stats.total_trades = s.get("total_trades", 0)
+                self.stats.total_pnl = s.get("total_pnl", 0.0)
+                self.stats.win_count = s.get("win_count", 0)
+                self.stats.loss_count = s.get("loss_count", 0)
+                self.stats.regime_switches = s.get("regime_switches", 0)
+                self.stats.strategy_updates = s.get("strategy_updates", 0)
+                self.stats.pbt_generations = s.get("pbt_generations", 0)
+                self.price_history = deque(maxlen=500)
+                for p in state.get("price_history", []):
+                    self.price_history.append(p)
+
+            # 2. MetaAgent
+            meta_path = os.path.join(latest_dir, "meta_agent.json")
+            if self.meta_agent and os.path.exists(meta_path):
+                with open(meta_path, "r") as f:
+                    self.meta_agent.import_state(json.load(f))
+
+            # 3. PBT Trainer
+            pbt_path = os.path.join(latest_dir, "pbt_population.json")
+            if self.pbt_trainer and os.path.exists(pbt_path):
+                self.pbt_trainer.load_checkpoint(pbt_path)
+
+            # 4. Regime Detector
+            regime_path = os.path.join(latest_dir, "regime_detector.pkl")
+            if self.regime_detector and os.path.exists(regime_path):
+                self.regime_detector.load(regime_path)
+
+            # 5. Civilization
+            civ_path = os.path.join(latest_dir, "civilization.json")
+            if self.civilization and os.path.exists(civ_path):
+                with open(civ_path, "r") as f:
+                    self.civilization.import_state(json.load(f))
+
+            logger.info("[SelfEvolvingTrader] Checkpoint loaded successfully")
+
+        except Exception as e:
+            logger.warning(f"[SelfEvolvingTrader] Failed to load checkpoint: {e}. Starting fresh.")
+
     async def _main_loop(self):
         """主交易循环"""
         while self._running and not self._shutdown_event.is_set():
             try:
                 cycle_start = time.time()
                 self.stats.total_cycles += 1
+
+                # 周期性地 flush shadow log（每 10 个 cycle）
+                if self.stats.total_cycles % 10 == 0:
+                    try:
+                        self._flush_shadow_log()
+                    except Exception as e:
+                        logger.error(f"[SelfEvolvingTrader] Periodic shadow log flush failed: {e}")
 
                 # 执行完整交易周期
                 await self._trading_cycle()
@@ -447,6 +911,13 @@ class SelfEvolvingTrader:
     async def _trading_cycle(self):
         """执行一个完整的交易周期"""
         try:
+            # Backtest: feed synthetic price so signals can be generated and executed
+            if self.config.trading_mode == TradingMode.BACKTEST:
+                self._backtest_price *= (1 + np.random.normal(0, 0.001))
+                self.update_price(self._backtest_price)
+                if self.order_manager and hasattr(self.order_manager, 'set_latest_price'):
+                    self.order_manager.set_latest_price(self._backtest_price)
+
             # Phase 2: 检测市场状态
             if self.config.enable_phase_2_regime and self.regime_detector:
                 self.state = SystemState.ANALYZING
@@ -461,6 +932,7 @@ class SelfEvolvingTrader:
             self.state = SystemState.SELECTING
 
             strategy_allocations = await self._select_strategies()
+            logger.info(f"[SelfEvolvingTrader] Allocations: {strategy_allocations}")
 
             if not strategy_allocations:
                 logger.debug("[SelfEvolvingTrader] No strategy selected, skipping")
@@ -472,10 +944,45 @@ class SelfEvolvingTrader:
                 self.stats.total_cycles % 100 == 0):
                 self.civilization.simulate_step()
 
+            # Phase C: 管理已有订单 (Cancel / Reprice)
+            sac_urgency = None
+            if (
+                self.sac_agent
+                and self.sac_agent.available
+                and self.ws_client
+                and self.ws_client.book
+            ):
+                try:
+                    # 使用保守参数预估 state，仅提取 urgency
+                    sac_state = self.sac_agent.build_state(
+                        signal_strength=0.0,
+                        book=self.ws_client.book,
+                        queue_tracker=self.queue_tracker,
+                        fill_model=self.fill_model,
+                        slippage_model=self.slippage_model,
+                        position_manager=self.position_manager_phase_c,
+                        estimated_size=self.config.quantity or 1.0,
+                    )
+                    sac_action = self.sac_agent.get_action(sac_state, deterministic=False)
+                    sac_urgency = float(sac_action[2]) if sac_action is not None else None
+                except Exception:
+                    sac_urgency = None
+
+            if self.lifecycle_manager:
+                current_signal_side = None
+                # 如果后续生成了信号，可在这里提取方向
+                self.lifecycle_manager.manage_orders(
+                    current_signal_side=current_signal_side,
+                    current_regime=self.current_regime.value if self.current_regime else "unknown",
+                    adverse_alert=False,
+                    sac_urgency=sac_urgency,
+                )
+
             # 生成交易信号
             self.state = SystemState.EXECUTING
 
             signals = await self._generate_signals(strategy_allocations)
+            logger.info(f"[SelfEvolvingTrader] Generated signals: {len(signals)}")
 
             # 风险检查
             self.state = SystemState.RISK_CHECK
@@ -497,8 +1004,6 @@ class SelfEvolvingTrader:
 
     async def _detect_regime(self) -> RegimePrediction:
         """检测市场状态"""
-        # 这里应该获取实际市场数据
-        # 简化：使用价格历史
         if len(self.price_history) < 20:
             return RegimePrediction(
                 regime=Regime.UNKNOWN,
@@ -508,10 +1013,8 @@ class SelfEvolvingTrader:
                 timestamp=time.time()
             )
 
-        prices = np.array(list(self.price_history)[-100:])
-        returns = np.diff(np.log(prices + 1e-8))
-
-        return self.regime_detector.predict(returns)
+        current_price = float(self.price_history[-1])
+        return await self.regime_detector.detect_async(current_price)
 
     async def _select_strategies(self) -> Dict[str, float]:
         """选择策略并分配权重"""
@@ -567,10 +1070,19 @@ class SelfEvolvingTrader:
 
             # 生成信号
             try:
+                # StrategyBase instances expect a DataFrame with price history,
+                # not the 10-dim state vector used by RL agents/BaseExperts
+                agent_state = state
+                if hasattr(agent, '_array_to_dataframe'):
+                    import pandas as pd
+                    agent_state = pd.DataFrame({
+                        'close': list(self.price_history)
+                    })
+
                 if hasattr(agent, 'execute'):
-                    action = agent.execute(state)
+                    action = agent.execute(agent_state)
                 elif hasattr(agent, 'predict'):
-                    action = agent.predict(state)
+                    action = agent.predict(agent_state)
                 else:
                     continue
 
@@ -589,20 +1101,45 @@ class SelfEvolvingTrader:
 
     async def _execute_signals(self, signals: List[Dict]):
         """执行交易信号"""
-        if not signals or not self.order_manager:
+        if not signals:
             return
 
         # 加权聚合信号
         aggregated = self._aggregate_signals(signals)
+        logger.info(f"[SelfEvolvingTrader] Aggregated signal: {aggregated}")
+
+        # Backtest fallback: if no strategy signal fired, generate a random signal
+        # with small probability to ensure the execution pipeline is exercised.
+        if not aggregated and self.config.trading_mode == TradingMode.BACKTEST:
+            if np.random.random() < 0.15:
+                side = 'BUY' if np.random.random() < 0.5 else 'SELL'
+                # Use 5% of available capital per trade
+                price = self._backtest_price if self._backtest_price > 0 else 50000.0
+                quantity = (self.config.initial_capital * 0.05) / max(price, 1.0)
+                aggregated = {
+                    'side': side,
+                    'quantity': quantity,
+                    'price': price,
+                    'confidence': 0.3,
+                    'fallback': True
+                }
+                logger.info(f"[SelfEvolvingTrader] Backtest fallback signal: {aggregated}")
 
         if not aggregated:
+            return
+
+        side = aggregated.get('side', 'BUY')
+        quantity = aggregated.get('quantity', 0)
+
+        if quantity <= 0:
+            logger.info("[SelfEvolvingTrader] Quantity <= 0, skipping execution")
             return
 
         # 检查风险限额
         if self.risk_manager:
             can_trade, reason = self.risk_manager.can_place_order(
                 symbol=self.config.symbol,
-                quantity=aggregated.get('quantity', 0),
+                quantity=quantity,
                 price=aggregated.get('price', 0)
             )
 
@@ -612,28 +1149,164 @@ class SelfEvolvingTrader:
 
         # 执行订单
         try:
-            side = aggregated.get('side', 'BUY')
-            quantity = aggregated.get('quantity', 0)
+            # Phase C/B: 使用 ExecutionPolicy + LifecycleManager 下单
+            if self.lifecycle_manager and self.execution_policy and self.ws_client and self.ws_client.book:
+                signal_strength = aggregated.get('confidence', 0.0)
+                if side == 'SELL':
+                    signal_strength = -signal_strength
 
-            if quantity <= 0:
+                # 实际下单仍然由规则决定
+                action, price = self.execution_policy.decide(
+                    signal_strength=signal_strength,
+                    book=self.ws_client.book,
+                    estimated_size=quantity,
+                )
+
+                # ========== Shadow Mode: SAC 同时给出建议并记录对比 ==========
+                sac_order = None
+                state = None
+                sac_action = None
+                if self.sac_agent and self.sac_agent.available:
+                    state = self.sac_agent.build_state(
+                        signal_strength=signal_strength,
+                        book=self.ws_client.book,
+                        queue_tracker=self.queue_tracker,
+                        fill_model=self.fill_model,
+                        slippage_model=self.slippage_model,
+                        position_manager=self.position_manager_phase_c,
+                        estimated_size=quantity,
+                    )
+                    sac_action = self.sac_agent.get_action(state, deterministic=False)
+                    sac_order = self.sac_agent.map_action_to_order(
+                        action=sac_action,
+                        side=side,
+                        target_size=quantity,
+                        book=self.ws_client.book,
+                        tick_size=0.01,
+                    )
+                    logger.debug(
+                        f"[ShadowMode] SAC suggests: {sac_order['action']} {sac_order['side']} "
+                        f"{sac_order['size']:.4f} @ {sac_order['price']}"
+                    )
+
+                book = self.ws_client.book
+                self._shadow_log.append({
+                    "timestamp": time.time(),
+                    "state": state.tolist() if state is not None else None,
+                    "sac_action": sac_action.tolist() if sac_action is not None else None,
+                    "sac_order": sac_order,
+                    "rule_action": action.value,
+                    "rule_price": price,
+                    "signal_strength": signal_strength,
+                    "quantity": quantity,
+                    "book_snapshot": {
+                        "best_bid": book.best_bid() if book else None,
+                        "best_ask": book.best_ask() if book else None,
+                        "mid": book.mid_price() if book else None,
+                        "spread": book.spread() if book else None,
+                    },
+                })
+
+                if action == ExecutionAction.WAIT:
+                    logger.info(
+                        f"[SelfEvolvingTrader] ExecutionPolicy chose WAIT for {side} {quantity}"
+                    )
+                    return
+
+                order_type = "MARKET" if action == ExecutionAction.MARKET else "LIMIT"
+                order_id = self.lifecycle_manager.place_new_order(
+                    side=side,
+                    size=quantity,
+                    price=price,
+                    order_type=order_type,
+                )
+                if order_id:
+                    logger.info(
+                        f"[SelfEvolvingTrader] ExecutionPolicy={action.value} | "
+                        f"Executed {side} {quantity} @ {price} via LifecycleManager "
+                        f"(strategies: {len(signals)})"
+                    )
                 return
 
-            if side == 'BUY':
-                order = await self.order_manager.buy_market(
-                    self.config.symbol, quantity
+            # Fallback: 直接 MARKET
+            if self.lifecycle_manager:
+                order_id = self.lifecycle_manager.place_new_order(
+                    side=side,
+                    size=quantity,
+                    price=None,
+                    order_type="MARKET",
                 )
-            else:
-                order = await self.order_manager.sell_market(
-                    self.config.symbol, quantity
-                )
+                if order_id:
+                    logger.info(
+                        f"[SelfEvolvingTrader] Executed {side} order via LifecycleManager: {quantity} "
+                        f"(strategies: {len(signals)})"
+                    )
+                return
 
-            logger.info(
-                f"[SelfEvolvingTrader] Executed {side} order: {quantity} "
-                f"(strategies: {len(signals)})"
-            )
+            # Fallback: 旧路径
+            if not self.order_manager:
+                return
+
+            # 现货杠杆额外风险检查
+            if self.config.enable_spot_margin:
+                from core.spot_margin_order_manager import SpotMarginOrderManager
+                if isinstance(self.order_manager, SpotMarginOrderManager):
+                    can_trade, reason = await self.order_manager._check_margin_safety()
+                    if not can_trade:
+                        logger.warning(f"[SelfEvolvingTrader] Margin safety check failed: {reason}")
+                        return
+
+            if self.config.enable_spot_margin:
+                order = await self._execute_spot_margin_signal(side, quantity)
+            else:
+                if side == 'BUY':
+                    order = await self.order_manager.buy_market(
+                        self.config.symbol, quantity
+                    )
+                else:
+                    order = await self.order_manager.sell_market(
+                        self.config.symbol, quantity
+                    )
+
+            if order:
+                self.stats.total_trades += 1
+                logger.info(
+                    f"[SelfEvolvingTrader] Executed {side} order: {quantity} "
+                    f"(strategies: {len(signals)}, total_trades={self.stats.total_trades})"
+                )
 
         except Exception as e:
             logger.error(f"[SelfEvolvingTrader] Failed to execute order: {e}")
+
+    async def _execute_spot_margin_signal(self, side: str, quantity: float) -> Optional[Any]:
+        """执行现货杠杆交易信号"""
+        from core.spot_margin_order_manager import SpotMarginOrderManager
+
+        if not isinstance(self.order_manager, SpotMarginOrderManager):
+            # fallback 到普通接口
+            if side == 'BUY':
+                return await self.order_manager.buy_market(self.config.symbol, quantity)
+            else:
+                return await self.order_manager.sell_market(self.config.symbol, quantity)
+
+        position = self.order_manager.get_position(self.config.symbol)
+        is_long = position is not None and position.side == OrderSide.BUY and position.quantity > 0
+        is_short = position is not None and position.side == OrderSide.SELL and position.quantity > 0
+
+        if side == 'BUY':
+            if is_short:
+                # 先平空仓，再开多仓
+                logger.info("[SelfEvolvingTrader] Closing short position before opening long")
+                await self.order_manager.close_short_position(self.config.symbol)
+            # 开仓做多: transfer -> borrow -> buy
+            return await self.order_manager.open_long_position(self.config.symbol, quantity)
+        else:  # SELL
+            if is_long:
+                # 平多仓: sell -> repay -> transfer
+                return await self.order_manager.close_long_position(self.config.symbol, quantity)
+            else:
+                # 开空仓: borrow -> sell
+                return await self.order_manager.open_short_position(self.config.symbol, quantity)
 
     def _aggregate_signals(self, signals: List[Dict]) -> Dict:
         """聚合多个策略的信号"""
@@ -743,8 +1416,10 @@ class SelfEvolvingTrader:
             np.mean(returns) if len(returns) > 0 else 0,  # 平均收益
             np.std(returns) if len(returns) > 0 else 0,  # 波动率
             (prices[-1] / prices[0] - 1) if len(prices) > 0 else 0,  # 趋势
-            len(self.order_manager.get_open_orders()) if self.order_manager else 0,  # 挂单数
-            len(self.order_manager.get_all_positions()) if self.order_manager else 0,  # 持仓数
+            (len(self.order_manager.get_open_orders()) if self.order_manager else
+             len(self.lifecycle_manager.osm.get_active_orders()) if self.lifecycle_manager else 0),  # 挂单数
+            (len(self.order_manager.get_all_positions()) if self.order_manager else
+             (1 if self.position_manager_phase_c and abs(self.position_manager_phase_c.position) > 1e-9 else 0)),  # 持仓数
             self.stats.total_pnl / max(1, self.config.initial_capital),  # 总收益率
             self.risk_manager.get_current_metrics().risk_score / 100 if self.risk_manager else 0,  # 风险分
             0.0,  # 预留
@@ -752,6 +1427,21 @@ class SelfEvolvingTrader:
         ])
 
         return state
+
+    def _flush_shadow_log(self) -> str:
+        """将内存中的 shadow log 持久化到 JSON Lines 文件"""
+        if not self._shadow_log:
+            return ""
+        import json
+        log_path = self.config.sac_shadow_log_path
+        os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
+        with open(log_path, "a") as f:
+            for entry in self._shadow_log:
+                f.write(json.dumps(entry) + "\n")
+        count = len(self._shadow_log)
+        self._shadow_log.clear()
+        logger.info(f"[SelfEvolvingTrader] Flushed {count} shadow log entries to {log_path}")
+        return log_path
 
     # ==================== 公共接口 ====================
 
@@ -775,8 +1465,15 @@ class SelfEvolvingTrader:
                 'phase_4_pbt': self.pbt_trainer is not None,
                 'phase_6_moe': self.moe is not None,
                 'phase_8_world_model': self.world_model is not None,
-                'phase_9_civilization': self.civilization is not None
-            }
+                'phase_9_civilization': self.civilization is not None,
+                'phase_c_execution_core': self.lifecycle_manager is not None,
+            },
+            'phase_c': {
+                'active_orders': len(self.lifecycle_manager.osm.get_active_orders()) if self.lifecycle_manager else 0,
+                'position': self.position_manager_phase_c.position if self.position_manager_phase_c else 0.0,
+                'avg_price': self.position_manager_phase_c.avg_price if self.position_manager_phase_c else 0.0,
+                'realized_pnl': self.position_manager_phase_c.realized_pnl if self.position_manager_phase_c else 0.0,
+            } if (self.position_manager_phase_c or self.lifecycle_manager) else None
         }
 
     def get_strategy_allocations(self) -> Dict[str, float]:

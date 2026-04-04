@@ -43,6 +43,12 @@ from .execution_sac import (
     ExecutionSlice,
 )
 
+try:
+    from qlib_models.adapters import QlibExpert, QlibExpertConfig
+except ImportError:
+    QlibExpert = None  # type: ignore
+    QlibExpertConfig = None  # type: ignore
+
 __all__ = [
     # Base classes
     'BaseExpert',
@@ -67,4 +73,7 @@ __all__ = [
     'ExecutionPlan',
     'ExecutionStrategy',
     'ExecutionSlice',
+    # Qlib models
+    'QlibExpert',
+    'QlibExpertConfig',
 ]

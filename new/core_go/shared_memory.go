@@ -162,6 +162,19 @@ func (m *SharedMemoryManager) GetBuffer() []byte {
 	return m.data
 }
 
+// ReadAIContext 读取 AI 决策上下文
+func (m *SharedMemoryManager) ReadAIContext() (*AIContext, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.data) < AIContextOffset+int(unsafe.Sizeof(AIContext{})) {
+		return nil, fmt.Errorf("shared memory too small for AI context")
+	}
+
+	ctx, _ := UnmarshalAIContext(m.data[AIContextOffset:])
+	return ctx, nil
+}
+
 // IsConnected 检查是否连接
 func (m *SharedMemoryManager) IsConnected() bool {
 	return m.connected

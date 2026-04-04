@@ -10,7 +10,8 @@ import time
 from typing import Optional
 from .protocol import (
     MessageType, OrderCommand, ORDER_COMMAND_SIZE,
-    HFT_SHM_SIZE_DEFAULT, HFT_PROTOCOL_MAGIC, HFT_PROTOCOL_VERSION
+    HFT_SHM_SIZE_DEFAULT, HFT_PROTOCOL_MAGIC, HFT_PROTOCOL_VERSION,
+    AIContext, pack_ai_context, AI_CONTEXT_OFFSET, AI_CONTEXT_SIZE,
 )
 
 
@@ -176,6 +177,19 @@ class SharedMemoryOrderWriter:
         self.mmap.flush()
 
         return self._command_id_counter
+
+    def write_ai_context(self, ctx: AIContext) -> bool:
+        """写入 AI 决策上下文到固定偏移位置"""
+        if self.mmap is None:
+            return False
+        try:
+            self.mmap.seek(AI_CONTEXT_OFFSET)
+            self.mmap.write(pack_ai_context(ctx))
+            self.mmap.flush()
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to write AI context: {e}")
+            return False
 
     def update_ai_heartbeat(self, running: bool = True):
         """更新AI引擎心跳时间戳"""

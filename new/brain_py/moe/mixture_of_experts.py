@@ -209,6 +209,11 @@ class SoftmaxGatingNetwork(GatingNetwork):
         # 扩展为num_experts个输出（简单复制，实际应用中可以学习每个专家的gate）
         logits = np.repeat(logits, num_experts, axis=1)
 
+        # 添加基于历史表现的偏置
+        if hasattr(self, '_performance_weights') and len(self._performance_weights) == num_experts:
+            perf_bias = np.log(self._performance_weights + 1e-8)
+            logits = logits + perf_bias.reshape(1, -1)
+
         # 添加小的随机扰动增加多样性
         noise = np.random.randn(batch_size, num_experts) * 0.01
         logits = logits + noise

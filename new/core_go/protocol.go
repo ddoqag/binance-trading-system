@@ -107,6 +107,20 @@ type TradeExecution struct {
 	IsMaker         uint8
 }
 
+// AIContext AI决策上下文 (Python -> Go)
+type AIContext struct {
+	AIPosition        float64
+	AIConfidence      float64
+	MoEWeight0        float64
+	MoEWeight1        float64
+	MoEWeight2        float64
+	MoEWeight3        float64
+	RegimeCode        uint32
+	NumActiveExperts  uint32
+}
+
+const AIContextOffset = 4096
+
 // Heartbeat 心跳
 type Heartbeat struct {
 	Magic       uint32
@@ -344,6 +358,47 @@ func UnmarshalOrderCommand(buf []byte) (*OrderCommand, int) {
 	offset += 1
 
 	return cmd, offset
+}
+
+// UnmarshalAIContext 反序列化 AI 上下文
+func UnmarshalAIContext(buf []byte) (*AIContext, int) {
+	ctx := &AIContext{}
+	offset := 0
+
+	bits := binary.LittleEndian.Uint64(buf[offset:])
+	ctx.AIPosition = math.Float64frombits(bits)
+	offset += 8
+
+	bits = binary.LittleEndian.Uint64(buf[offset:])
+	ctx.AIConfidence = math.Float64frombits(bits)
+	offset += 8
+
+	bits = binary.LittleEndian.Uint64(buf[offset:])
+	ctx.MoEWeight0 = math.Float64frombits(bits)
+	offset += 8
+
+	bits = binary.LittleEndian.Uint64(buf[offset:])
+	ctx.MoEWeight1 = math.Float64frombits(bits)
+	offset += 8
+
+	bits = binary.LittleEndian.Uint64(buf[offset:])
+	ctx.MoEWeight2 = math.Float64frombits(bits)
+	offset += 8
+
+	bits = binary.LittleEndian.Uint64(buf[offset:])
+	ctx.MoEWeight3 = math.Float64frombits(bits)
+	offset += 8
+
+	ctx.RegimeCode = binary.LittleEndian.Uint32(buf[offset:])
+	offset += 4
+
+	ctx.NumActiveExperts = binary.LittleEndian.Uint32(buf[offset:])
+	offset += 4
+
+	// skip reserved 8 bytes
+	offset += 8
+
+	return ctx, offset
 }
 
 // NewSharedMemoryHeader 创建新的头部

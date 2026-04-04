@@ -340,6 +340,90 @@ class AgentCivilization:
         print(f"[Civilization] Simulation complete after {n_generations} generations")
 
 
+    def export_state(self) -> Dict:
+        """Export civilization state to a JSON-serializable dict."""
+
+        def _knowledge_to_dict(k: Knowledge) -> Dict:
+            return {
+                'id': k.id,
+                'content': k.content,
+                'creator': k.creator,
+                'fitness': k.fitness,
+                'age': k.age,
+                'adoption_count': k.adoption_count,
+            }
+
+        def _agent_to_dict(a: Agent) -> Dict:
+            return {
+                'id': a.id,
+                'role': a.role.value,
+                'resources': a.resources,
+                'reputation': a.reputation,
+                'generation': a.generation,
+                'parent_id': a.parent_id,
+                'knowledge_base': {
+                    k_id: _knowledge_to_dict(k) for k_id, k in a.knowledge_base.items()
+                },
+            }
+
+        return {
+            'n_agents': self.n_agents,
+            'world_size': self.world_size,
+            'resource_regen_rate': self.resource_regen_rate,
+            'agents': {aid: _agent_to_dict(a) for aid, a in self.agents.items()},
+            'global_knowledge': {
+                k_id: _knowledge_to_dict(k) for k_id, k in self.global_knowledge.items()
+            },
+            'market_prices': dict(self.market_prices),
+            'generation': self.generation,
+            'history': list(self.history),
+        }
+
+    def import_state(self, state: Dict):
+        """Restore civilization state from a dict."""
+        self.n_agents = state.get('n_agents', self.n_agents)
+        self.world_size = state.get('world_size', self.world_size)
+        self.resource_regen_rate = state.get('resource_regen_rate', self.resource_regen_rate)
+        self.generation = state.get('generation', 0)
+        self.market_prices = defaultdict(float, state.get('market_prices', {}))
+
+        # Restore history
+        self.history = deque(maxlen=500)
+        for entry in state.get('history', []):
+            self.history.append(entry)
+
+        # Helper to rebuild Knowledge
+        def _dict_to_knowledge(data: Dict) -> Knowledge:
+            return Knowledge(
+                id=data['id'],
+                content=data['content'],
+                creator=data['creator'],
+                fitness=data.get('fitness', 0.0),
+                age=data.get('age', 0),
+                adoption_count=data.get('adoption_count', 0),
+            )
+
+        # Restore global knowledge
+        self.global_knowledge = {}
+        for k_id, k_data in state.get('global_knowledge', {}).items():
+            self.global_knowledge[k_id] = _dict_to_knowledge(k_data)
+
+        # Restore agents
+        self.agents = {}
+        for aid, a_data in state.get('agents', {}).items():
+            agent = Agent(
+                id=a_data['id'],
+                role=AgentRole(a_data['role']),
+                resources=a_data.get('resources', 100.0),
+                reputation=a_data.get('reputation', 1.0),
+                generation=a_data.get('generation', 0),
+                parent_id=a_data.get('parent_id'),
+            )
+            for k_id, k_data in a_data.get('knowledge_base', {}).items():
+                agent.knowledge_base[k_id] = _dict_to_knowledge(k_data)
+            self.agents[aid] = agent
+
+
 if __name__ == "__main__":
     # 创建文明
     civ = AgentCivilization(n_agents=30)

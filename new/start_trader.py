@@ -95,9 +95,24 @@ def create_config_from_args(args) -> TraderConfig:
     if args.max_leverage:
         config.max_leverage = int(args.max_leverage)
 
+    # Spot margin settings
+    config.enable_spot_margin = args.spot_margin
+    if args.margin_mode:
+        config.margin_mode = args.margin_mode
+    if args.min_margin_level is not None:
+        config.min_margin_level = args.min_margin_level
+    config.auto_transfer_margin = args.auto_transfer_margin
+
     # Strategy switch cooldown
     if args.strategy_switch_cooldown:
         config.strategy_switch_cooldown = float(args.strategy_switch_cooldown)
+
+    # Checkpoint settings
+    if args.checkpoint_dir:
+        config.checkpoint_dir = args.checkpoint_dir
+    if args.checkpoint_interval is not None:
+        config.checkpoint_interval_seconds = float(args.checkpoint_interval)
+    config.auto_resume = not args.no_resume
 
     return config
 
@@ -153,6 +168,40 @@ async def main():
     )
 
     parser.add_argument(
+        '--spot-margin',
+        action='store_true',
+        help='Enable spot margin trading (borrow/repay logic)'
+    )
+
+    parser.add_argument(
+        '--margin-mode',
+        choices=['cross', 'isolated'],
+        default='cross',
+        help='Margin mode: cross (default) or isolated'
+    )
+
+    parser.add_argument(
+        '--min-margin-level',
+        type=float,
+        default=1.3,
+        help='Minimum margin level allowed for opening positions (default: 1.3)'
+    )
+
+    parser.add_argument(
+        '--auto-transfer-margin',
+        action='store_true',
+        default=True,
+        help='Auto transfer collateral from spot to margin (default: True)'
+    )
+
+    parser.add_argument(
+        '--no-auto-transfer-margin',
+        dest='auto_transfer_margin',
+        action='store_false',
+        help='Disable auto transfer of collateral'
+    )
+
+    parser.add_argument(
         '--strategy-switch-cooldown',
         type=float,
         default=60.0,
@@ -173,6 +222,25 @@ async def main():
         '--production', '-p',
         action='store_true',
         help='Use production API (default: testnet)'
+    )
+
+    parser.add_argument(
+        '--checkpoint-dir',
+        default='checkpoints',
+        help='Directory for saving checkpoints (default: checkpoints)'
+    )
+
+    parser.add_argument(
+        '--checkpoint-interval',
+        type=float,
+        default=300.0,
+        help='Auto-save interval in seconds (default: 300)'
+    )
+
+    parser.add_argument(
+        '--no-resume',
+        action='store_true',
+        help='Skip loading checkpoint on startup'
     )
 
     parser.add_argument(
@@ -221,6 +289,13 @@ async def main():
     print(f"  Capital: ${config.initial_capital:,.2f}")
     print(f"  Testnet: {config.use_testnet}")
     print(f"  Check Interval: {config.check_interval_seconds}s")
+    print(f"  Checkpoint Dir: {config.checkpoint_dir}")
+    print(f"  Checkpoint Interval: {config.checkpoint_interval_seconds}s")
+    print(f"  Auto Resume: {config.auto_resume}")
+    if config.enable_spot_margin:
+        print(f"  Spot Margin: ENABLED ({config.margin_mode}, {config.max_leverage}x)")
+        print(f"  Auto Transfer: {config.auto_transfer_margin}")
+        print(f"  Min Margin Level: {config.min_margin_level}")
     print("=" * 60)
     print()
 

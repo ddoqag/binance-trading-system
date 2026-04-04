@@ -1,0 +1,130 @@
+"""
+mlp_model.py - Qlib MLP benchmark port.
+
+Standard feedforward DNN for tabular data.
+"""
+
+import os
+from typing import Dict, Any
+import numpy as np
+
+import torch
+import torch.nn as nn
+
+from ..base import QlibBaseModel, QlibModelConfig
+
+
+class _MLPNet(nn.Module):
+    def __init__(self, input_dim: int, hidden_dims, dropout: float):
+        super().__init__()
+        layers = []
+        in_dim = input_dim
+        for h in hidden_dims:
+            layers.append(nn.Linear(in_dim, h))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
+            in_dim = h
+        layers.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class MLPModel(QlibBaseModel):
+    """MLP model for tabular features."""
+
+    def __init__(self, config: QlibModelConfig = None):
+        if config is None:
+            config = QlibModelConfig(
+                model_type="mlp",
+                input_dim=400,
+                lookback_window=20,
+                hidden_dims=[256, 128, 64],
+                dropout=0.2,
+                lr=2e-3,
+                weight_decay=2e-4,
+                n_epochs=100,
+                batch_size=256,
+                device="cpu",
+            )
+        super().__init__(config)
+        self._model = None
+        self._optimizer = None
+        self._criterion = nn.MSELoss()
+
+    def build_model(self) -> Any:
+        hidden_dims = self.config.extra.get("hidden_dims", [256, 128, 64])
+        dropout = self.config.extra.get("dropout", 0.2)
+        net = _MLPNet(self.config.input_dim, hidden_dims, dropout)
+        return net.to(self.config.device)
+
+    def predict(self, x: np.ndarray) -> np.ndarray:
+        if self._model is None:
+            raise RuntimeError("Model has not been fitted yet")
+        self._model.eval()
+        with torch.no_grad():
+            x_t = torch.from_numpy(np.asarray(x, dtype=np.float32)).to(self.config.device)
+            if x_t.dim() == 1:
+                x_t = x_t.unsqueeze(0)
+            pred = self._model(x_t)
+        return pred.cpu().numpy().reshape(-1, self.config.forecast_horizon)
+
+    def fit(self, x: np.ndarray, y: np.ndarray) -> Dict[str, float]:
+        x = np.asarray(x, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32).ravel()
+
+        if x.ndim == 1 and len(y) == 1:
+            x = x.reshape(1, -1)
+
+        self._model = self.build_model()
+        lr = self.config.extra.get("lr", 2e-3)
+        wd = self.config.extra.get("weight_decay", 2e-4)
+        self._optimizer = torch.optim.Adam(self._model.parameters(), lr=lr, weight_decay=wd)
+
+        n_epochs = self.config.extra.get("n_epochs", 100)
+        batch_size = self.config.extra.get("batch_size", 256)
+        device = self.config.device
+
+        dataset = torch.utils.data.TensorDataset(
+            torch.from_numpy(x),
+            torch.from_numpy(y),
+        )
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        self._model.train()
+        for epoch in range(n_epochs):
+            epoch_losses = []
+            for xb, yb in loader:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                self._optimizer.zero_grad()
+                pred = self._model(xb).squeeze(-1)
+                loss = self._criterion(pred, yb)
+                loss.backward()
+                self._optimizer.step()
+                epoch_losses.append(loss.item())
+
+        self._is_fitted = True
+        final_pred = self.predict(x)
+        mse = float(np.mean((final_pred.ravel() - y) ** 2))
+        return {"loss": mse}
+
+    def save(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        state = {
+            "model": self._model.state_dict() if self._model else None,
+            "config": self.config.to_dict(),
+        }
+        torch.save(state, path)
+
+    def load(self, path: str) -> bool:
+        if not os.path.exists(path):
+            return False
+        state = torch.load(path, map_location=self.config.device, weights_only=False)
+        self.config = QlibModelConfig.from_dict(state["config"])
+        self._model = self.build_model()
+        if state["model"] is not None:
+            self._model.load_state_dict(state["model"])
+        self._is_fitted = True
+        return True

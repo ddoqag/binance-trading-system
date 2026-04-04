@@ -246,11 +246,25 @@ typedef struct {
     uint8_t  data[];  // 柔性数组
 } MessageBuffer;
 
-#pragma pack(pop)
+// ============================================================================
+// AI 决策上下文 (Python -> Go)
+// 用于让 Go 引擎感知当前 AI 的决策依据
+// ============================================================================
 
-// ============================================================================
-// 计算偏移量，方便Go和Python访问
-// ============================================================================
+typedef struct {
+    double ai_position;        // AI 推荐仓位 [-1, +1]
+    double ai_confidence;      // AI 置信度 [0, 1]
+    double moe_weight_0;       // 专家0权重
+    double moe_weight_1;       // 专家1权重
+    double moe_weight_2;       // 专家2权重
+    double moe_weight_3;       // 专家3权重
+    uint32_t regime_code;      // 市场状态编码
+    uint32_t num_active_experts; // 实际激活的专家数量
+    uint32_t reserved[2];      // 保留对齐到64字节
+} AIContext;
+
+#define HFT_AI_CONTEXT_OFFSET 4096
+#define HFT_AI_CONTEXT_SIZE   sizeof(AIContext)
 
 #define HFT_HEADER_OFFSET     0
 #define HFT_HEADER_SIZE       sizeof(SharedMemoryHeader)
@@ -258,5 +272,7 @@ typedef struct {
 
 // 总共享内存大小建议: 64MB
 #define HFT_SHM_SIZE_DEFAULT  (64 * 1024 * 1024)
+
+#pragma pack(pop)
 
 #endif // HFT_PROTOCOL_H

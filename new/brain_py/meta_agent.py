@@ -44,6 +44,17 @@ class StrategyType(Enum):
     MOMENTUM = "momentum"
     STATISTICAL_ARBITRAGE = "stat_arb"
     MACHINE_LEARNING = "ml"
+    QLIB_LIGHTGBM = "qlib_lightgbm"
+    QLIB_DOUBLEENSEMBLE = "qlib_doubleensemble"
+    QLIB_MLP = "qlib_mlp"
+    QLIB_LSTM = "qlib_lstm"
+    QLIB_GRU = "qlib_gru"
+    QLIB_ALSTM = "qlib_alstm"
+    QLIB_TCN = "qlib_tcn"
+    QLIB_TRANSFORMER = "qlib_transformer"
+    QLIB_GATS = "qlib_gats"
+    QLIB_HIST = "qlib_hist"
+    QLIB_TRA = "qlib_tra"
 
 
 class MetaAgentState(Enum):
@@ -673,6 +684,79 @@ class ExpertAdapter(BaseStrategy):
         accuracy = self.expert.get_accuracy()
         avg_pnl = self.expert.get_average_pnl()
         return 0.5 * accuracy + 0.5 * (1 + avg_pnl)  # 归一化到 [0, 1]
+
+
+class StrategyBaseAdapter(BaseStrategy):
+    """
+    适配器: 将 strategies/ 目录下的 StrategyBase 适配为 BaseStrategy
+    """
+
+    def __init__(self, strategy):
+        from strategies.base import StrategyBase
+        if not isinstance(strategy, StrategyBase):
+            raise TypeError(f"Expected StrategyBase, got {type(strategy)}")
+        strategy_type = self._infer_strategy_type(strategy)
+        super().__init__(strategy._metadata.name, strategy_type)
+        self.strategy = strategy
+
+    def _infer_strategy_type(self, strategy) -> StrategyType:
+        """从策略元数据推断 StrategyType"""
+        suitable = getattr(strategy._metadata, 'suitable_regimes', [])
+        tags = [t.lower() for t in getattr(strategy._metadata, 'tags', [])]
+        if any(r in ("TRENDING", "BULL", "BEAR") for r in suitable) or "trend" in tags:
+            return StrategyType.TREND_FOLLOWING
+        elif any(r in ("RANGE", "MEAN_REVERTING") for r in suitable) or "mean_reversion" in tags:
+            return StrategyType.MEAN_REVERSION
+        elif any(r in ("HIGH_VOLATILITY",) for r in suitable) or "volatility" in tags:
+            return StrategyType.VOLATILITY
+        elif "momentum" in tags:
+            return StrategyType.MOMENTUM
+        else:
+            return StrategyType.MOMENTUM
+
+    def initialize(self) -> bool:
+        """初始化"""
+        return self.strategy.initialize()
+
+    def execute(self, observation: np.ndarray, context: Dict = None) -> Action:
+        """执行策略生成 Action"""
+        result = self.strategy.predict(observation)
+        direction = result.get('direction', 0)
+        confidence = result.get('confidence', 0.0)
+        if direction > 0:
+            action_type = ActionType.BUY
+        elif direction < 0:
+            action_type = ActionType.SELL
+        else:
+            action_type = ActionType.HOLD
+        return Action(
+            action_type=action_type,
+            position_size=abs(direction),
+            confidence=confidence,
+            metadata=result.get('metadata', {})
+        )
+
+    def get_suitable_regimes(self) -> List[Regime]:
+        """转换 suitable_regimes 字符串到 Regime"""
+        suitable = getattr(self.strategy._metadata, 'suitable_regimes', [])
+        regime_map = {
+            "TRENDING": Regime.TRENDING,
+            "BULL": Regime.TRENDING,
+            "BEAR": Regime.TRENDING,
+            "RANGE": Regime.MEAN_REVERTING,
+            "MEAN_REVERTING": Regime.MEAN_REVERTING,
+            "HIGH_VOLATILITY": Regime.HIGH_VOLATILITY,
+        }
+        result = set()
+        for s in suitable:
+            if s.upper() in regime_map:
+                result.add(regime_map[s.upper()])
+        return list(result) if result else [Regime.UNKNOWN]
+
+    def estimate_performance(self, regime: Regime) -> float:
+        """基于策略历史表现估计"""
+        avg_pnl = self.strategy.get_average_pnl() if hasattr(self.strategy, 'get_average_pnl') else 0.0
+        return max(0.0, min(1.0, 0.5 + avg_pnl))
 
 
 def create_meta_agent_with_experts(

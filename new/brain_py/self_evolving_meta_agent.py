@@ -687,15 +687,69 @@ class SelfEvolvingMetaAgent(MetaAgent):
 
     def export_state(self) -> Dict[str, Any]:
         """导出完整状态 (用于持久化)"""
+
+        def _perf_to_dict(perf: StrategyPerformance) -> Dict:
+            return {
+                'strategy_name': perf.strategy_name,
+                'total_trades': perf.total_trades,
+                'winning_trades': perf.winning_trades,
+                'total_pnl': perf.total_pnl,
+                'max_drawdown': perf.max_drawdown,
+                'returns': list(perf.returns),
+                'pnls': list(perf.pnls),
+                'timestamps': list(perf.timestamps),
+                'last_updated': perf.last_updated,
+            }
+
         return {
             'weights': self.get_weights(),
             'performances': self.get_all_performances(),
+            'performance_tracker': {
+                name: _perf_to_dict(perf)
+                for name, perf in self._performance_tracker.items()
+            },
+            'trade_history': {
+                tid: {
+                    'trade_id': r.trade_id,
+                    'strategy_name': r.strategy_name,
+                    'timestamp': r.timestamp,
+                    'action': r.action,
+                    'symbol': r.symbol,
+                    'entry_price': r.entry_price,
+                    'exit_price': r.exit_price,
+                    'size': r.size,
+                    'pnl': r.pnl,
+                    'pnl_pct': r.pnl_pct,
+                    'regime': r.regime,
+                    'metadata': r.metadata,
+                }
+                for tid, r in self._trade_history.items()
+            },
+            'strategy_trades': {k: list(v) for k, v in self._strategy_trades.items()},
+            'log_weights': dict(self._log_weights),
+            'temperature': self._temperature,
+            'current_learning_rate': self._current_learning_rate,
             'evolution_stats': self.get_evolution_stats(),
             'evolution_config': {
                 'mechanism': self.evolution_config.mechanism.name,
                 'learning_rate': self.evolution_config.learning_rate,
-                'initial_temperature': self.evolution_config.initial_temperature
+                'learning_rate_decay': self.evolution_config.learning_rate_decay,
+                'min_learning_rate': self.evolution_config.min_learning_rate,
+                'initial_temperature': self.evolution_config.initial_temperature,
+                'temperature_decay': self.evolution_config.temperature_decay,
+                'min_temperature': self.evolution_config.min_temperature,
+                'min_trades_for_promotion': self.evolution_config.min_trades_for_promotion,
+                'promotion_threshold': self.evolution_config.promotion_threshold,
+                'demotion_threshold': self.evolution_config.demotion_threshold,
+                'elimination_threshold': self.evolution_config.elimination_threshold,
+                'min_strategy_weight': self.evolution_config.min_strategy_weight,
+                'max_strategy_weight': self.evolution_config.max_strategy_weight,
+                'weight_update_interval': self.evolution_config.weight_update_interval,
+                'attribution_window': self.evolution_config.attribution_window,
+                'enable_online_learning': self.evolution_config.enable_online_learning,
+                'online_learning_rate': self.evolution_config.online_learning_rate,
             },
+            'pending_attribution': list(self._pending_attribution),
             'timestamp': time.time()
         }
 
@@ -707,9 +761,85 @@ class SelfEvolvingMetaAgent(MetaAgent):
                     if name in self._strategy_allocations:
                         self._strategy_allocations[name].weight = weight
 
-            # 恢复统计
+            # Restore full performance tracker
+            for name, perf_data in state.get('performance_tracker', {}).items():
+                perf = StrategyPerformance(
+                    strategy_name=perf_data['strategy_name'],
+                    total_trades=perf_data.get('total_trades', 0),
+                    winning_trades=perf_data.get('winning_trades', 0),
+                    total_pnl=perf_data.get('total_pnl', 0.0),
+                    max_drawdown=perf_data.get('max_drawdown', 0.0),
+                    last_updated=perf_data.get('last_updated', time.time()),
+                )
+                for r in perf_data.get('returns', []):
+                    perf.returns.append(r)
+                for p in perf_data.get('pnls', []):
+                    perf.pnls.append(p)
+                for t in perf_data.get('timestamps', []):
+                    perf.timestamps.append(t)
+                self._performance_tracker[name] = perf
+
+            # Restore trade history
+            self._trade_history = {}
+            for tid, r_data in state.get('trade_history', {}).items():
+                self._trade_history[tid] = TradeRecord(
+                    trade_id=r_data['trade_id'],
+                    strategy_name=r_data['strategy_name'],
+                    timestamp=r_data['timestamp'],
+                    action=r_data['action'],
+                    symbol=r_data['symbol'],
+                    entry_price=r_data['entry_price'],
+                    exit_price=r_data['exit_price'],
+                    size=r_data['size'],
+                    pnl=r_data['pnl'],
+                    pnl_pct=r_data['pnl_pct'],
+                    regime=r_data['regime'],
+                    metadata=r_data.get('metadata', {}),
+                )
+
+            # Restore strategy trades mapping
+            self._strategy_trades = {
+                k: list(v) for k, v in state.get('strategy_trades', {}).items()
+            }
+
+            # Restore log weights
+            self._log_weights = dict(state.get('log_weights', {}))
+
+            # Restore hyperparameters
+            self._temperature = state.get('temperature', self.evolution_config.initial_temperature)
+            self._current_learning_rate = state.get(
+                'current_learning_rate', self.evolution_config.learning_rate
+            )
+
+            # Restore evolution stats
             if 'evolution_stats' in state:
                 self._evolution_stats.update(state['evolution_stats'])
+
+            # Restore pending attribution
+            self._pending_attribution = deque(maxlen=100)
+            for item in state.get('pending_attribution', []):
+                self._pending_attribution.append(item)
+
+            # Restore evolution config if present
+            if 'evolution_config' in state:
+                cfg = state['evolution_config']
+                self.evolution_config.mechanism = EvolutionMechanism[cfg.get('mechanism', 'EXPONENTIAL_WEIGHTED')]
+                self.evolution_config.learning_rate = cfg.get('learning_rate', 0.1)
+                self.evolution_config.learning_rate_decay = cfg.get('learning_rate_decay', 0.999)
+                self.evolution_config.min_learning_rate = cfg.get('min_learning_rate', 0.01)
+                self.evolution_config.initial_temperature = cfg.get('initial_temperature', 1.0)
+                self.evolution_config.temperature_decay = cfg.get('temperature_decay', 0.995)
+                self.evolution_config.min_temperature = cfg.get('min_temperature', 0.1)
+                self.evolution_config.min_trades_for_promotion = cfg.get('min_trades_for_promotion', 20)
+                self.evolution_config.promotion_threshold = cfg.get('promotion_threshold', 0.6)
+                self.evolution_config.demotion_threshold = cfg.get('demotion_threshold', 0.3)
+                self.evolution_config.elimination_threshold = cfg.get('elimination_threshold', 0.2)
+                self.evolution_config.min_strategy_weight = cfg.get('min_strategy_weight', 0.05)
+                self.evolution_config.max_strategy_weight = cfg.get('max_strategy_weight', 0.5)
+                self.evolution_config.weight_update_interval = cfg.get('weight_update_interval', 10)
+                self.evolution_config.attribution_window = cfg.get('attribution_window', 20)
+                self.evolution_config.enable_online_learning = cfg.get('enable_online_learning', True)
+                self.evolution_config.online_learning_rate = cfg.get('online_learning_rate', 0.01)
 
             print(f"[SelfEvolvingMetaAgent] State imported from {state.get('timestamp', 'unknown')}")
 
