@@ -276,7 +276,7 @@ class MarketRegimeDetector:
 
         # Fallback state
         self._last_regime = Regime.UNKNOWN
-        self._fallback_thresholds = {'high_vol': 0.5, 'trend': 0.001}
+        self._fallback_thresholds = {'high_vol': 15.0, 'trend': 0.001}
         self._use_fallback = not HMMLEARN_AVAILABLE
 
         # Performance tracking
@@ -318,12 +318,13 @@ class MarketRegimeDetector:
         
         # 4. 快路径：仅预测
         prediction = self._predict_fast(features)
-        
+        self.regime_history.append(prediction.regime)
+
         # 5. 记录性能
         latency = (time.perf_counter() - start) * 1000
         self.detection_times.append(latency)
         prediction.latency_ms = latency
-        
+
         return prediction
 
     def _predict_fast(self, features) -> RegimePrediction:
@@ -522,22 +523,96 @@ class MarketRegimeDetector:
         if len(prices) < self.feature_window * 2:
             print(f"[REGIME] Insufficient data: {len(prices)}")
             self._use_fallback = True
-            return True
+            return False
 
         if not HMMLEARN_AVAILABLE:
             print("[REGIME] HMM not available, using fallback mode")
             self._use_fallback = True
+            self._warmup_from_prices(prices)
             return True
 
         result = _train_hmm_worker(prices, self.n_states)
         if result:
             self._active_model, self._state_to_regime = result
             print("[REGIME] HMM model trained successfully")
+            self._warmup_from_prices(prices)
             return True
         else:
             print("[REGIME] HMM training failed, using fallback")
             self._use_fallback = True
+            self._warmup_from_prices(prices)
             return True
+
+    def _warmup_from_prices(self, prices: np.ndarray) -> None:
+        """Batch inference over training prices to populate regime_history."""
+        self.price_history.clear()
+        self.feature_extractor.reset()
+        self.regime_history.clear()
+        for price in prices:
+            self.price_history.append(float(price))
+            features = self.feature_extractor.update(float(price))
+            if features is not None:
+                pred = self._predict_fast(features)
+                self.regime_history.append(pred.regime)
+
+    @property
+    def _hmm_fitted(self) -> bool:
+        """Backward compatibility property."""
+        return self._active_model is not None and not self._use_fallback
+
+    @property
+    def hmm(self) -> Optional[Any]:
+        """Backward compatibility property for active HMM model."""
+        return self._active_model
+
+    def reset(self) -> None:
+        """Reset detector state for backward compatibility."""
+        self._active_model = None
+        self._state_to_regime = {}
+        self.price_history.clear()
+        self.detection_times.clear()
+        self.regime_history.clear()
+        self._tick_count = 0
+        self._last_regime = Regime.UNKNOWN
+
+    def predict_proba(self) -> np.ndarray:
+        """Return current regime probabilities for backward compatibility."""
+        if not self.regime_history:
+            return np.ones(self.n_states) / self.n_states
+        dist = self.get_regime_distribution()
+        if not self._state_to_regime:
+            # Fallback mode: assign probabilities to indices based on sorted regimes
+            sorted_regimes = [Regime.TRENDING, Regime.MEAN_REVERTING, Regime.HIGH_VOLATILITY]
+            proba = np.zeros(self.n_states)
+            for idx in range(min(self.n_states, len(sorted_regimes))):
+                proba[idx] = dist.get(sorted_regimes[idx], 0.0)
+            if proba.sum() > 0:
+                proba = proba / proba.sum()
+            else:
+                proba = np.ones(self.n_states) / self.n_states
+            return proba
+        proba = np.zeros(self.n_states)
+        for idx in range(self.n_states):
+            regime = self._state_to_regime.get(idx, Regime.UNKNOWN)
+            proba[idx] = dist.get(regime, 0.0)
+        return proba
+
+    def get_avg_detection_time(self) -> float:
+        """Backward compatibility alias for get_avg_latency_ms."""
+        return self.get_avg_latency_ms()
+
+    def get_regime_distribution(self) -> Dict[Regime, float]:
+        """Compute regime distribution from history."""
+        if not self.regime_history:
+            return {Regime.UNKNOWN: 1.0}
+        counts: Dict[Regime, int] = {}
+        for r in self.regime_history:
+            counts[r] = counts.get(r, 0) + 1
+        total = len(self.regime_history)
+        dist = {r: c / total for r, c in counts.items()}
+        if Regime.UNKNOWN not in dist:
+            dist[Regime.UNKNOWN] = 0.0
+        return dist
 
     # Fallback detection
 
@@ -552,7 +627,7 @@ class MarketRegimeDetector:
         if annualized_vol > self._fallback_thresholds['high_vol']:
             regime = Regime.HIGH_VOLATILITY
             confidence = min(annualized_vol / (self._fallback_thresholds['high_vol'] * 2), 1.0)
-        elif np.abs(features.price_momentum) > 0.5 and features.autocorr_1 > 0.1:
+        elif np.abs(features.price_momentum) > 0.05 and features.autocorr_1 > -0.5:
             regime = Regime.TRENDING
             confidence = min(np.abs(features.price_momentum), 1.0)
         else:
@@ -658,6 +733,68 @@ class MarketRegimeDetector:
         }
         return stats
 
+    def save(self, filepath: str):
+        """Save detector state to disk (pickle, includes HMM + numpy arrays)."""
+        state = {
+            'n_states': self.n_states,
+            'feature_window': self.feature_window,
+            '_fit_interval': self._fit_interval,
+            '_use_shared_memory': self._use_shared_memory,
+            'price_history': list(self.price_history),
+            '_active_model': _hmm_to_dict(self._active_model, self._state_to_regime)
+            if self._active_model is not None and HMMLEARN_AVAILABLE else None,
+            '_state_to_regime': {k: v.value for k, v in self._state_to_regime.items()},
+            '_tick_count': self._tick_count,
+            'garch_omega': self.garch_omega,
+            'garch_alpha': self.garch_alpha,
+            'garch_beta': self.garch_beta,
+            'current_variance': self.current_variance,
+            '_last_regime': self._last_regime.value,
+            '_fallback_thresholds': self._fallback_thresholds,
+            '_use_fallback': self._use_fallback,
+            'detection_times': list(self.detection_times),
+            'regime_history': [r.value for r in self.regime_history],
+        }
+        with open(filepath, 'wb') as f:
+            pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, filepath: str):
+        """Load detector state from disk."""
+        with open(filepath, 'rb') as f:
+            state = pickle.load(f)
+
+        self.n_states = state.get('n_states', self.n_states)
+        self.feature_window = state.get('feature_window', self.feature_window)
+        self._fit_interval = state.get('_fit_interval', self._fit_interval)
+        self._use_shared_memory = state.get('_use_shared_memory', self._use_shared_memory)
+        self._tick_count = state.get('_tick_count', 0)
+        self.garch_omega = state.get('garch_omega', 0.000001)
+        self.garch_alpha = state.get('garch_alpha', 0.1)
+        self.garch_beta = state.get('garch_beta', 0.85)
+        self.current_variance = state.get('current_variance', 0.0001)
+        self._last_regime = Regime(state['_last_regime']) if '_last_regime' in state else Regime.UNKNOWN
+        self._fallback_thresholds = state.get('_fallback_thresholds', {'high_vol': 0.5, 'trend': 0.001})
+        self._use_fallback = state.get('_use_fallback', not HMMLEARN_AVAILABLE)
+
+        self.price_history = deque(maxlen=5000)
+        for p in state.get('price_history', []):
+            self.price_history.append(p)
+
+        self.detection_times = deque(maxlen=1000)
+        for t in state.get('detection_times', []):
+            self.detection_times.append(t)
+
+        self.regime_history = deque(maxlen=1000)
+        for r in state.get('regime_history', []):
+            self.regime_history.append(Regime(r))
+
+        model_data = state.get('_active_model')
+        if model_data is not None and HMMLEARN_AVAILABLE:
+            self._active_model, self._state_to_regime = _dict_to_hmm(model_data)
+        else:
+            self._active_model = None
+            self._state_to_regime = {k: Regime(v) for k, v in state.get('_state_to_regime', {}).items()}
+
     def shutdown(self):
         """
         优雅关闭，释放资源。
@@ -676,3 +813,48 @@ class MarketRegimeDetector:
                 self._executor.shutdown(wait=False)
         except Exception:
             pass
+
+
+def generate_synthetic_regimes(n_samples: int = 300) -> Tuple[np.ndarray, List[Regime]]:
+    """
+    Generate synthetic price series with known regimes for testing.
+
+    Returns:
+        prices: array of shape (n_samples + 1,)
+        regimes: list of length n_samples with Regime labels
+    """
+    # Divide samples into 3 equal blocks for each regime
+    block_size = n_samples // 3
+    remainder = n_samples % 3
+
+    prices = [100.0]
+    regimes: List[Regime] = []
+
+    def _generate_block(samples: int, regime: Regime):
+        block_prices = [prices[-1]]
+        for _ in range(samples):
+            if regime == Regime.TRENDING:
+                drift = 0.001
+                vol = 0.01
+            elif regime == Regime.MEAN_REVERTING:
+                # Mean reverting to starting price of block
+                deviation = block_prices[-1] - block_prices[0]
+                drift = -0.002 * deviation
+                vol = 0.005
+            else:  # HIGH_VOLATILITY
+                drift = 0.0
+                vol = 0.04
+            ret = np.random.normal(drift, vol)
+            block_prices.append(block_prices[-1] * np.exp(ret))
+        # Add block to global prices (skip first since it's already in prices)
+        prices.extend(block_prices[1:])
+        regimes.extend([regime] * samples)
+
+    block_sizes = [block_size] * 3
+    block_sizes[0] += remainder
+
+    _generate_block(block_sizes[0], Regime.TRENDING)
+    _generate_block(block_sizes[1], Regime.MEAN_REVERTING)
+    _generate_block(block_sizes[2], Regime.HIGH_VOLATILITY)
+
+    return np.array(prices, dtype=np.float64), regimes

@@ -199,7 +199,7 @@ class TestTrendFollowingExpert:
         """Test expert initialization."""
         assert trend_expert.name == "trend_following"
         # Config values come from TrendFollowingConfig defaults
-        assert trend_expert.config.min_confidence == 0.3
+        assert trend_expert.config.min_confidence == 0.35
         assert trend_expert.config.max_position_size == 1.0
 
     def test_get_expertise(self, trend_expert):
@@ -328,8 +328,8 @@ class TestMeanReversionExpert:
         """Test expert initialization."""
         assert reversion_expert.name == "mean_reversion"
         # Config values come from MeanReversionConfig defaults
-        assert reversion_expert.config.min_confidence == 0.3
-        assert reversion_expert.config.max_position_size == 1.0
+        assert reversion_expert.config.min_confidence == 0.4
+        assert reversion_expert.config.max_position_size == 0.8
 
     def test_get_expertise(self, reversion_expert):
         """Test expert reports correct regimes."""
@@ -428,8 +428,8 @@ class TestVolatilityExpert:
         """Test expert initialization."""
         assert volatility_expert.name == "volatility"
         # Config values come from VolatilityConfig defaults
-        assert volatility_expert.config.min_confidence == 0.3
-        assert volatility_expert.config.max_position_size == 1.0
+        assert volatility_expert.config.min_confidence == 0.35
+        assert volatility_expert.config.max_position_size == 0.6
 
     def test_get_expertise(self, volatility_expert):
         """Test expert reports correct regimes."""
