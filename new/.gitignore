@@ -37,6 +37,14 @@ logs/
 .DS_Store
 Thumbs.db
 
+# Secrets and environment files
+.env
+.env.*
+*.pem
+*.key
+secrets/
+config/*.local.yaml
+
 # Temporary files
 *.tmp
 *.temp
