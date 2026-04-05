@@ -44,6 +44,7 @@ class EvolutionMechanism(Enum):
     THOMPSON_SAMPLING = auto()         # Thompson Sampling
     UCB = auto()                       # Upper Confidence Bound
     GRADIENT_ASCENT = auto()           # 梯度上升
+    SIGNAL_BASED = auto()              # 基于实时信号强度（无需真实成交）
 
 
 @dataclass
@@ -249,6 +250,13 @@ class SelfEvolvingMetaAgent(MetaAgent):
         # 收益归因队列
         self._pending_attribution: Deque[Tuple[str, float, float]] = deque(maxlen=100)
 
+        # 信号历史记录（用于基于信号的权重更新）
+        self._signal_history: Dict[str, List[Dict]] = {}
+        self._max_signal_history = 100  # 每个策略保留最近100个信号
+
+        # 当前市场数据（用于信号评估）
+        self._current_market_data: Optional[Dict] = None
+
         # 锁
         self._evolution_lock = threading.RLock()
 
@@ -419,11 +427,14 @@ class SelfEvolvingMetaAgent(MetaAgent):
         - BAYESIAN_UPDATE: 贝叶斯更新
         - THOMPSON_SAMPLING: Thompson Sampling
         - UCB: Upper Confidence Bound
+        - SIGNAL_BASED: 基于实时信号强度
 
         Returns:
             Dict[str, float]: 新权重
         """
         with self._evolution_lock:
+            mechanism = self.evolution_config.mechanism
+
             mechanism = self.evolution_config.mechanism
 
             if mechanism == EvolutionMechanism.EXPONENTIAL_WEIGHTED:
@@ -434,6 +445,8 @@ class SelfEvolvingMetaAgent(MetaAgent):
                 new_weights = self._evolve_thompson()
             elif mechanism == EvolutionMechanism.UCB:
                 new_weights = self._evolve_ucb()
+            elif mechanism == EvolutionMechanism.SIGNAL_BASED:
+                new_weights = self._evolve_signal_based()
             else:
                 new_weights = self._evolve_exponential_weighted()
 
@@ -552,6 +565,198 @@ class SelfEvolvingMetaAgent(MetaAgent):
 
         return dict(zip(ucb_scores.keys(), weights))
 
+    def _evolve_signal_based(self) -> Dict[str, float]:
+        """
+        基于实时信号强度的权重更新（无需真实成交）
+
+        核心思想：
+        1. 分析每个策略当前信号的方向和强度
+        2. 评估近期信号的历史准确性（价格预测能力）
+        3. 结合市场状态给予不同权重
+        4. 应用时间衰减因子（更关注近期信号）
+        5. 应用风险约束（权重上下限、集中度控制）
+        """
+        import random
+        weights = {}
+
+        # 配置参数（可从配置文件加载）
+        decay_lambda = 0.8  # 时间衰减因子
+        consistency_weight = 0.40  # 一致性权重（提高以减少跳变）
+        accuracy_weight = 0.35     # 准确性权重
+        strength_weight = 0.25     # 强度权重
+        max_single_weight = 0.60   # 单策略最大权重
+        min_single_weight = 0.05   # 单策略最小权重
+        exploration_noise = 0.05   # 探索噪声
+        max_change = 0.15          # 单次最大变化
+
+        # 获取当前权重（用于平滑过渡）
+        current_weights = self.get_strategy_weights()
+
+        for name in self._strategies.keys():
+            if name not in self._signal_history:
+                # 无信号历史，给予随机权重（探索）
+                weights[name] = 0.3 + random.random() * 0.4
+                continue
+
+            signals = self._signal_history[name]
+            if len(signals) < 5:
+                # 信号不足，基于当前信号强度给予权重
+                current_signal = signals[-1] if signals else None
+                if current_signal:
+                    strength = current_signal.get('strength', 0.5)
+                    direction = current_signal.get('direction', 0)
+                    score = 0.3 + strength * 0.5 + (0.2 if direction != 0 else 0)
+                    weights[name] = score
+                else:
+                    weights[name] = 0.3 + random.random() * 0.4
+                continue
+
+            # 1. 计算信号一致性（带时间衰减）
+            recent_signals = signals[-20:]
+            directions = [s.get('direction', 0) for s in recent_signals]
+
+            # 应用时间衰减权重
+            n = len(directions)
+            time_weights = [decay_lambda ** (n - 1 - i) for i in range(n)]
+            time_weights = np.array(time_weights) / sum(time_weights)
+
+            # 加权一致性计算
+            long_strength = sum(w for d, w in zip(directions, time_weights) if d > 0)
+            short_strength = sum(w for d, w in zip(directions, time_weights) if d < 0)
+            consistency = abs(long_strength - short_strength)
+
+            # 2. 计算信号准确性（带时间衰减）
+            accuracy = self._calculate_signal_accuracy_decay(name, signals, decay_lambda)
+
+            # 3. 当前信号强度
+            current_signal = signals[-1] if signals else None
+            current_strength = current_signal.get('strength', 0.5) if current_signal else 0.5
+
+            # 4. 综合评分（使用配置权重）
+            score = (consistency_weight * consistency +
+                    accuracy_weight * accuracy +
+                    strength_weight * current_strength)
+
+            # 5. 添加探索噪声
+            score += random.gauss(0, exploration_noise)
+
+            # 6. 应用权重约束
+            score = max(min_single_weight, min(max_single_weight, score))
+
+            # 7. 平滑过渡（限制单次变化幅度）
+            if name in current_weights:
+                old_weight = current_weights[name]
+                change = score - old_weight
+                if abs(change) > max_change:
+                    change = max_change if change > 0 else -max_change
+                score = old_weight + change
+
+            weights[name] = score
+
+        # 归一化
+        total = sum(weights.values())
+        if total > 0:
+            weights = {k: v / total for k, v in weights.items()}
+        else:
+            n = len(self._strategies)
+            weights = {k: 1.0 / n for k in self._strategies.keys()}
+
+        # 应用集中度控制（Herfindahl指数检查）
+        weights = self._apply_concentration_control(weights)
+
+        return weights
+
+    def _calculate_signal_accuracy(self, strategy_name: str, signals: List[Dict]) -> float:
+        """
+        计算信号的历史准确性
+
+        原理：
+        - 如果策略发出买入信号（direction > 0），之后价格上涨 → 正确
+        - 如果策略发出卖出信号（direction < 0），之后价格下跌 → 正确
+        """
+        if len(signals) < 2:
+            return 0.5  # 默认50%
+
+        correct = 0
+        total = 0
+
+        for i in range(len(signals) - 1):
+            signal = signals[i]
+            next_signal = signals[i + 1]
+
+            direction = signal.get('direction', 0)
+            current_price = signal.get('price', 0)
+            next_price = next_signal.get('price', 0)
+
+            if current_price <= 0 or next_price <= 0:
+                continue
+
+            price_change = (next_price - current_price) / current_price
+
+            # 判断信号是否正确
+            if direction > 0 and price_change > 0:  # 看涨且上涨
+                correct += 1
+            elif direction < 0 and price_change < 0:  # 看跌且下跌
+                correct += 1
+            elif direction == 0:  # 中性信号，不算对错
+                continue
+
+            total += 1
+
+        return correct / total if total > 0 else 0.5
+
+    def record_signal(self, strategy_name: str, direction: float, strength: float, price: float, metadata: Dict = None):
+        """
+        记录策略信号（用于基于信号的权重更新）
+
+        Args:
+            strategy_name: 策略名称
+            direction: 信号方向 (-1=卖出, 0=中性, +1=买入)
+            strength: 信号强度 (0-1)
+            price: 当前价格
+            metadata: 额外信息（如RSI值、均线位置等）
+        """
+        if strategy_name not in self._signal_history:
+            self._signal_history[strategy_name] = []
+
+        signal = {
+            'timestamp': time.time(),
+            'direction': direction,
+            'strength': strength,
+            'price': price,
+            'metadata': metadata or {}
+        }
+
+        self._signal_history[strategy_name].append(signal)
+
+        # 限制历史长度
+        if len(self._signal_history[strategy_name]) > self._max_signal_history:
+            self._signal_history[strategy_name].pop(0)
+
+    def update_market_data(self, market_data: Dict):
+        """更新当前市场数据"""
+        self._current_market_data = market_data
+
+    def get_strategy_weights(self) -> Dict[str, float]:
+        """
+        获取当前策略权重
+
+        Returns:
+            Dict[str, float]: 策略名称到权重的映射
+        """
+        # 从 _strategy_allocations 提取权重
+        weights = {}
+        for name, alloc in self._strategy_allocations.items():
+            weights[name] = alloc.weight
+
+        # 如果没有配置，返回均匀分布
+        if not weights:
+            n = len(self._strategies)
+            if n > 0:
+                weights = {name: 1.0 / n for name in self._strategies.keys()}
+
+        return weights
+
     def _constrain_weights(self, weights: Dict[str, float]) -> Dict[str, float]:
         """应用权重约束"""
         min_w = self.evolution_config.min_strategy_weight
@@ -566,6 +771,96 @@ class SelfEvolvingMetaAgent(MetaAgent):
             constrained = {k: v / total for k, v in constrained.items()}
 
         return constrained
+
+    def _calculate_signal_accuracy_decay(
+        self,
+        strategy_name: str,
+        signals: List[Dict],
+        decay_lambda: float = 0.8
+    ) -> float:
+        """
+        计算信号的历史准确性（带时间衰减）
+
+        原理：
+        - 如果策略发出买入信号（direction > 0），之后价格上涨 → 正确
+        - 如果策略发出卖出信号（direction < 0），之后价格下跌 → 正确
+        - 近期信号权重更高
+        """
+        if len(signals) < 2:
+            return 0.5
+
+        weighted_correct = 0.0
+        weighted_total = 0.0
+
+        n = len(signals) - 1
+        for i in range(n):
+            signal = signals[i]
+            next_signal = signals[i + 1]
+
+            direction = signal.get('direction', 0)
+            current_price = signal.get('price', 0)
+            next_price = next_signal.get('price', 0)
+
+            if current_price <= 0 or next_price <= 0:
+                continue
+
+            price_change = (next_price - current_price) / current_price
+
+            # 时间衰减权重
+            time_weight = decay_lambda ** (n - 1 - i)
+
+            # 判断信号是否正确
+            is_correct = False
+            if direction > 0 and price_change > 0:
+                is_correct = True
+            elif direction < 0 and price_change < 0:
+                is_correct = True
+            elif direction == 0:
+                continue
+
+            weighted_total += time_weight
+            if is_correct:
+                weighted_correct += time_weight
+
+        return weighted_correct / weighted_total if weighted_total > 0 else 0.5
+
+    def _apply_concentration_control(
+        self,
+        weights: Dict[str, float],
+        herfindahl_threshold: float = 0.40
+    ) -> Dict[str, float]:
+        """
+        应用集中度控制（Herfindahl指数）
+
+        Herfindahl指数 = sum(w_i^2)
+        - 0.33 = 完全均匀（3个策略各0.33）
+        - 0.50 = 中度集中
+        - 1.00 = 完全集中（一个策略占100%）
+        """
+        # 计算Herfindahl指数
+        herfindahl = sum(w ** 2 for w in weights.values())
+
+        if herfindahl <= herfindahl_threshold:
+            return weights
+
+        # 过度集中，需要分散
+        n = len(weights)
+        target_herfindahl = herfindahl_threshold
+
+        # 计算需要的分散程度
+        # 目标：向均匀分布移动一定比例
+        uniform_weight = 1.0 / n
+        blend_factor = 0.3  # 向均匀分布混合30%
+
+        diversified = {}
+        for name, weight in weights.items():
+            # 向均匀分布混合
+            new_weight = weight * (1 - blend_factor) + uniform_weight * blend_factor
+            diversified[name] = new_weight
+
+        # 归一化
+        total = sum(diversified.values())
+        return {k: v / total for k, v in diversified.items()}
 
     def _update_hyperparameters(self):
         """更新超参数 (学习率、温度)"""

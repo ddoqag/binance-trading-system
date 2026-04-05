@@ -300,29 +300,52 @@ class StrategyLoader:
         """构建 AgentMetadata"""
         meta = instance.get_metadata()
 
+        # 如果 instance 没有元数据，尝试从类属性获取
+        if meta is None:
+            if hasattr(instance, 'METADATA') and instance.METADATA is not None:
+                meta = instance.METADATA
+            else:
+                # 使用默认元数据
+                return AgentMetadata(
+                    name=name,
+                    version="1.0.0",
+                    description=f"Strategy: {name}",
+                    priority=StrategyPriority.NORMAL,
+                    tags=[],
+                    config={}
+                )
+
+        # 处理 AgentMetadata 类型（来自 BaseAgent 子类）
+        if isinstance(meta, AgentMetadata):
+            return meta
+
+        # 处理 StrategyMetadata 类型（来自 StrategyBase 子类）
         # 转换 suitable_regimes 到 tags
-        tags = list(meta.tags)
-        for regime in meta.suitable_regimes:
-            tags.append(f"regime:{regime}")
+        tags = list(meta.tags) if hasattr(meta, 'tags') else []
+        if hasattr(meta, 'suitable_regimes'):
+            for regime in meta.suitable_regimes:
+                tags.append(f"regime:{regime}")
 
         return AgentMetadata(
             name=name,
-            version=meta.version,
-            description=meta.description,
-            author=meta.author,
+            version=meta.version if hasattr(meta, 'version') else "1.0.0",
+            description=meta.description if hasattr(meta, 'description') else "",
+            author=meta.author if hasattr(meta, 'author') else "",
             priority=StrategyPriority.NORMAL,
             tags=tags,
-            config=meta.params
+            config=meta.params if hasattr(meta, 'params') else (meta.config if hasattr(meta, 'config') else {})
         )
 
     def _find_strategy_class(self, module: Any) -> Optional[Type[StrategyBase]]:
-        """在模块中查找策略类"""
+        """在模块中查找策略类（支持 StrategyBase 和 BaseAgent）"""
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
-            if (isinstance(attr, type) and
-                issubclass(attr, StrategyBase) and
-                attr is not StrategyBase and
-                not attr_name.startswith('_')):
+            if not isinstance(attr, type) or attr_name.startswith('_'):
+                continue
+            # 检查是否是 StrategyBase 或 BaseAgent 的子类
+            if issubclass(attr, StrategyBase) and attr is not StrategyBase:
+                return attr
+            if issubclass(attr, BaseAgent) and attr is not BaseAgent:
                 return attr
         return None
 

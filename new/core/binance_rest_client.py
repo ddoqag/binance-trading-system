@@ -11,6 +11,25 @@ class BinanceRESTClient:
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = base_url
+        self.time_offset = 0
+        self._sync_server_time()
+
+    def _sync_server_time(self):
+        """同步 Binance 服务器时间"""
+        try:
+            resp = requests.get(f"{self.base_url}/api/v3/time", timeout=5)
+            data = resp.json()
+            server_time = data['serverTime']
+            local_time = int(time.time() * 1000)
+            self.time_offset = server_time - local_time
+            print(f"[BinanceRESTClient] Time synced: offset={self.time_offset}ms")
+        except Exception as e:
+            print(f"[BinanceRESTClient] Failed to sync time: {e}")
+            self.time_offset = 0
+
+    def _get_timestamp(self) -> int:
+        """获取同步后的时间戳"""
+        return int(time.time() * 1000) + self.time_offset
 
     def _sign(self, params: dict) -> str:
         query_string = urlencode(params)
@@ -37,7 +56,7 @@ class BinanceRESTClient:
             "side": side,
             "type": order_type,
             "quantity": f"{quantity:.6f}",
-            "timestamp": int(time.time() * 1000)
+            "timestamp": self._get_timestamp()
         }
         if order_type == "LIMIT" and price is not None:
             params["price"] = f"{price:.2f}"
@@ -68,7 +87,7 @@ class BinanceRESTClient:
         params = {
             "symbol": symbol.upper(),
             "origClientOrderId": order_id,
-            "timestamp": int(time.time() * 1000)
+            "timestamp": self._get_timestamp()
         }
         params["signature"] = self._sign(params)
         resp = requests.delete(
@@ -82,7 +101,7 @@ class BinanceRESTClient:
     def get_open_orders(self, symbol: str) -> list:
         params = {
             "symbol": symbol.upper(),
-            "timestamp": int(time.time() * 1000)
+            "timestamp": self._get_timestamp()
         }
         params["signature"] = self._sign(params)
         resp = requests.get(

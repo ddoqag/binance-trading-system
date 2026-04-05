@@ -1,0 +1,64 @@
+# Signal-Based 策略权重评估配置
+# 用于 SelfEvolvingMetaAgent 的信号质量评估
+
+signal_scoring:
+  # 评估维度权重
+  weights:
+    accuracy: 0.35      # 准确率（历史表现）
+    consistency: 0.40   # 一致性（信号稳定度）- 提高以减少"跳来跳去"
+    strength: 0.25      # 强度（信号幅度）
+
+  # 历史窗口配置
+  history:
+    max_length: 100     # 最大信号历史记录数
+    min_samples: 5      # 最小样本数才开始评估
+    decay_lambda: 0.8   # 时间衰减因子（0.8 = 更关注近期信号）
+
+  # 动态调整
+  adaptive:
+    enabled: true
+    market_regime_detection: true
+    adjustment_factor: 0.1  # 动态调整幅度
+
+  # 不同市场状态的偏好
+  regime_preferences:
+    trending:
+      # 趋势市场：重视一致性和强度
+      consistency: 0.45
+      strength: 0.40
+      accuracy: 0.15
+    ranging:
+      # 震荡市场：重视准确率
+      accuracy: 0.50
+      consistency: 0.30
+      strength: 0.20
+    volatile:
+      # 高波动市场：重视强度
+      strength: 0.50
+      accuracy: 0.30
+      consistency: 0.20
+
+# 风险约束
+risk_constraints:
+  max_single_weight: 0.60      # 单策略最大权重
+  min_single_weight: 0.05      # 单策略最小权重
+  correlation_threshold: 0.70  # 相关性阈值
+  herfindahl_threshold: 0.40   # 集中度阈值（超过则强制分散）
+
+  # 反脆弱机制
+  antifragile:
+    enabled: true
+    penalty_threshold: 0.50    # 权重超过此值开始惩罚
+    penalty_factor: 0.15       # 惩罚强度
+
+# 探索与利用平衡
+exploration:
+  enabled: true
+  noise_std: 0.05              # 高斯噪声标准差
+  min_exploration_weight: 0.10  # 最小探索权重
+
+# 平滑配置
+smoothing:
+  enabled: true
+  alpha: 0.3                   # EMA平滑系数（越小越平滑）
+  max_change_per_update: 0.15  # 单次更新最大变化幅度

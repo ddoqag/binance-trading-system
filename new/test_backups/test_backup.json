@@ -1,0 +1,22 @@
+{
+  "timestamp": 1775300451.0682294,
+  "capital": 10000,
+  "positions": {
+    "BTC": {
+      "qty": 0.1,
+      "price": 50000
+    }
+  },
+  "active_orders": [],
+  "strategy_weights": {
+    "ma": 0.5,
+    "rsi": 0.5
+  },
+  "risk_metrics": {
+    "drawdown": 0.02
+  },
+  "metadata": {
+    "test": true
+  },
+  "saved_at": "2026-04-04T19:00:51.068277"
+}

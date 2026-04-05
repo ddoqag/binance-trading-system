@@ -53,6 +53,101 @@ pbt:
   mutation_probability: 0.8
   evaluation_window: 20
 
+# Strategy Configuration
+strategies:
+  # Agent-based strategies (from simplified system migration)
+  - name: moving_average
+    enabled: true
+    weight: 0.18
+    agent_class: strategies.moving_average_agent.MovingAverageAgent
+    params:
+      fast_period: 5
+      slow_period: 20
+      signal_threshold: 0.001
+    suitable_regimes: ["trending"]
+
+  - name: rsi
+    enabled: true
+    weight: 0.15
+    agent_class: strategies.rsi_agent.RSIAgent
+    params:
+      period: 14
+      overbought: 70.0
+      oversold: 30.0
+    suitable_regimes: ["ranging", "volatile"]
+
+  - name: bollinger_bands
+    enabled: true
+    weight: 0.20
+    agent_class: strategies.bollinger_bands_agent.BollingerBandsAgent
+    params:
+      period: 20
+      std_dev: 2.0
+    suitable_regimes: ["ranging", "trending"]
+
+  # Phase 2: New Agent-based strategies
+  - name: macd
+    enabled: true
+    weight: 0.15
+    agent_class: strategies.macd_agent.MACDAgent
+    params:
+      fast_period: 12
+      slow_period: 26
+      signal_period: 9
+    suitable_regimes: ["trending"]
+
+  - name: kdj
+    enabled: true
+    weight: 0.15
+    agent_class: strategies.kdj_agent.KDJAgent
+    params:
+      n_period: 9
+      m1: 3
+      m2: 3
+    suitable_regimes: ["ranging", "volatile"]
+
+  - name: atr
+    enabled: true
+    weight: 0.10
+    agent_class: strategies.atr_agent.ATRAgent
+    params:
+      period: 14
+      multiplier: 2.0
+      trend_threshold: 0.02
+    suitable_regimes: ["volatile", "trending"]
+
+  - name: ml_ensemble
+    enabled: true
+    weight: 0.07
+    agent_class: strategies.ml_ensemble_agent.MLEnsembleAgent
+    params:
+      use_rf: true
+      use_lr: true
+      use_lstm: false
+      online_learning: true
+      voting_method: weighted
+      confidence_threshold: 0.6
+    suitable_regimes: ["all"]
+
+  # Original strategies
+  - name: volatility_breakout
+    enabled: true
+    weight: 0.0  # Disabled by default, enable manually
+    agent_class: strategies.volatility_breakout.VolatilityBreakoutStrategy
+    params:
+      atr_period: 14
+      channel_multiplier: 2.0
+    suitable_regimes: ["volatile"]
+
+  - name: ml_momentum
+    enabled: true
+    weight: 0.0  # Disabled by default (requires sklearn)
+    agent_class: strategies.ml_momentum.MLMomentumStrategy
+    params:
+      lookback: 50
+      min_samples: 100
+    suitable_regimes: ["all"]
+
 # Logging
 logging:
   level: INFO

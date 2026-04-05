@@ -3,7 +3,7 @@
 """
 
 from typing import Dict, Any
-from .base import Signal, SignalType
+from strategies.base import Signal, SignalType
 
 
 def dict_to_signal(signal_dict: Dict[str, Any]) -> Signal:

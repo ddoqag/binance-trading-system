@@ -203,18 +203,52 @@ class LiveOrderManager:
 
         logger.info(f"[LiveOrderManager] Initialized (testnet={use_testnet}, leverage={max_leverage}x)")
 
+        # Time synchronization
+        self._server_time_offset = 0
+
+    def _get_server_time(self) -> int:
+        """获取同步后的服务器时间戳"""
+        return int(time.time() * 1000) + self._server_time_offset
+
+    async def _sync_server_time(self):
+        """同步服务器时间"""
+        try:
+            url = f"{self.base_url}/api/v3/time"
+            async with self._session.get(url, proxy=self._proxy) as response:
+                data = await response.json()
+                server_time = data.get('serverTime', 0)
+                local_time = int(time.time() * 1000)
+                self._server_time_offset = server_time - local_time
+                logger.debug(f"[LiveOrderManager] Time sync: offset={self._server_time_offset}ms")
+        except Exception as e:
+            logger.warning(f"[LiveOrderManager] Time sync failed: {e}")
+
     async def start(self):
         """启动订单管理器"""
         if self._running:
             return
 
         self._running = True
-        self._session = aiohttp.ClientSession()
+
+        # Configure proxy from environment
+        import os
+        proxy_url = os.getenv('HTTPS_PROXY') or os.getenv('HTTP_PROXY')
+        connector = None
+        if proxy_url:
+            from aiohttp import TCPConnector
+            connector = aiohttp.TCPConnector(ssl=False)
+            self._session = aiohttp.ClientSession(connector=connector)
+            self._proxy = proxy_url
+            logger.info(f"[LiveOrderManager] Using proxy: {proxy_url}")
+        else:
+            self._session = aiohttp.ClientSession()
+            self._proxy = None
 
         # 启动后台同步任务
         self._update_task = asyncio.create_task(self._sync_loop())
 
         # 初始同步
+        await self._sync_server_time()  # 先同步时间
         await self.sync_account()
         await self.sync_open_orders()
 
@@ -268,16 +302,20 @@ class LiveOrderManager:
         headers = {'X-MBX-APIKEY': self.api_key}
 
         if signed:
-            # 添加时间戳
+            # 添加时间戳（使用服务器时间）
             params = params or {}
-            params['timestamp'] = int(time.time() * 1000)
+            params['timestamp'] = self._get_server_time()
 
             # 生成签名
             query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
             params['signature'] = self._generate_signature(query_string)
 
+        request_kwargs = {'headers': headers, 'params': params}
+        if self._proxy:
+            request_kwargs['proxy'] = self._proxy
+
         async with self._session.request(
-            method, url, headers=headers, params=params
+            method, url, **request_kwargs
         ) as response:
             data = await response.json()
 

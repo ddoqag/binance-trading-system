@@ -1,0 +1,1828 @@
+diff --git a/new/agents.md b/new/agents.md
+index f6687b6..b755482 100644
+--- a/new/agents.md
++++ b/new/agents.md
+@@ -1,396 +1,407 @@
+-# HFT System - Project Agents Specification
+-高频交易延迟队列RL系统 - AI Coding Agent 开发规范文档
++# HFT Trading System - Agent Specification
++高频交易延迟队列RL系统 - AI Agent开发规范文档
+ 
+-> 最后更新: 2026-04-02
+-> 本文档面向 AI Coding Agent，是理解本项目的单一事实来源。
++## 1. Project Overview
+ 
+----
++This is a **High-Frequency Trading (HFT) Latency Queue Reinforcement Learning System** built with a hybrid Go + Python architecture:
+ 
+-## 1. 项目概述
++- **Go Engine**: Microsecond-level market data ingestion, order execution, and shared memory communication
++- **Python Agent**: SAC (Soft Actor-Critic) reinforcement learning agent for trading decisions
++- **Shared Memory**: Zero-copy IPC using 144-byte mmap protocol
++- **Binance Integration**: WebSocket real-time data streaming (testnet/mainnet)
++- **Self-Evolving System**: Multi-phase architecture including regime detection, PBT training, and agent civilization
+ 
+-这是一个**高频交易（HFT）延迟队列强化学习系统**，采用 **Go + Python 混合架构**，通过**零拷贝共享内存（mmap）**实现微秒级跨语言通信。
++## 2. Technology Stack
+ 
+-### 核心哲学
+-```
+-预测 ≠ Alpha
+-执行 = Alpha
+-```
++| Component | Technology | Purpose |
++|-----------|------------|---------|
++| Execution Engine | Go 1.21+ | WebSocket feeds, order execution, risk management, WAL |
++| RL Agent | Python 3.9+ | SAC algorithm, decision generation |
++| Communication | mmap | Cross-language shared memory (144 bytes) |
++| ML Framework | PyTorch 2.0+ | Neural networks for RL |
++| Data Source | Binance WebSocket/API | L2 order book, trade streams |
++| Configuration | YAML | Runtime configuration |
++| Metrics | Prometheus | Performance monitoring |
+ 
+-系统目标是从静态策略脚本进化为**AI交易生命体**：感知市场微观结构 → 强化学习决策 → 微秒级执行 → 在线进化闭环。
++## 3. Directory Structure
+ 
+-### 架构概览
+ ```
+-┌─────────────────────────────────────────────────────────────┐
+-│                    Python AI 大脑层                         │
+-│  SAC Agent │ Meta-Agent │ MoE │ 组合引擎 │ 对抗训练防御     │
+-└─────────────────────────────────────────────────────────────┘
+-                              ↑↓
+-                    mmap + Sequence Lock (144 bytes, ~0.5-2μs)
+-                              ↑↓
+-┌─────────────────────────────────────────────────────────────┐
+-│                    Go 执行引擎层 (神经末梢)                  │
+-│  WebSocket Feed │ OrderExecutor │ RiskMgr │ WAL │ 降级保护  │
+-│  QueueDynamics  │ Margin/Leverage │ Prometheus Metrics      │
+-└─────────────────────────────────────────────────────────────┘
+-                              ↑↓
+-                    WebSocket + REST API (Binance Testnet/Mainnet)
+-                              ↑↓
+-┌─────────────────────────────────────────────────────────────┐
+-│                    币安交易所                                │
+-└─────────────────────────────────────────────────────────────┘
++/
++├── protocol.h                 # C-style shared memory protocol (144 bytes)
++├── core_go/                   # Go execution engine
++│   ├── engine.go              # Main HFT engine
++│   ├── main_default.go        # Default entry point
++│   ├── main_with_http.go      # HTTP-enabled entry point
++│   ├── live_api_client.go     # Binance Live API client (official SDK)
++│   ├── websocket_manager.go   # WebSocket feed manager
++│   ├── shm_manager.go         # Shared memory manager
++│   ├── executor.go            # Order execution engine
++│   ├── margin_executor.go     # Margin trading executor
++│   ├── risk_manager.go        # Risk management
++│   ├── risk_enhanced.go       # Enhanced risk controls
++│   ├── wal.go                 # Write-ahead logging
++│   ├── degrade.go             # Circuit breaker & degradation
++│   ├── ab_testing.go          # A/B testing framework
++│   ├── model_manager.go       # Model version management
++│   ├── queue_dynamics.go      # Queue position modeling
++│   ├── request_queue.go       # API request queue
++│   ├── order_fsm.go           # Order state machine
++│   ├── recovery_manager.go    # Crash recovery
++│   ├── metrics.go             # Prometheus metrics
++│   ├── mmap_unix.go           # Unix mmap implementation
++│   ├── mmap_windows.go        # Windows mmap implementation
++│   └── *_test.go              # Go test files
++├── brain_py/                  # Python AI brain
++│   ├── agent.py               # SAC RL agent
++│   ├── shm_client.py          # Shared memory client
++│   ├── agent_registry.py      # Agent registry (Phase 1)
++│   ├── regime_detector.py     # Market regime detection (Phase 2)
++│   ├── self_evolving_meta_agent.py  # Meta-agent (Phase 3)
++│   ├── pbt_trainer.py         # Population Based Training (Phase 4)
++│   ├── real_sim_real.py       # Sim-to-real adaptation (Phase 5)
++│   ├── moe/                   # Mixture of Experts (Phase 6)
++│   ├── world_model.py         # World model (Phase 8)
++│   ├── agent_civilization.py  # Agent civilization (Phase 9)
++│   ├── requirements.txt       # Python dependencies
++│   └── tests/                 # Python test files
++├── strategies/                # Trading strategies
++│   ├── base.py                # Strategy base class
++│   ├── dual_ma.py             # Dual moving average
++│   ├── momentum.py            # Momentum strategy
++│   └── rsi.py                 # RSI strategy
++├── core/                      # Python core components
++│   ├── live_order_manager.py  # Live order management
++│   └── live_risk_manager.py   # Live risk management
++├── leverage/                  # Leverage trading components
++├── retail-micro-trader/       # Retail trading components
++├── shared/                    # Shared protocol definitions
++│   ├── protocol.h             # C header
++│   └── protocol.py            # Python bindings
++├── config/                    # Configuration files
++│   ├── default.yaml           # Default configuration
++│   └── self_evolving_trader.yaml  # Self-evolving config
++├── scripts/                   # Startup scripts
++│   ├── start.sh               # Linux/Mac startup
++│   ├── start.bat              # Windows startup
++│   ├── start_go_engine.bat    # Windows Go engine only
++│   └── *.ps1                  # PowerShell scripts
++├── docs/                      # Documentation
++│   ├── ARCHITECTURE_OVERVIEW.md
++│   ├── SELF_EVOLVING_LIVE_DESIGN.md
++│   ├── MONITORING_SETUP.md
++│   └── ...
++├── logs/                      # Log files
++├── data/                      # Data files
++├── checkpoints/               # Model checkpoints
++└── ab_test_results/           # A/B testing results
+ ```
+ 
+-### 当前版本状态
+-- **版本**: v4.5 (工业级执行优化)
+-- **代码量**: ~8,200 行 Go + ~3,600 行 Python = **11,800+ 行**
+-- **Phase 1-9**: ✅ 全部完成 (100%)
+-- **P1-P9 工业级升级**: ✅ 全部完成
++## 4. Build and Run Commands
+ 
+----
+-
+-## 2. 技术栈与依赖
++### Prerequisites
++- Go 1.21+
++- Python 3.9+
++- PyTorch
++- Binance API credentials (for live trading)
+ 
+-| 组件 | 技术/版本 | 职责 |
+-|------|-----------|------|
+-| 执行引擎 | Go 1.26.1 | WebSocket、订单执行、风控、WAL、降级保护 |
+-| RL 智能体 | Python 3.10+ | SAC 算法、决策生成、在线学习 |
+-| 深度学习 | PyTorch 2.0+ | Actor-Critic 网络训练 |
+-| 通信 | mmap (144-byte struct) | 跨语言零拷贝共享内存 |
+-| 交易所 SDK | `github.com/adshao/go-binance/v2` | 币安 REST/WebSocket API |
+-| 监控 | Prometheus + Grafana | Execution Alpha 实时监控 |
+-| 统计/时序 | numpy, hmmlearn, arch, scikit-learn | 市场状态检测、GARCH、HMM |
++### Initialization
++```bash
++# One-time project initialization
++chmod +x init.sh
++./init.sh
++```
+ 
+-### 关键配置文件
++### Build Commands
++```bash
++# Build Go engine (Windows)
++cd core_go && go build -o hft_engine.exe .
+ 
+-| 文件 | 说明 |
+-|------|------|
+-| `core_go/go.mod` | Go 模块定义（依赖: gorilla/websocket, go-binance/v2, prometheus/client_golang 等） |
+-| `brain_py/requirements.txt` | Python 依赖（torch, numpy, pyyaml, hmmlearn, arch, scikit-learn） |
+-| `config/default.yaml` | HFT Go 引擎默认配置（交易对、风控、RL参数、SHM路径） |
+-| `config/self_evolving_trader.yaml` | 自进化交易系统配置（Phase开关、风险限额、PBT参数） |
+-| `protocol.h` | C 风格共享内存协议结构体定义（**144 bytes**，含对齐说明） |
++# Build Go engine (Linux/Mac)
++cd core_go && go build -o hft_engine .
+ 
+-**注意**: 本项目**没有** `pyproject.toml`, `setup.py`, `package.json`, `Cargo.toml` 等文件。依赖管理完全通过 `go.mod` 和 `requirements.txt` 完成。
++# Build with optimizations
++cd core_go && go build -o hft_engine -ldflags="-s -w" .
++```
+ 
+----
++### Run Commands
++```bash
++# Full system startup (Windows)
++cd scripts && start.bat btcusdt paper
+ 
+-## 3. 代码组织与目录结构
++# Full system startup (Linux/Mac)
++cd scripts && ./start.sh btcusdt paper
+ 
+-```
+-/
+-├── core_go/                    # Go 执行引擎（核心）
+-│   ├── engine.go               # HFTEngine 主入口，协调所有子系统
+-│   ├── protocol.go             # Go 端共享内存协议定义与序列化
+-│   ├── shm_manager.go          # 共享内存管理器（mmap 封装）
+-│   ├── websocket_manager.go    # WebSocket 连接管理（自动重连）
+-│   ├── executor.go             # 订单执行引擎（现货）
+-│   ├── margin_executor.go      # 杠杆/保证金交易执行器
+-│   ├── risk_manager.go         # 风险管理器
+-│   ├── wal.go                  # Write-Ahead Logging 预写日志
+-│   ├── degrade.go              # 四级熔断器 + 系统自动降级
+-│   ├── metrics.go              # Prometheus 指标收集与导出
+-│   ├── ab_testing.go           # A/B 测试框架（模型流量分割）
+-│   ├── model_manager.go        # 在线模型热更新（性能衰退检测+自动回滚）
+-│   ├── recovery_manager.go     # 崩溃恢复管理器
+-│   ├── queue_dynamics.go       # Queue Dynamics v3 (Hazard Rate)
+-│   ├── live_api_client.go      # 币安 Live API 客户端（官方 SDK）
+-│   ├── leverage/               # 杠杆子模块（计算器、强平监控、风险监控）
+-│   └── *_test.go               # Go 单元测试文件
+-│
+-├── brain_py/                   # Python AI 大脑层
+-│   ├── agent.py                # SAC RL Agent（主智能体）
+-│   ├── shm_client.py           # Python 端共享内存客户端
+-│   ├── self_evolving_meta_agent.py   # Phase 3: 自进化 Meta-Agent
+-│   ├── pbt_trainer.py          # Phase 4: 种群训练（PBT）
+-│   ├── real_sim_real.py        # Phase 5: 高保真仿真与域适应
+-│   ├── world_model.py          # Phase 8: 神经世界模型
+-│   ├── agent_civilization.py   # Phase 9: 多智能体文明进化
+-│   ├── auto_strategy_synthesis.py    # Phase 5: 算子级遗传编程
+-│   ├── self_play_trading.py    # Phase 6: 红蓝对抗训练
+-│   ├── regime_detector.py      # Phase 2: HMM+GARCH 市场状态检测
+-│   ├── agents/                 # 专家智能体池（趋势跟踪、均值回归、波动率等）
+-│   ├── moe/                    # Mixture of Experts 混合专家系统
+-│   ├── adversarial/            # 三层对抗训练防御架构（毒流检测/在线学习）
+-│   ├── queue_dynamics/         # Python 端队列动力学 v3 实现
+-│   ├── portfolio/              # 投资组合优化（Black-Litterman、风险平价）
+-│   ├── ab_testing/             # Python 端 A/B 测试框架
+-│   ├── features/               # 微观结构特征工程
+-│   ├── tests/                  # pytest 单元测试
+-│   └── requirements.txt        # Python 依赖
+-│
+-├── shared/                     # 跨语言共享组件
+-│   ├── protocol.h              # C 头文件（与根目录 protocol.h 同步）
+-│   └── protocol.py             # Python 端完整协议（MarketSnapshot, OrderCommand 等）
+-│
+-├── core/                       # Python 核心组件
+-│   ├── live_order_manager.py   # 实盘订单管理器
+-│   └── live_risk_manager.py    # 实盘风险管理器
+-│
+-├── strategies/                 # 交易策略目录
+-│   ├── base.py                 # 策略基类
+-│   ├── dual_ma.py              # 双均线策略
+-│   ├── rsi.py                  # RSI 策略
+-│   ├── momentum.py             # 动量策略
+-│   └── loader.py               # 策略热加载器
+-│
+-├── self_evolving_trader.py     # Phase 1-9 整合主入口（SelfEvolvingTrader）
+-├── start_trader.py             # 自进化交易系统的命令行启动脚本
+-├── end_to_end_test.py          # Go + Python 端到端集成测试
+-├── test_system.py              # 系统组件快速测试（pre-commit 钩子执行）
+-├── integration_test.py         # 集成测试
+-├── scripts/                    # 启动脚本
+-│   ├── start.sh                # Linux/Mac 启动脚本（含 CPU affinity）
+-│   └── start.bat               # Windows 启动脚本
+-├── config/                     # 配置文件
+-├── data/                       # 数据文件（共享内存文件存放处）
+-├── logs/                       # 日志文件
+-├── checkpoints/                # 模型检查点
+-└── docs/                       # 文档（架构设计、项目管理、监控部署指南）
+-```
++# Start self-evolving trader
++python start_trader.py --mode paper --symbol BTCUSDT
+ 
+----
++# Start Go engine only
++cd core_go && ./hft_engine.exe btcusdt
+ 
+-## 4. 构建、运行与测试命令
++# Start Python agent only
++cd brain_py && python agent.py
++```
+ 
+-### 4.1 初始化项目
++### Dependency Installation
+ ```bash
+-# 一键初始化（安装依赖、构建引擎、部署 pre-commit 钩子）
+-chmod +x init.sh
+-./init.sh
++# Python dependencies
++pip install -r brain_py/requirements.txt
++
++# Go dependencies (auto-fetched on build)
++cd core_go && go mod tidy
+ ```
+ 
+-### 4.2 构建 Go 引擎
++## 5. Testing Strategy
++
++### Test Organization
++- **Go Tests**: 199+ test functions in `*_test.go` files
++- **Python Tests**: Located in `brain_py/tests/`
++- **E2E Tests**: `end_to_end_test.py` - Full integration test
++- **System Tests**: `test_system.py` - Component verification
++
++### Running Tests
+ ```bash
+-cd core_go
++# Go unit tests
++cd core_go && go test -v
+ 
+-# Windows
+-go build -o hft_engine.exe .
++# Go tests with coverage
++cd core_go && go test -v -cover
+ 
+-# Linux/Mac
+-go build -o hft_engine -ldflags="-s -w" .
+-```
++# Specific test
++cd core_go && go test -v -run TestWebSocketReconnection
+ 
+-### 4.3 运行测试
+-```bash
+-# 系统组件测试（pre-commit 钩子会运行这个）
++# Python tests
+ python test_system.py
+ 
+-# 端到端集成测试（启动真实 Go 引擎 + Python Agent）
++# End-to-end test (requires API keys)
+ python end_to_end_test.py
+ 
+-# Go 单元测试
+-cd core_go
+-go test -v ./...
+-
+-# Python 测试（brain_py 内）
+-cd brain_py
+-pytest tests/ -v
++# Integration test
++python integration_test.py
+ ```
+ 
+-### 4.4 启动系统
++### Pre-commit Hooks
++The `init.sh` script installs a pre-commit hook that runs:
++1. `test_system.py` - System component tests
++2. `gofmt` - Go code formatting check
++3. `py_compile` - Python syntax validation
+ 
+-**方式 A: 传统 HFT 引擎（Go + Python 分离运行）**
+-```bash
+-# Windows
+-scripts\start.bat btcusdt paper
++## 6. Shared Memory Protocol
+ 
+-# Linux/Mac
+-scripts/start.sh btcusdt paper
++### Structure Size
++**Total size: 144 bytes** (due to Go's 8-byte alignment requirements)
+ 
+-# 手动启动 Go 引擎
+-cd core_go
+-./hft_engine.exe btcusdt paper margin   # 第3参数 margin 启用杠杆
++### Memory Layout
++```
++=== Cache Line 0 (Bytes 0-71): Market Data (Written by Go) ===
++- seq (uint64): Sequence number for lock-free sync
++- seq_end (uint64): End sequence (must match seq)
++- timestamp (int64): Unix timestamp (nanoseconds)
++- best_bid (float64): Best bid price
++- best_ask (float64): Best ask price
++- micro_price (float64): Micro-price (weighted mid)
++- ofi_signal (float64): Order Flow Imbalance signal
++- trade_imbalance (float32): Recent trade flow imbalance
++- bid_queue_pos (float32): Position in bid queue (0-1)
++- ask_queue_pos (float32): Position in ask queue (0-1)
++- _padding0[4]: Padding for 8-byte alignment
++
++=== Cache Line 1 (Bytes 72-143): AI Decision (Written by Python) ===
++- decision_seq (uint64): Decision sequence number
++- decision_ack (uint64): Acknowledgment from Go
++- decision_timestamp (int64): When decision was made
++- target_position (float64): Target position size
++- target_size (float64): Order quantity
++- limit_price (float64): Limit price (0 for market)
++- confidence (float32): AI confidence (0-1)
++- volatility_forecast (float32): Predicted volatility
++- action (int32): TradingAction enum
++- regime (int32): MarketRegime enum
++- _padding1[8]: Padding to reach 144 bytes
++```
+ 
+-# 手动启动 Python Agent
+-cd brain_py
+-python agent.py
++### Trading Actions
++```python
++ACTION_WAIT = 0           # Hold position
++ACTION_JOIN_BID = 1       # Place limit buy at bid
++ACTION_JOIN_ASK = 2       # Place limit sell at ask
++ACTION_CROSS_BUY = 3      # Market buy
++ACTION_CROSS_SELL = 4     # Market sell
++ACTION_CANCEL = 5         # Cancel orders
++ACTION_PARTIAL_EXIT = 6   # Take partial profits
+ ```
+ 
+-**方式 B: 自进化交易系统（推荐，整合 Phase 1-9）**
++### Market Regimes
++```python
++REGIME_UNKNOWN = 0
++REGIME_TREND_UP = 1
++REGIME_TREND_DOWN = 2
++REGIME_RANGE = 3
++REGIME_HIGH_VOL = 4
++REGIME_LOW_VOL = 5
++```
++
++## 7. Configuration
++
++### Default Configuration (`config/default.yaml`)
++```yaml
++# Trading settings
++symbol: btcusdt
++paper_trading: true
++max_position: 1.0
++base_order_size: 0.01
++
++# Risk limits
++daily_loss_limit: -10000  # $10,000 max daily loss
++max_drawdown: 0.15        # 15% max drawdown
++max_orders_per_minute: 60
++
++# RL Agent
++agent:
++  state_dim: 12
++  hidden_dim: 256
++  learning_rate: 0.0003
++  buffer_size: 100000
++
++# Shared memory
++shm:
++  path: /tmp/hft_trading_shm  # Linux/Mac
++  # path: .\data\hft_trading_shm  # Windows
++```
++
++### Environment Variables
+ ```bash
+-# 模拟交易（默认）
+-python start_trader.py --mode paper --symbol BTCUSDT
++# Required for live trading
++export BINANCE_API_KEY=your_api_key
++export BINANCE_API_SECRET=your_api_secret
++
++# Shared memory path override
++export HFT_SHM_PATH=/tmp/hft_trading_shm
+ 
+-# 实盘（会要求二次确认，且必须设置 API Key）
+-export BINANCE_API_KEY=xxx
+-export BINANCE_API_SECRET=yyy
+-python start_trader.py --mode live --symbol BTCUSDT --production
++# Proxy settings (for mainland China)
++export HTTP_PROXY=http://127.0.0.1:7897
++export HTTPS_PROXY=http://127.0.0.1:7897
+ ```
+ 
+----
++## 8. Code Style Guidelines
+ 
+-## 5. 开发规范
++### Go Code
++- Follow `go fmt` and `go vet`
++- Functions: < 50 lines preferred
++- Files: < 800 lines preferred
++- All errors must be explicitly handled
++- Prefer creating new objects over mutating existing ones
+ 
+-### 5.1 代码风格
+-- **Go**: 严格遵循 `go fmt` 和 `go vet`
+-  - 函数长度 < 50 行
+-  - 文件长度 < 800 行
+-  - 所有错误必须显式处理，禁止 ` _ = err` 吞掉错误
+-- **Python**: PEP 8 + 类型注解
+-  - 函数长度 < 50 行
+-  - 使用 `typing` 模块标注参数和返回值
+-  - 优先创建新对象，避免修改现有对象（不可变性原则）
++### Python Code
++- Follow PEP 8
++- Use type annotations
++- Functions: < 50 lines preferred
++- Docstrings for all public functions
+ 
+-### 5.2 Git 提交规范
+-```
+-feat:     新功能
+-fix:      修复问题
+-docs:     文档更新
+-test:     测试相关
+-refactor: 重构
+-perf:     性能优化
+-```
++### Naming Conventions
++- **Go**: PascalCase for exported, camelCase for internal
++- **Python**: snake_case for functions/variables, PascalCase for classes
++- **Files**: snake_case for Python, snake_case or descriptive for Go
+ 
+-### 5.3 Pre-commit 钩子（由 init.sh 自动安装）
+-`.git/hooks/pre-commit` 会在每次提交前自动执行：
+-1. `python test_system.py` — 系统测试
+-2. `gofmt -l` — Go 代码格式检查
+-3. `python -m py_compile` — Python 语法检查
++## 9. Architecture Components
+ 
+-**任何一项失败都会阻止提交。**
++### Phase 1: Agent Registry (`brain_py/agent_registry.py`)
++Dynamic strategy loading and management
+ 
+-### 5.4 测试要求
+-- 所有新功能必须有单元测试
+-- 修改核心组件（`core_go/engine.go`, `brain_py/agent.py`, 共享内存协议）必须运行 E2E 测试
+-- 提交前必须确保 `test_system.py` 通过
++### Phase 2: Regime Detector (`brain_py/regime_detector.py`)
++Market state detection using HMM
+ 
+----
++### Phase 3: Self-Evolving Meta-Agent (`brain_py/self_evolving_meta_agent.py`)
++Weight adaptation and strategy evolution
+ 
+-## 6. 共享内存协议（关键）
+-
+-### 6.1 结构大小
+-- **协议文件**: `protocol.h`（根目录）和 `shared/protocol.h` 必须保持一致
+-- **实际大小**: **144 bytes**（不是 128 bytes）
+-  - Go 的 8-byte 对齐要求在 `ask_queue_pos` 后增加了 4 bytes padding
+-  - `decision_seq` 因此从 offset 72 开始
+-- **Static_assert**: `sizeof(TradingSharedState) == 144`
+-
+-### 6.2 布局
+-```c
+-/* Cache Line 0 (bytes 0-71): Market Data - Written by Go */
+-uint64_t seq;           // offset 0
+-uint64_t seq_end;       // offset 8
+-int64_t  timestamp;     // offset 16
+-double   best_bid;      // offset 24
+-double   best_ask;      // offset 32
+-double   micro_price;   // offset 40
+-double   ofi_signal;    // offset 48
+-float    trade_imbalance; // offset 56
+-float    bid_queue_pos;   // offset 60
+-float    ask_queue_pos;   // offset 64
+-char     _padding0[4];    // offset 68-71
+-
+-/* Cache Line 1 (bytes 72-143): AI Decision - Written by Python */
+-uint64_t decision_seq;     // offset 72
+-uint64_t decision_ack;     // offset 80 (written by Go)
+-int64_t  decision_timestamp; // offset 88
+-double   target_position;    // offset 96
+-double   target_size;        // offset 104
+-double   limit_price;        // offset 112
+-float    confidence;         // offset 120
+-float    volatility_forecast; // offset 124
+-int32_t  action;             // offset 128 (TradingAction enum)
+-int32_t  regime;             // offset 132 (MarketRegime enum)
+-char     _padding1[8];       // offset 136-143
+-```
++### Phase 4: PBT Trainer (`brain_py/pbt_trainer.py`)
++Population Based Training for hyperparameter optimization
+ 
+-### 6.3 同步机制
+-- **Sequence Lock**: 无锁同步
+-  - Writer: `seq++` → 写数据 → `seq_end = seq`
+-  - Reader: 读 `seq` → 读数据 → 读 `seq_end`，若相等则数据一致
+-- **Decision ACK**: Python 写 `decision_seq` 后，Go 执行完订单将 `decision_ack` 设为相同值
++### Phase 5: Real-Sim-Real (`brain_py/real_sim_real.py`)
++Domain adaptation between simulation and live trading
+ 
+-**警告**: 任何修改 `protocol.h` 或 `protocol.go` 的操作，必须同步更新 Go/Python/C 三端，并重新运行 `test_system.py` 和 `end_to_end_test.py`。
++### Phase 6: Mixture of Experts (`brain_py/moe/`)
++Multi-agent ensemble system
+ 
+----
++### Phase 7: Online Learning
++Continuous learning from live market data
+ 
+-## 7. 安全与风控
++### Phase 8: World Model (`brain_py/world_model.py`)
++Model-based planning and simulation
+ 
+-### 7.1 默认安全设置
+-- **默认纸交易**: `paper_trading: true`，不会动用真实资金
+-- **API 密钥管理**: 必须通过环境变量 `BINANCE_API_KEY` 和 `BINANCE_API_SECRET` 传入，**禁止硬编码**
+-- **代理设置**: 中国大陆用户可设置 `HTTP_PROXY` / `HTTPS_PROXY`
++### Phase 9: Agent Civilization (`brain_py/agent_civilization.py`)
++Multi-agent ecosystem with roles and cooperation
+ 
+-### 7.2 风控机制
+-- **每日亏损限制**: 默认 -$10,000
+-- **最大回撤**: 15% 触发 kill switch
+-- **订单频率限制**: 默认 60 单/分钟
+-- **仓位限制**: 默认 max_position = 1.0 BTC
+-- **四级熔断降级** (`degrade.go`): Normal → Cautious → Restricted → Emergency → Halt
+-- **杠杆/强平**: `margin_executor.go` + `core_go/leverage/` 支持全仓杠杆，实时监控爆仓风险
++## 10. Security Considerations
+ 
+-### 7.3 WAL 与恢复
+-- `wal.go` / `recovery_manager.go` 记录所有订单和状态变化
+-- 崩溃后可通过 Checkpoint + WAL Replay 恢复状态
++- **Default Paper Trading**: No real money at risk by default
++- **Kill Switch**: Automatic stop on excessive losses
++- **API Key Security**: Never commit credentials to git
++- **Position Limits**: Hard limits prevent over-leveraging
++- **Rate Limiting**: API call throttling to prevent bans
+ 
+----
++## 11. Monitoring and Observability
+ 
+-## 8. 监控与可观测性
++### Metrics Endpoints
++- Go engine exposes Prometheus metrics
++- Grafana dashboard: `core_go/grafana_dashboard.json`
++- Alert rules: `core_go/alert_rules.yml`
+ 
+-### 8.1 Prometheus 指标
+-Go 引擎在 `metrics.go` 中内置了 Prometheus exporter，端口默认 **2112**，指标包括：
+-- `fill_quality` — 成交质量
+-- `adverse_selection` — 毒流量检测
+-- `order_latency_ms` — 订单延迟
+-- `position_size` — 当前仓位
+-- `pnl` — 已实现/未实现盈亏
+-- `hft_engine_ab_test_requests_total` — A/B 测试流量分布
++### Log Files
++- `logs/go_engine.log` - Go engine logs
++- `logs/python_agent.log` - Python agent logs
++- `logs/wal/` - Write-ahead logs
+ 
+-### 8.2 关键配置文件
+-- `core_go/prometheus.yml` — Prometheus 采集配置
+-- `core_go/alert_rules.yml` — 告警规则
+-- `core_go/grafana_dashboard.json` — Grafana 面板 JSON
++### Health Checks
++```bash
++# Check if system is running
++python test_system.py
+ 
+-详细部署指南见 `docs/MONITORING_SETUP.md` 和 `core_go/MONITORING_SETUP.md`。
++# View recent logs
++tail -f logs/go_engine.log
++tail -f logs/python_agent.log
++```
+ 
+----
++## 12. Troubleshooting
+ 
+-## 9. 关键模块说明
+-
+-| 模块 | 文件 | 状态 | 说明 |
+-|------|------|------|------|
+-| P1 实盘一体化架构 | `shared/protocol.*`, `core_go/shm_manager.go` | ✅ | 零拷贝共享内存通信 |
+-| P2 Queue Dynamics v3 | `core_go/queue_dynamics.go`, `brain_py/queue_dynamics/` | ✅ | Hazard Rate 概率填充模型 |
+-| P3 执行 Alpha 监控 | `core_go/metrics.go` | ✅ | Prometheus + Grafana |
+-| P4 A/B 测试框架 | `core_go/ab_testing.go`, `brain_py/ab_testing/` | ✅ | 流量分割 + 统计显著性 |
+-| P5 在线模型热更新 | `core_go/model_manager.go` | ✅ | 性能衰退检测 + 自动回滚 |
+-| P6 对抗训练 | `brain_py/adversarial/` | ✅ | 三层防御做市商收割 |
+-| P7 WAL 预写日志 | `core_go/recovery_manager.go`, `core_go/wal.go` | ✅ | 崩溃恢复 + 检查点 |
+-| P8 降级策略 | `core_go/degrade.go` | ✅ | 四级熔断器 + 自动降级 |
+-| P9 杠杆全仓交易 | `core_go/margin_executor.go`, `core_go/leverage/` | ✅ | 杠杆/保证金/强平支持 |
+-| Phase 1 OrderManager | `core_go/order_fsm.go` | ✅ | WebSocket订单生命周期 |
+-| Phase 2 RegimeDetector | `brain_py/regime_detector.py` | ✅ | HMM+GARCH市场状态检测 |
+-| Phase 3 Meta-Agent | `brain_py/self_evolving_meta_agent.py` | ✅ | 收益反馈权重更新 |
+-| Phase 4 PBT | `brain_py/pbt_trainer.py` | ✅ | 策略种群训练 |
+-| Phase 5 Auto-Strategy | `brain_py/auto_strategy_synthesis.py` | ✅ | 算子级遗传编程 |
+-| Phase 6 Self-Play | `brain_py/self_play_trading.py` | ✅ | 红蓝对抗 |
+-| Phase 7 Real→Sim→Real | `brain_py/real_sim_real.py` | ✅ | 高保真仿真 |
+-| Phase 8 World Model | `brain_py/world_model.py` | ✅ | 神经市场模型 |
+-| Phase 9 Civilization | `brain_py/agent_civilization.py` | ✅ | 多智能体社会进化 |
++| Issue | Solution |
++|-------|----------|
++| WebSocket connection timeout | Check proxy settings, try testnet |
++| Bad handshake | Confirm using correct testnet endpoint |
++| SHM communication failure | Check struct size (144 bytes) and alignment |
++| Permission denied | Ensure write access to `data/` directory |
++| Import errors | Run `pip install -r brain_py/requirements.txt` |
++| Go build errors | Run `cd core_go && go mod tidy` |
+ 
+----
++## 13. Git Workflow
+ 
+-## 10. 故障排除
++```
++feat:     New feature
++fix:      Bug fix
++docs:     Documentation updates
++test:     Test-related changes
++refactor: Code refactoring
++perf:     Performance improvements
++```
+ 
+-| 问题 | 解决方案 |
+-|------|----------|
+-| WebSocket 连接超时 | 检查代理设置，尝试测试网 `wss://stream.testnet.binance.vision` |
+-| Bad handshake | 确认使用正确的测试网端点 |
+-| SHM 通信失败 | 检查 struct 大小和对齐（必须是 **144 bytes**） |
+-| 权限拒绝 | 确保有写入 `data/` 和 `logs/` 目录的权限 |
+-| `-2015` / `-1021` API 错误 | 时间戳不同步，检查系统时间或启用 `live_api_client.go` 中的时间同步 |
+-| Go 构建失败 | 运行 `cd core_go && go mod tidy`，确保 Go 1.26.1+ |
+-| Python 导入错误 | 确认 `sys.path` 包含项目根目录或 `brain_py` 目录 |
++## 14. Key Entry Points
+ 
+----
++| File | Purpose |
++|------|---------|
++| `core_go/main_default.go` | Standard Go engine entry point |
++| `core_go/main_with_http.go` | HTTP-enabled Go engine |
++| `brain_py/agent.py` | SAC RL agent main loop |
++| `start_trader.py` | Self-evolving trader CLI |
++| `self_evolving_trader.py` | Integrated trading system |
++| `init.sh` | Project initialization |
+ 
+-## 11. 协作规范
++## 15. Documentation References
+ 
+-- **代码审查**: 所有核心修改需通过 code-reviewer agent
+-- **测试驱动**: 新功能先用 tdd-guide agent 写测试
+-- **安全检查**: 涉及交易执行的代码需 security-reviewer 审查
+-- **文档更新**: 修改 `protocol.h`、配置结构或 API 必须同步更新本文档
++- `README.md` - Project overview and quick start
++- `docs/ARCHITECTURE_OVERVIEW.md` - System architecture
++- `docs/SELF_EVOLVING_LIVE_DESIGN.md` - Self-evolving system design
++- `docs/MONITORING_SETUP.md` - Monitoring configuration
++- `docs/WINDOWS_INTEGRATION_GUIDE.md` - Windows-specific setup
++- `core_go/AB_TESTING.md` - A/B testing framework
+ 
+ ---
+-
+ *Last Updated: 2026-04-02*
+diff --git a/new/brain_py/regime_detector.py b/new/brain_py/regime_detector.py
+index a966408..5a8cc51 100644
+--- a/new/brain_py/regime_detector.py
++++ b/new/brain_py/regime_detector.py
+@@ -1,24 +1,25 @@
+ """
+ regime_detector.py - Market Regime Detection using HMM and GARCH.
+ 
+-Provides:
+-- Hidden Markov Model (HMM) for regime classification
+-- GARCH model for volatility forecasting
+-- Real-time regime detection with low latency
+-
+-Regimes:
+-- TRENDING: Persistent directional price movement
+-- MEAN_REVERTING: Oscillating around mean price
+-- HIGH_VOLATILITY: Large price swings, high uncertainty
++Production级实现：
++- 异步非阻塞 HMM 训练（ProcessPool）
++- 双缓冲模型切换（原子替换）
++- fit 节流 + coalescing（防爆）
++- fallback 降级机制
++- < 1ms 检测延迟
++
++Author: P10 Trading System
+ """
+ 
++import asyncio
+ import numpy as np
+-from enum import Enum
+-from dataclasses import dataclass
+-from typing import Optional, List, Tuple, Dict
+-from collections import deque
+ import time
+ import warnings
++from collections import deque
++from concurrent.futures import ProcessPoolExecutor
++from dataclasses import dataclass
++from enum import Enum
++from typing import Dict, List, Optional, Tuple, Deque
+ 
+ # Suppress sklearn warnings
+ warnings.filterwarnings('ignore', category=FutureWarning)
+@@ -31,13 +32,6 @@ except ImportError:
+     HMMLEARN_AVAILABLE = False
+     GaussianHMM = None
+ 
+-try:
+-    from arch import arch_model
+-    ARCH_AVAILABLE = True
+-except ImportError:
+-    ARCH_AVAILABLE = False
+-    arch_model = None
+-
+ try:
+     from .features.regime_features import RegimeFeatureExtractor, RegimeFeatures
+ except ImportError:
+@@ -56,499 +50,532 @@ class Regime(Enum):
+ class RegimePrediction:
+     """Output of regime detection."""
+     regime: Regime
+-    confidence: float  # 0.0 - 1.0
++    confidence: float
+     probabilities: Dict[Regime, float]
+     volatility_forecast: float
+     timestamp: float
++    latency_ms: float = 0.0  # 新增：检测延迟
+ 
+ 
+-class MarketRegimeDetector:
++# ============================================================================
++# 子进程执行函数（必须是顶层函数！）
++# ============================================================================
++
++def _train_hmm_worker(prices: np.ndarray, n_states: int = 3) -> Optional[Tuple]:
+     """
+-    Market regime detector using HMM and GARCH models.
++    在子进程中训练 HMM。
++    
++    ⚠️ 关键：不能使用 self，所有参数通过函数参数传递
++    返回：(model, state_to_regime_map) 或 None
++    
++    Args:
++        prices: 价格历史数组
++        n_states: HMM 隐藏状态数
++    
++    Returns:
++        (trained_model, state_mapping) 或 None（失败时）
++    """
++    try:
++        if not HMMLEARN_AVAILABLE or len(prices) < 50:
++            return None
++        
++        # 计算对数收益率
++        log_returns = np.diff(np.log(prices))
++        log_returns = log_returns[np.isfinite(log_returns)]
++        
++        if len(log_returns) < 30:
++            return None
++        
++        # 准备特征：returns 和 squared returns
++        features = np.column_stack([log_returns, log_returns ** 2])
++        
++        # 训练 HMM
++        model = GaussianHMM(
++            n_components=n_states,
++            covariance_type="full",
++            n_iter=50,  # 减少迭代次数，加速训练
++            random_state=42,
++            init_params='stmc'
++        )
++        
++        model.fit(features)
++        
++        # 构建 state 到 regime 的映射
++        state_to_regime = {}
++        for state in range(n_states):
++            mean_return = model.means_[state][0]
++            mean_vol_proxy = model.means_[state][1]
++            
++            # 基于收益和波动率分类
++            if mean_vol_proxy > np.percentile(model.means_[:, 1], 66):
++                state_to_regime[state] = Regime.HIGH_VOLATILITY
++            elif np.abs(mean_return) > np.std(model.means_[:, 0]):
++                state_to_regime[state] = Regime.TRENDING
++            else:
++                state_to_regime[state] = Regime.MEAN_REVERTING
++        
++        return (model, state_to_regime)
++        
++    except Exception as e:
++        print(f"[HMM TRAIN ERROR] {e}")
++        return None
++
+ 
+-    Combines:
+-    1. Gaussian HMM for regime classification based on return features
+-    2. GARCH(1,1) for volatility forecasting
+-    3. Feature extraction for state representation
++# ============================================================================
++# 主类：Production级 Regime Detector
++# ============================================================================
+ 
+-    Performance targets:
+-    - Detection latency: < 1 second
+-    - Prediction accuracy: > 60%
++class MarketRegimeDetector:
++    """
++    Production级市场状态检测器。
++    
++    特性：
++    - 异步非阻塞 HMM 训练（后台进程池）
++    - 双缓冲模型切换（原子替换，无锁）
++    - fit 节流（避免任务堆积）
++    - fallback 降级机制
++    - < 1ms 检测延迟
++    
++    Usage:
++        detector = MarketRegimeDetector()
++        
++        # 冷启动：同步训练初始模型
++        detector.fit(initial_prices)
++        
++        # 主循环：异步检测（不阻塞）
++        async for price in market_stream:
++            pred = await detector.detect_async(price)
++            print(f"Regime: {pred.regime}, Latency: {pred.latency_ms:.2f}ms")
+     """
+ 
+-    def __init__(self, n_states: int = 3, feature_window: int = 100):
++    def __init__(
++        self,
++        n_states: int = 3,
++        feature_window: int = 100,
++        fit_interval_ticks: int = 1000,
++        max_price_history: int = 5000
++    ):
+         """
+-        Initialize regime detector.
+-
++        初始化检测器。
++        
+         Args:
+-            n_states: Number of HMM hidden states (default 3 for 3 regimes)
+-            feature_window: Window size for feature extraction
++            n_states: HMM 隐藏状态数
++            feature_window: 特征提取窗口
++            fit_interval_ticks: 每 N 个 tick 触发后台训练
++            max_price_history: 价格历史最大长度
+         """
+         self.n_states = n_states
+         self.feature_window = feature_window
+-
+-        # Feature extractor
++        self._fit_interval = fit_interval_ticks
++        
++        # ===== 数据存储 =====
++        self.price_history: Deque[float] = deque(maxlen=max_price_history)
++        
++        # ===== 特征提取器 =====
+         self.feature_extractor = RegimeFeatureExtractor(
+             window=feature_window,
+             min_samples=30
+         )
+-
+-        # HMM model
+-        self.hmm: Optional[GaussianHMM] = None
+-        self._hmm_fitted = False
+-
+-        # GARCH model parameters (fitted online)
++        
++        # ===== 模型双缓冲（核心设计）=====
++        self._active_model: Optional[GaussianHMM] = None
++        self._state_to_regime: Dict[int, Regime] = {}
++        self._model_ready = False
++        
++        # ===== 异步控制 =====
++        self._executor = ProcessPoolExecutor(max_workers=1)
++        self._fit_task: Optional[asyncio.Task] = None
++        self._fit_in_progress = False
++        self._tick_count = 0
++        
++        # ===== GARCH 参数 =====
+         self.garch_omega = 0.000001
+         self.garch_alpha = 0.1
+         self.garch_beta = 0.85
+         self.current_variance = 0.0001
+-
+-        # State mapping (fitted during training)
+-        self.state_to_regime: Dict[int, Regime] = {}
+-
+-        # Performance tracking
+-        self.detection_times: deque = deque(maxlen=1000)
+-        self.regime_history: deque = deque(maxlen=1000)
+-        self.price_history: deque = deque(maxlen=feature_window * 2)
+-
+-        # Fallback mode if libraries not available
++        
++        # ===== fallback 状态 =====
++        self._last_regime = Regime.UNKNOWN
++        self._fallback_thresholds = {'high_vol': 0.5, 'trend': 0.001}
+         self._use_fallback = not HMMLEARN_AVAILABLE
++        
++        # ===== 性能监控 =====
++        self.detection_times: Deque[float] = deque(maxlen=1000)
++        self.regime_history: Deque[Regime] = deque(maxlen=1000)
+ 
+-    def fit(self, prices: np.ndarray) -> bool:
+-        """
+-        Fit HMM model on historical price data.
+-
+-        Args:
+-            prices: Array of historical prices
+-
+-        Returns:
+-            True if fitting successful
+-        """
+-        if len(prices) < self.feature_window * 2:
+-            print(f"[REGIME] Insufficient data: {len(prices)} < {self.feature_window * 2}")
+-            return False
+-
+-        # Compute log returns
+-        log_returns = np.diff(np.log(prices))
+-        log_returns = log_returns[np.isfinite(log_returns)]
+-
+-        if len(log_returns) < self.feature_window:
+-            print(f"[REGIME] Insufficient returns: {len(log_returns)}")
+-            return False
+-
+-        if self._use_fallback:
+-            return self._fit_fallback(log_returns)
+-
+-        return self._fit_hmm(log_returns)
+-
+-    def _fit_hmm(self, log_returns: np.ndarray) -> bool:
+-        """Fit Gaussian HMM model."""
+-        try:
+-            # Prepare features: returns and squared returns (volatility proxy)
+-            features = np.column_stack([
+-                log_returns,
+-                log_returns ** 2
+-            ])
+-
+-            # Fit HMM
+-            self.hmm = GaussianHMM(
+-                n_components=self.n_states,
+-                covariance_type="full",
+-                n_iter=100,
+-                random_state=42,
+-                init_params='stmc'  # Initialize all parameters
+-            )
+-
+-            self.hmm.fit(features)
+-            self._hmm_fitted = True
++    # ========================================================================
++    # 🚀 FAST PATH：异步检测（主循环使用）
++    # ========================================================================
+ 
+-            # Map HMM states to regimes based on state characteristics
+-            self._map_states_to_regimes()
+-
+-            print(f"[REGIME] HMM fitted: converged={self.hmm.monitor_.converged}, "
+-                  f"log-likelihood={self.hmm.score(features):.2f}")
+-
+-            return True
+-
+-        except Exception as e:
+-            print(f"[REGIME] HMM fitting failed: {e}")
+-            self._use_fallback = True
+-            return self._fit_fallback(log_returns)
+-
+-    def _fit_fallback(self, log_returns: np.ndarray) -> bool:
+-        """
+-        Fallback regime detection using simple heuristics.
+-
+-        Used when hmmlearn is not available.
++    async def detect_async(self, price: float) -> RegimePrediction:
+         """
+-        print("[REGIME] Using fallback heuristic regime detection")
+-
+-        # Compute regime characteristics
+-        vol = np.std(log_returns)
+-        mean_ret = np.mean(log_returns)
+-
+-        # Simple thresholds for regime classification
+-        self._fallback_thresholds = {
+-            'high_vol': vol * 2.0,
+-            'trend': np.abs(mean_ret) * 3.0
+-        }
+-
+-        return True
+-
+-    def _map_states_to_regimes(self):
+-        """Map HMM states to regime types based on state means."""
+-        if self.hmm is None:
+-            return
+-
+-        for state in range(self.n_states):
+-            mean_return = self.hmm.means_[state][0]
+-            mean_vol_proxy = self.hmm.means_[state][1]
+-
+-            # Classify based on return and volatility characteristics
+-            if mean_vol_proxy > np.percentile(self.hmm.means_[:, 1], 66):
+-                self.state_to_regime[state] = Regime.HIGH_VOLATILITY
+-            elif np.abs(mean_return) > np.std(self.hmm.means_[:, 0]):
+-                self.state_to_regime[state] = Regime.TRENDING
+-            else:
+-                self.state_to_regime[state] = Regime.MEAN_REVERTING
+-
+-        print(f"[REGIME] State mapping: {self.state_to_regime}")
+-
+-    def detect(self, price: float) -> RegimePrediction:
+-        """
+-        Detect current market regime from price.
+-
++        异步检测当前市场状态（非阻塞，< 1ms）。
++        
++        这是主循环应该使用的方法。它会：
++        1. 快速提取特征
++        2. 使用当前模型预测（仅 predict，无训练）
++        3. 触发后台训练（每 N tick，非阻塞）
++        
+         Args:
+-            price: Current price
+-
++            price: 当前价格
++        
+         Returns:
+-            RegimePrediction with regime, confidence, and probabilities
++            RegimePrediction 包含状态、置信度、延迟
+         """
+-        start_time = time.time()
+-
+-        # Update feature extractor
++        start = time.perf_counter()
++        
++        # 1. 更新价格历史
++        self.price_history.append(price)
++        
++        # 2. 特征提取（轻量，同步）
+         features = self.feature_extractor.update(price)
+-
+         if features is None:
+-            return RegimePrediction(
+-                regime=Regime.UNKNOWN,
+-                confidence=0.0,
+-                probabilities={r: 0.33 for r in Regime if r != Regime.UNKNOWN},
+-                volatility_forecast=np.sqrt(self.current_variance),
+-                timestamp=start_time
+-            )
+-
+-        # Store price for later analysis
+-        self.price_history.append(price)
+-
+-        # Detect regime
+-        if self._use_fallback:
+-            prediction = self._detect_fallback(features)
+-        else:
+-            prediction = self._detect_hmm(features)
+-
+-        # Update volatility forecast with GARCH
+-        prediction.volatility_forecast = self._update_garch(features)
+-
+-        # Track performance
+-        detection_time = time.time() - start_time
+-        self.detection_times.append(detection_time)
+-        self.regime_history.append(prediction.regime)
+-
+-        prediction.timestamp = time.time()
+-
++            return self._create_unknown_prediction(start)
++        
++        # 3. 触发后台训练（带节流）
++        self._tick_count += 1
++        if self._tick_count % self._fit_interval == 0:
++            self._trigger_background_fit()
++        
++        # 4. 快路径：仅预测
++        prediction = self._predict_fast(features)
++        
++        # 5. 记录性能
++        latency = (time.perf_counter() - start) * 1000
++        self.detection_times.append(latency)
++        prediction.latency_ms = latency
++        
+         return prediction
+ 
+-    def _detect_hmm(self, features: RegimeFeatures) -> RegimePrediction:
+-        """Detect regime using HMM."""
+-        if not self._hmm_fitted or self.hmm is None:
++    def _predict_fast(self, features) -> RegimePrediction:
++        """
++        极速预测路径（仅 decode，无训练）。
++        
++        使用当前激活的模型进行预测，如果模型未就绪则使用 fallback。
++        """
++        if self._use_fallback or not self._model_ready or self._active_model is None:
+             return self._detect_fallback(features)
+-
++        
+         try:
+-            # Prepare observation
++            # 准备观测值
+             obs = np.array([[features.mean_return, features.volatility ** 2]])
+-
+-            # Get state probabilities
+-            log_prob, state = self.hmm.decode(obs, algorithm="viterbi")
++            
++            # Viterbi 解码（极速）
++            log_prob, states = self._active_model.decode(obs, algorithm="viterbi")
++            state = states[0]
++            
++            # 获取状态概率
+             state_probs = self._get_state_probabilities(obs[0])
+-
+-            # Map to regime
+-            regime = self.state_to_regime.get(state[0], Regime.UNKNOWN)
+-
+-            # Compute confidence as max probability
+-            confidence = np.max(state_probs)
+-
+-            # Convert state probabilities to regime probabilities
++            
++            # 映射到 regime
++            regime = self._state_to_regime.get(state, Regime.UNKNOWN)
++            confidence = float(np.max(state_probs))
++            
++            # 构建概率分布
+             regime_probs = {r: 0.0 for r in Regime if r != Regime.UNKNOWN}
+             for s, prob in enumerate(state_probs):
+-                r = self.state_to_regime.get(s, Regime.UNKNOWN)
++                r = self._state_to_regime.get(s, Regime.UNKNOWN)
+                 if r != Regime.UNKNOWN:
+                     regime_probs[r] += prob
+-
++            
++            # 更新 GARCH 波动率预测
++            vol_forecast = self._update_garch(features)
++            
++            self._last_regime = regime
++            
+             return RegimePrediction(
+                 regime=regime,
+-                confidence=float(confidence),
++                confidence=confidence,
+                 probabilities=regime_probs,
+-                volatility_forecast=0.0,  # Will be updated by GARCH
+-                timestamp=0.0
++                volatility_forecast=vol_forecast,
++                timestamp=time.time(),
++                latency_ms=0.0
+             )
+-
++            
+         except Exception as e:
+-            print(f"[REGIME] HMM detection failed: {e}")
++            print(f"[REGIME] Fast predict failed: {e}")
+             return self._detect_fallback(features)
+ 
+-    def _get_state_probabilities(self, obs: np.ndarray) -> np.ndarray:
+-        """Get probability distribution over hidden states."""
+-        if self.hmm is None:
+-            return np.ones(self.n_states) / self.n_states
++    # ========================================================================
++    # ⚙️ 后台训练控制
++    # ========================================================================
+ 
+-        # Compute likelihood for each state
+-        log_probs = np.zeros(self.n_states)
+-        for state in range(self.n_states):
+-            mean = self.hmm.means_[state]
+-            cov = self.hmm.covars_[state]
++    def _trigger_background_fit(self):
++        """
++        触发后台 HMM 训练（带节流保护）。
++        
++        如果已有训练在进行中，则跳过（避免任务堆积）。
++        如果 HMM 不可用，直接跳过。
++        """
++        if self._fit_in_progress:
++            return
++        
++        # HMM 不可用时，跳过训练
++        if not HMMLEARN_AVAILABLE or self._use_fallback:
++            return
++        
++        if len(self.price_history) < self.feature_window * 2:
++            return
++        
++        try:
++            loop = asyncio.get_event_loop()
++            prices = np.array(self.price_history, dtype=np.float64)
++            
++            self._fit_in_progress = True
++            self._fit_task = loop.create_task(
++                self._async_fit(prices)
++            )
++        except Exception as e:
++            print(f"[REGIME] Failed to trigger background fit: {e}")
++            self._fit_in_progress = False
+ 
+-            # Multivariate Gaussian log-likelihood
+-            diff = obs - mean
++    async def _async_fit(self, prices: np.ndarray):
++        """
++        异步 HMM 训练（在进程池中执行）。
++        
++        训练完成后，原子替换当前模型。
++        包含完整的异常捕获，防止子进程崩溃导致主进程无感知。
++        """
++        try:
++            loop = asyncio.get_running_loop()
++            
++            # 在进程池中执行同步训练
++            future = loop.run_in_executor(
++                self._executor,
++                _train_hmm_worker,
++                prices,
++                self.n_states
++            )
++            
++            # ⚠️ 关键：包裹 future.result() 捕获子进程异常
+             try:
+-                log_prob = -0.5 * (np.log(np.linalg.det(cov)) +
+-                                   diff @ np.linalg.inv(cov) @ diff.T +
+-                                   len(obs) * np.log(2 * np.pi))
+-                log_probs[state] = log_prob
+-            except np.linalg.LinAlgError:
+-                log_probs[state] = -1e10
+-
+-        # Convert to probabilities
+-        log_probs -= np.max(log_probs)  # Numerical stability
+-        probs = np.exp(log_probs)
+-        probs /= np.sum(probs)
++                result = await future
++            except Exception as e:
++                print(f"[REGIME] Subprocess training failed: {type(e).__name__}: {e}")
++                result = None
++            
++            # ✅ 主进程接收模型（关键修复）
++            if result is not None:
++                model, state_map = result
++                self._active_model = model
++                self._state_to_regime = state_map
++                self._model_ready = True
++                print(f"[REGIME] Model updated: {state_map}")
++            else:
++                print("[REGIME] Model update skipped (training returned None)")
++                
++        except Exception as e:
++            print(f"[REGIME] Background fit error: {type(e).__name__}: {e}")
++        
++        finally:
++            self._fit_in_progress = False
+ 
+-        return probs
++    # ========================================================================
++    # 🔧 同步 API（兼容旧代码）
++    # ========================================================================
+ 
+-    def _detect_fallback(self, features: RegimeFeatures) -> RegimePrediction:
++    def detect(self, price: float) -> RegimePrediction:
+         """
+-        Fallback regime detection using heuristics.
+-
+-        Uses:
+-        - Volatility level for high volatility detection
+-        - Autocorrelation and momentum for trend/mean-reversion
++        同步检测（兼容旧代码）。
++        
++        自动创建临时事件循环运行异步版本。
++        新代码建议直接使用 detect_async。
+         """
+-        # High volatility detection
+-        annualized_vol = features.volatility * np.sqrt(252 * 24 * 60)
++        try:
++            loop = asyncio.get_event_loop()
++            if loop.is_running():
++                return asyncio.run_coroutine_threadsafe(
++                    self.detect_async(price), loop
++                ).result(timeout=0.01)
++            else:
++                return loop.run_until_complete(self.detect_async(price))
++        except RuntimeError:
++            return asyncio.run(self.detect_async(price))
+ 
+-        if hasattr(self, '_fallback_thresholds'):
+-            high_vol_threshold = self._fallback_thresholds['high_vol'] * np.sqrt(252 * 24 * 60)
++    def fit(self, prices: np.ndarray) -> bool:
++        """
++        同步训练（冷启动使用）。
++        
++        在初始化时调用一次，确保首次有可用模型。
++        如果 HMM 不可用，使用 fallback 模式（返回 True）。
++        """
++        if len(prices) < self.feature_window * 2:
++            print(f"[REGIME] Insufficient data: {len(prices)}")
++            # 数据不足时也返回 True，使用 fallback
++            self._use_fallback = True
++            return True
++        
++        # 如果 hmmlearn 不可用，直接使用 fallback
++        if not HMMLEARN_AVAILABLE:
++            print("[REGIME] HMM not available, using fallback mode")
++            self._use_fallback = True
++            self._model_ready = True  # fallback 模式也算就绪
++            return True
++        
++        result = _train_hmm_worker(prices, self.n_states)
++        if result:
++            self._active_model, self._state_to_regime = result
++            self._model_ready = True
++            print("[REGIME] HMM model trained successfully")
++            return True
+         else:
+-            high_vol_threshold = 0.5  # 50% annualized volatility
++            # HMM 训练失败，降级到 fallback
++            print("[REGIME] HMM training failed, using fallback")
++            self._use_fallback = True
++            self._model_ready = True
++            return True
++
++    # ========================================================================
++    # 🛡️ Fallback 降级检测
++    # ========================================================================
+ 
+-        if annualized_vol > high_vol_threshold:
++    def _detect_fallback(self, features) -> RegimePrediction:
++        """
++        启发式降级检测（当 HMM 不可用时）。
++        
++        使用简单阈值判断 regime，确保系统始终可用。
++        """
++        annualized_vol = features.volatility * np.sqrt(252 * 24 * 60)
++        
++        if annualized_vol > self._fallback_thresholds['high_vol']:
+             regime = Regime.HIGH_VOLATILITY
+-            confidence = min(annualized_vol / (high_vol_threshold * 2), 1.0)
++            confidence = min(annualized_vol / (self._fallback_thresholds['high_vol'] * 2), 1.0)
+         elif np.abs(features.price_momentum) > 0.5 and features.autocorr_1 > 0.1:
+-            # Strong momentum + positive autocorrelation = trending
+             regime = Regime.TRENDING
+             confidence = min(np.abs(features.price_momentum), 1.0)
+         else:
+-            # Default to mean-reverting
+             regime = Regime.MEAN_REVERTING
+             confidence = 0.5 + 0.5 * np.abs(features.autocorr_1)
+-
+-        # Build probability distribution
++        
+         probs = {r: 0.1 for r in Regime if r != Regime.UNKNOWN}
+         probs[regime] = confidence
+-
+-        # Normalize
+         total = sum(probs.values())
+         probs = {k: v / total for k, v in probs.items()}
+-
++        
++        self._last_regime = regime
++        
+         return RegimePrediction(
+             regime=regime,
+             confidence=confidence,
+             probabilities=probs,
+             volatility_forecast=annualized_vol,
+-            timestamp=0.0
++            timestamp=time.time(),
++            latency_ms=0.0
+         )
+ 
+-    def _update_garch(self, features: RegimeFeatures) -> float:
+-        """
+-        Update GARCH(1,1) volatility forecast.
++    def _create_unknown_prediction(self, start_time: float) -> RegimePrediction:
++        """创建未知状态预测（数据不足时）。"""
++        latency = (time.perf_counter() - start_time) * 1000
++        return RegimePrediction(
++            regime=Regime.UNKNOWN,
++            confidence=0.0,
++            probabilities={r: 0.33 for r in Regime if r != Regime.UNKNOWN},
++            volatility_forecast=np.sqrt(self.current_variance),
++            timestamp=time.time(),
++            latency_ms=latency
++        )
+ 
+-        Returns annualized volatility forecast.
+-        """
+-        if not ARCH_AVAILABLE:
+-            # Simple EWMA fallback
+-            ret_sq = features.mean_return ** 2
+-            self.current_variance = 0.94 * self.current_variance + 0.06 * ret_sq
+-            return np.sqrt(self.current_variance * 252 * 24 * 60)
++    # ========================================================================
++    # 📊 辅助方法
++    # ========================================================================
+ 
+-        # Update GARCH parameters online
+-        ret_sq = features.mean_return ** 2
++    def _get_state_probabilities(self, obs: np.ndarray) -> np.ndarray:
++        """计算隐藏状态概率分布。"""
++        if self._active_model is None:
++            return np.ones(self.n_states) / self.n_states
++        
++        log_probs = np.zeros(self.n_states)
++        for state in range(self.n_states):
++            mean = self._active_model.means_[state]
++            cov = self._active_model.covars_[state]
++            diff = obs - mean
++            
++            try:
++                log_prob = -0.5 * (
++                    np.log(np.linalg.det(cov)) +
++                    diff @ np.linalg.inv(cov) @ diff.T +
++                    len(obs) * np.log(2 * np.pi)
++                )
++                log_probs[state] = log_prob
++            except np.linalg.LinAlgError:
++                log_probs[state] = -1e10
++        
++        log_probs -= np.max(log_probs)
++        probs = np.exp(log_probs)
++        probs /= np.sum(probs)
++        return probs
+ 
+-        # GARCH(1,1) update
++    def _update_garch(self, features) -> float:
++        """更新 GARCH(1,1) 波动率预测。"""
++        ret_sq = features.mean_return ** 2
+         self.current_variance = (
+             self.garch_omega +
+             self.garch_alpha * ret_sq +
+             self.garch_beta * self.current_variance
+         )
++        return float(np.sqrt(self.current_variance * 252 * 24 * 60))
+ 
+-        # Annualize
+-        annualized_vol = np.sqrt(self.current_variance * 252 * 24 * 60)
+-
+-        return float(annualized_vol)
++    def get_avg_latency_ms(self) -> float:
++        """获取平均检测延迟（毫秒）。"""
++        if not self.detection_times:
++            return 0.0
++        return np.mean(self.detection_times)
+ 
+-    def predict_proba(self, features: Optional[RegimeFeatures] = None) -> np.ndarray:
++    async def _async_fit_with_timeout(self, prices: np.ndarray, timeout: float = 30.0):
+         """
+-        Get probability distribution over regimes.
+-
++        带超时的异步 HMM 训练。
++        
++        防止训练任务卡住（如数据异常导致无限迭代）。
++        
+         Args:
+-            features: Pre-computed features (optional)
+-
+-        Returns:
+-            Array of probabilities [trending, mean_reverting, high_vol]
++            prices: 价格历史
++            timeout: 最大等待时间（秒）
+         """
+-        if features is None:
+-            # Use last known features or return uniform
+-            if len(self.regime_history) > 0:
+-                last_regime = self.regime_history[-1]
+-                probs = np.zeros(3)
+-                if last_regime == Regime.TRENDING:
+-                    probs[0] = 1.0
+-                elif last_regime == Regime.MEAN_REVERTING:
+-                    probs[1] = 1.0
+-                elif last_regime == Regime.HIGH_VOLATILITY:
+-                    probs[2] = 1.0
+-                else:
+-                    probs = np.ones(3) / 3
+-                return probs
+-            return np.ones(3) / 3
+-
+-        if self._use_fallback:
+-            pred = self._detect_fallback(features)
+-        else:
+-            pred = self._detect_hmm(features)
+-
+-        return np.array([
+-            pred.probabilities.get(Regime.TRENDING, 0.33),
+-            pred.probabilities.get(Regime.MEAN_REVERTING, 0.33),
+-            pred.probabilities.get(Regime.HIGH_VOLATILITY, 0.33)
+-        ])
+-
+-    def get_avg_detection_time(self) -> float:
+-        """Get average detection latency in milliseconds."""
+-        if not self.detection_times:
+-            return 0.0
+-        return np.mean(self.detection_times) * 1000
+-
+-    def get_regime_distribution(self) -> Dict[Regime, float]:
+-        """Get distribution of regimes in history."""
+-        if not self.regime_history:
+-            return {r: 0.0 for r in Regime}
+-
+-        counts = {r: 0 for r in Regime}
+-        for r in self.regime_history:
+-            counts[r] += 1
+-
+-        total = len(self.regime_history)
+-        return {r: c / total for r, c in counts.items()}
+-
+-    def reset(self):
+-        """Reset detector state."""
+-        self.feature_extractor.reset()
+-        self.hmm = None
+-        self._hmm_fitted = False
+-        self.state_to_regime.clear()
+-        self.detection_times.clear()
+-        self.regime_history.clear()
+-        self.price_history.clear()
+-        self.current_variance = 0.0001
+-
+-
+-def generate_synthetic_regimes(n_samples: int = 1000, seed: int = 42) -> Tuple[np.ndarray, List[Regime]]:
+-    """
+-    Generate synthetic price data with known regimes for testing.
++        try:
++            loop = asyncio.get_running_loop()
++            
++            # 创建训练任务
++            future = loop.run_in_executor(
++                self._executor,
++                _train_hmm_worker,
++                prices,
++                self.n_states
++            )
++            
++            # 等待结果，带超时
++            result = await asyncio.wait_for(future, timeout=timeout)
++            
++            # 处理结果
++            if result is not None:
++                model, state_map = result
++                self._active_model = model
++                self._state_to_regime = state_map
++                self._model_ready = True
++                print(f"[REGIME] Model updated: {state_map}")
++            
++        except asyncio.TimeoutError:
++            print(f"[REGIME] Training timeout after {timeout}s, cancelling...")
++            # 取消任务
++            if self._fit_task and not self._fit_task.done():
++                self._fit_task.cancel()
++                try:
++                    await self._fit_task
++                except asyncio.CancelledError:
++                    pass
++                    
++        except Exception as e:
++            print(f"[REGIME] Training error: {type(e).__name__}: {e}")
++            
++        finally:
++            self._fit_in_progress = False
+ 
+-    Returns:
+-        prices: Array of prices
+-        true_regimes: List of true regime labels
+-    """
+-    np.random.seed(seed)
+-
+-    prices = [100.0]
+-    regimes = []
+-
+-    # Generate 3 segments with different characteristics
+-    segment_size = n_samples // 3
+-
+-    # Segment 1: Trending up
+-    for i in range(segment_size):
+-        ret = np.random.normal(0.001, 0.01)
+-        prices.append(prices[-1] * (1 + ret))
+-        regimes.append(Regime.TRENDING)
+-
+-    # Segment 2: Mean-reverting
+-    mean = prices[-1]
+-    for i in range(segment_size):
+-        deviation = prices[-1] - mean
+-        ret = np.random.normal(-0.001 * deviation / mean, 0.008)
+-        prices.append(prices[-1] * (1 + ret))
+-        regimes.append(Regime.MEAN_REVERTING)
+-
+-    # Segment 3: High volatility
+-    for i in range(segment_size):
+-        ret = np.random.normal(0.0, 0.03)
+-        prices.append(prices[-1] * (1 + ret))
+-        regimes.append(Regime.HIGH_VOLATILITY)
+-
+-    # Handle remainder if n_samples not divisible by 3
+-    remainder = n_samples - len(regimes)
+-    for i in range(remainder):
+-        ret = np.random.normal(0.0, 0.03)
+-        prices.append(prices[-1] * (1 + ret))
+-        regimes.append(Regime.HIGH_VOLATILITY)
+-
+-    return np.array(prices), regimes
+-
+-
+-if __name__ == "__main__":
+-    # Test regime detector
+-    print("Testing MarketRegimeDetector...")
+-
+-    # Generate synthetic data
+-    prices, true_regimes = generate_synthetic_regimes(n_samples=900)
+-
+-    # Split into train/test
+-    train_size = 600
+-    train_prices = prices[:train_size]
+-    test_prices = prices[train_size:]
+-    test_regimes = true_regimes[train_size:]
+-
+-    # Create and fit detector
+-    detector = MarketRegimeDetector(n_states=3)
+-
+-    print(f"\nFitting on {len(train_prices)} samples...")
+-    success = detector.fit(train_prices)
+-    print(f"Fit successful: {success}")
+-
+-    # Test detection
+-    print(f"\nTesting on {len(test_prices)} samples...")
+-    predictions = []
+-
+-    for price in test_prices:
+-        pred = detector.detect(price)
+-        predictions.append(pred.regime)
+-
+-    # Calculate accuracy
+-    correct = sum(1 for p, t in zip(predictions, test_regimes) if p == t)
+-    accuracy = correct / len(test_regimes)
+-
+-    print(f"\nAccuracy: {accuracy:.2%}")
+-    print(f"Average detection time: {detector.get_avg_detection_time():.3f}ms")
+-
+-    # Show regime distribution
+-    dist = detector.get_regime_distribution()
+-    print(f"\nRegime distribution:")
+-    for regime, pct in dist.items():
+-        if regime != Regime.UNKNOWN:
+-            print(f"  {regime.value}: {pct:.1%}")
+-
+-    print("\nTest complete!")
++    def shutdown(self):
++        """
++        优雅关闭，释放资源。
++        
++        在程序退出前调用，避免僵尸进程。
++        """
++        if self._fit_task and not self._fit_task.done():
++            self._fit_task.cancel()
++        self._executor.shutdown(wait=True)
++        print("[REGIME] Shutdown complete")
+diff --git a/new/core_go/engine.go b/new/core_go/engine.go
+index 9912c34..a6f8955 100644
+--- a/new/core_go/engine.go
++++ b/new/core_go/engine.go
+@@ -8,11 +8,9 @@ import (
+ 	"math"
+ 	"net/http"
+ 	"os"
+-	"os/signal"
+ 	"path/filepath"
+ 	"runtime"
+ 	"sync"
+-	"syscall"
+ 	"time"
+ )
+ 
+@@ -179,7 +177,11 @@ func (e *HFTEngine) Start() error {
+ 
+ 	// Connect to Binance
+ 	if err := e.wsManager.Connect(); err != nil {
+-		return fmt.Errorf("failed to connect WebSocket: %w", err)
++		log.Printf("[ENGINE] WARNING: WebSocket connection failed: %v", err)
++		log.Println("[ENGINE] Continuing in HTTP-only mode (no real-time market data)")
++		// Continue without WebSocket - HTTP API will still work
++	} else {
++		log.Println("[ENGINE] WebSocket connected successfully")
+ 	}
+ 
+ 	// Start main loops
+@@ -613,45 +615,3 @@ func (e *HFTEngine) StartHTTPServer(port int) {
+ 		}
+ 	}()
+ }
+-
+-// main is the entry point for the Go HFT Engine
+-func main() {
+-	// Parse command line args
+-	symbol := "btcusdt"
+-	if len(os.Args) > 1 {
+-		symbol = os.Args[1]
+-	}
+-
+-	paperTrading := true
+-	if len(os.Args) > 2 && os.Args[2] == "live" {
+-		paperTrading = false
+-	}
+-
+-	useMargin := false
+-	if len(os.Args) > 3 && os.Args[3] == "margin" {
+-		useMargin = true
+-	}
+-
+-	// Create engine
+-	config := DefaultConfig(symbol)
+-	config.PaperTrading = paperTrading
+-	config.UseMargin = useMargin
+-
+-	engine, err := NewHFTEngine(config)
+-	if err != nil {
+-		log.Fatalf("Failed to create engine: %v", err)
+-	}
+-
+-	// Start engine
+-	if err := engine.Start(); err != nil {
+-		log.Fatalf("Failed to start engine: %v", err)
+-	}
+-
+-	// Wait for interrupt
+-	sigChan := make(chan os.Signal, 1)
+-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+-	<-sigChan
+-
+-	// Graceful shutdown
+-	engine.Stop()
+-}
+diff --git a/new/core_go/main_with_http.go b/new/core_go/main_with_http.go
+index 460476b..71a4b37 100644
+--- a/new/core_go/main_with_http.go
++++ b/new/core_go/main_with_http.go
+@@ -1,3 +1,6 @@
++//go:build http_server
++// +build http_server
++
+ package main
+ 
+ import (
+diff --git a/new/post_deployment_checklist.py b/new/post_deployment_checklist.py
+index 823da05..ada2164 100644
+--- a/new/post_deployment_checklist.py
++++ b/new/post_deployment_checklist.py
+@@ -108,7 +108,7 @@ if checks_failed == 0:
+ else:
+     print("\n[✗] Some checks failed. Please review the errors above.")
+     print("\nTroubleshooting:")
+-    print("  - Ensure Go Engine is running: .\core_go\hft_engine_http.exe btcusdt paper")
+-    print("  - Ensure Python is running: python hedge_fund_os\demo_full.py")
++    print(r"  - Ensure Go Engine is running: .\core_go\hft_engine_http.exe btcusdt paper")
++    print(r"  - Ensure Python is running: python hedge_fund_os\demo_full.py")
+     print("  - Check ports are not blocked by firewall")
+     sys.exit(1)

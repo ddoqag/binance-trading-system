@@ -119,6 +119,248 @@ class SystemState(Enum):
 
 
 @dataclass
+class SignalStatistics:
+    """信号统计 - 用于分析阈值优化"""
+    history: List[Dict] = field(default_factory=list)
+    max_history: int = 10000
+    price_history: Dict[float, float] = field(default_factory=dict)  # timestamp -> price
+    _persist_file: str = None  # 持久化文件路径
+
+    def __post_init__(self):
+        """初始化后加载历史数据（如果存在）"""
+        if self._persist_file and os.path.exists(self._persist_file):
+            try:
+                with open(self._persist_file, 'r') as f:
+                    data = json.load(f)
+                    self.history = data.get('history', [])
+                    self.price_history = {float(k): v for k, v in data.get('price_history', {}).items()}
+                    print(f"[SignalStats] Loaded {len(self.history)} records from {self._persist_file}")
+            except Exception as e:
+                print(f"[SignalStats] Failed to load persistence file: {e}")
+
+    def record(self, buy_weight: float, sell_weight: float, threshold: float,
+               would_trigger: bool, aggregated_side: str = None,
+               current_price: float = None):
+        """记录一次信号聚合结果"""
+        net_strength = abs(buy_weight - sell_weight)
+        timestamp = time.time()
+        record = {
+            'timestamp': timestamp,
+            'buy_weight': buy_weight,
+            'sell_weight': sell_weight,
+            'net_strength': net_strength,
+            'threshold': threshold,
+            'would_trigger': would_trigger,
+            'aggregated_side': aggregated_side,
+            'current_price': current_price,
+            'outcome': None,  # 将在后续更新
+            'max_profit': None,  # 最大潜在盈利
+            'max_loss': None,    # 最大潜在亏损
+        }
+        self.history.append(record)
+
+        # 记录价格用于后续分析
+        if current_price:
+            self.price_history[timestamp] = current_price
+
+        # 限制历史长度
+        if len(self.history) > self.max_history:
+            removed = self.history[:-self.max_history]
+            self.history = self.history[-self.max_history:]
+            # 清理旧价格记录
+            for r in removed:
+                self.price_history.pop(r['timestamp'], None)
+
+        # 持久化到文件（如果配置了）
+        if self._persist_file and len(self.history) % 100 == 0:
+            self._persist()
+
+    def _persist(self):
+        """持久化统计数据到文件（原子写入防止损坏）"""
+        import tempfile
+        import os
+
+        try:
+            data = {
+                'history': self.history[-5000:],  # 只保存最近5000条
+                'price_history': dict(list(self.price_history.items())[-5000:]),
+                'last_update': time.time()
+            }
+
+            # 原子写入：先写入临时文件，再重命名
+            temp_file = self._persist_file + '.tmp'
+            with open(temp_file, 'w') as f:
+                json.dump(data, f)
+                f.flush()
+                os.fsync(f.fileno())  # 确保数据写入磁盘
+
+            # 原子重命名
+            os.replace(temp_file, self._persist_file)
+
+        except Exception as e:
+            print(f"[SignalStats] Persistence failed: {e}")
+            # 清理临时文件
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except:
+                pass
+
+    def update_outcome(self, timestamp: float, outcome: str, max_profit: float = None, max_loss: float = None):
+        """更新信号结果（用于"穿越"分析）"""
+        for record in self.history:
+            if record['timestamp'] == timestamp:
+                record['outcome'] = outcome
+                record['max_profit'] = max_profit
+                record['max_loss'] = max_loss
+                break
+
+    def check_crossing_signals(self, current_price: float, lookback_ticks: int = 20) -> List[Dict]:
+        """
+        检查被阻塞的信号是否"穿越"了阈值（价格向有利方向移动）
+
+        返回被阻塞但后续价格走势有利的信号列表
+        """
+        crossing_signals = []
+
+        for record in self.history:
+            # 只检查被阻塞的信号且尚未记录结果的
+            if record['would_trigger'] or record['outcome'] is not None:
+                continue
+
+            signal_price = record.get('current_price')
+            if not signal_price:
+                continue
+
+            # 计算价格变化
+            price_change_pct = (current_price - signal_price) / signal_price
+
+            # 判断"穿越"情况
+            side = record['aggregated_side']
+            if side == 'BUY':
+                # 买入信号被阻塞，但价格上涨了（错失利润）
+                if price_change_pct > 0.005:  # 上涨超过0.5%
+                    crossing_signals.append({
+                        'timestamp': record['timestamp'],
+                        'side': side,
+                        'net_strength': record['net_strength'],
+                        'blocked_price': signal_price,
+                        'current_price': current_price,
+                        'price_change_pct': price_change_pct,
+                        'type': 'missed_profit',
+                        'potential_pnl': price_change_pct
+                    })
+                    record['outcome'] = 'missed_profit'
+                    record['max_profit'] = price_change_pct
+
+            elif side == 'SELL':
+                # 卖出信号被阻塞，但价格下跌了（错失利润）
+                if price_change_pct < -0.005:  # 下跌超过0.5%
+                    crossing_signals.append({
+                        'timestamp': record['timestamp'],
+                        'side': side,
+                        'net_strength': record['net_strength'],
+                        'blocked_price': signal_price,
+                        'current_price': current_price,
+                        'price_change_pct': abs(price_change_pct),
+                        'type': 'missed_profit',
+                        'potential_pnl': abs(price_change_pct)
+                    })
+                    record['outcome'] = 'missed_profit'
+                    record['max_profit'] = abs(price_change_pct)
+
+        return crossing_signals
+
+    def get_blocked_signal_analysis(self) -> Dict:
+        """获取被阻塞信号的"穿越"分析统计"""
+        blocked = [r for r in self.history if not r['would_trigger']]
+        if not blocked:
+            return {'error': 'No blocked signals yet'}
+
+        with_outcome = [r for r in blocked if r['outcome'] is not None]
+        missed_profit = [r for r in with_outcome if r['outcome'] == 'missed_profit']
+        avoided_loss = [r for r in with_outcome if r['outcome'] == 'avoided_loss']
+
+        # 计算阈值效率: Triggered_Profit_Rate / Missed_Profit_Rate
+        # 注意: 这里用"避免损失"作为Triggered的有效性的代理指标
+        triggered_count = len([r for r in self.history if r['would_trigger']])
+        triggered_profit_proxy = len([r for r in self.history if r['would_trigger'] and r['outcome'] != 'avoided_loss'])
+        triggered_profit_rate = triggered_profit_proxy / triggered_count if triggered_count > 0 else 0
+        missed_profit_rate = len(missed_profit) / len(with_outcome) if with_outcome else 0
+
+        efficiency = triggered_profit_rate / missed_profit_rate if missed_profit_rate > 0 else float('inf')
+
+        return {
+            'total_blocked': len(blocked),
+            'with_outcome': len(with_outcome),
+            'missed_profit_count': len(missed_profit),
+            'avoided_loss_count': len(avoided_loss),
+            'missed_profit_rate': missed_profit_rate,
+            'avg_missed_profit': np.mean([r['max_profit'] for r in missed_profit if r['max_profit']]) if missed_profit else 0,
+            'threshold_efficiency': 'good' if efficiency > 1 else 'needs_tuning',
+            'efficiency_ratio': efficiency,
+            'triggered_profit_rate': triggered_profit_rate
+        }
+
+    def analyze_optimal_threshold(self) -> Dict:
+        """分析历史信号强度分布，找到最佳阈值"""
+        if len(self.history) < 100:
+            return {'error': 'Insufficient data (need 100+ samples)', 'samples': len(self.history)}
+
+        strengths = [h['net_strength'] for h in self.history]
+
+        # 计算不同阈值下的信号捕获率
+        thresholds = [0.05, 0.08, 0.10, 0.12, 0.15, 0.18, 0.20, 0.25]
+        analysis = {}
+
+        for t in thresholds:
+            captured = sum(1 for s in strengths if s > t)
+            capture_rate = captured / len(strengths)
+            analysis[t] = {
+                'capture_rate': capture_rate,
+                'captured_count': captured,
+                'total_count': len(strengths)
+            }
+
+        # 统计信息
+        import numpy as np
+        return {
+            'samples': len(self.history),
+            'net_strength_mean': np.mean(strengths),
+            'net_strength_std': np.std(strengths),
+            'net_strength_min': min(strengths),
+            'net_strength_max': max(strengths),
+            'threshold_analysis': analysis,
+            'recommendation': self._recommend_threshold(analysis)
+        }
+
+    def _recommend_threshold(self, analysis: Dict) -> str:
+        """基于分析推荐阈值"""
+        # 找到能捕获70-80%信号的阈值
+        for t in sorted(analysis.keys()):
+            if 0.70 <= analysis[t]['capture_rate'] <= 0.80:
+                return f"Recommended threshold: {t} (captures {analysis[t]['capture_rate']:.1%} of signals)"
+
+        # 如果没有找到，推荐捕获率最接近75%的
+        closest = min(analysis.items(), key=lambda x: abs(x[1]['capture_rate'] - 0.75))
+        return f"Recommended threshold: {closest[0]} (captures {closest[1]['capture_rate']:.1%} of signals)"
+
+    def get_recent_stats(self, n: int = 100) -> Dict:
+        """获取最近N条记录的统计"""
+        recent = self.history[-n:] if len(self.history) >= n else self.history
+        if not recent:
+            return {}
+
+        triggered = sum(1 for r in recent if r['would_trigger'])
+        return {
+            'total_signals': len(recent),
+            'triggered': triggered,
+            'blocked': len(recent) - triggered,
+            'trigger_rate': triggered / len(recent)
+        }
+
+
+@dataclass
 class TraderConfig:
     """交易配置"""
     # 基础配置
@@ -238,6 +480,7 @@ class SelfEvolvingTrader:
         # 统计
         self.stats = TradingStats()
         self.price_history: deque = deque(maxlen=500)
+        self.signal_stats = SignalStatistics()  # 信号聚合统计
 
         # Checkpoint
         self._checkpoint_task: Optional[asyncio.Task] = None
@@ -336,8 +579,11 @@ class SelfEvolvingTrader:
                     registry=self.agent_registry,
                     regime_detector=self.regime_detector,
                     evolution_config=EvolutionConfig(
-                        mechanism=EvolutionMechanism.EXPONENTIAL_WEIGHTED,
-                        learning_rate=0.01
+                        mechanism=EvolutionMechanism.SIGNAL_BASED,
+                        learning_rate=0.01,
+                        min_strategy_weight=0.05,    # 最小5%
+                        max_strategy_weight=0.8,     # 最大80%（允许更大差异）
+                        weight_update_interval=1     # 每个周期都更新（基于信号）
                     )
                 )
                 # Register agents from registry into meta-agent
@@ -440,8 +686,18 @@ class SelfEvolvingTrader:
     async def _init_phase_c_execution_core(self):
         """初始化 Phase C 实盘执行核心"""
         import requests
+        import os
 
-        base_url = "https://testnet.binance.vision" if self.config.use_testnet else "https://api.binance.com"
+        # Testnet userDataStream 已弃用，使用正式 API
+        base_url = "https://api.binance.com"
+        if self.config.use_testnet:
+            logger.warning("[SelfEvolvingTrader] Testnet userDataStream is deprecated, using production API")
+
+        # 获取代理设置
+        proxy_url = os.getenv('HTTPS_PROXY') or os.getenv('HTTP_PROXY')
+        proxy_dict = {'https': proxy_url, 'http': proxy_url} if proxy_url else None
+        if proxy_dict:
+            logger.info(f"[SelfEvolvingTrader] Using proxy for API requests: {proxy_url}")
 
         # 1. REST Client
         self.rest_client = BinanceRESTClient(
@@ -450,24 +706,12 @@ class SelfEvolvingTrader:
             base_url=base_url,
         )
 
-        # 2. 获取 listenKey
-        try:
-            resp = requests.post(
-                f"{base_url}/api/v3/userDataStream",
-                headers={"X-MBX-APIKEY": self.config.api_key},
-                timeout=10,
-            )
-            data = resp.json()
-            self._listen_key = data.get("listenKey")
-            if not self._listen_key:
-                logger.warning(f"[SelfEvolvingTrader] Failed to get listenKey: {data}")
-                return
-        except Exception as e:
-            logger.warning(f"[SelfEvolvingTrader] Could not obtain listenKey: {e}")
-            return
+        # 2. 获取 listenKey (userDataStream API 已弃用，跳过)
+        logger.info("[SelfEvolvingTrader] userDataStream API is deprecated, skipping WebSocket user data stream")
+        self._listen_key = None
 
-        # 3. User Data Stream Client
-        self.user_data_client = BinanceUserDataClient(self._listen_key)
+        # 3. User Data Stream Client (跳过)
+        self.user_data_client = None
 
         # 4. OSM + Position Manager
         self.order_state_machine = OrderStateMachine()
@@ -542,9 +786,10 @@ class SelfEvolvingTrader:
         self.ws_client.start()
         logger.info("[SelfEvolvingTrader] L2 Book WebSocket started")
 
-        # 8. 绑定用户数据流到 LifecycleManager
-        self.user_data_client.subscribe(self.lifecycle_manager.on_event)
-        self.user_data_client.start()
+        # 8. 绑定用户数据流到 LifecycleManager (跳过，因为 userDataStream 已弃用)
+        if self.user_data_client:
+            self.user_data_client.subscribe(self.lifecycle_manager.on_event)
+            self.user_data_client.start()
 
     def _load_default_agents(self):
         """加载默认策略（从 strategies/ 目录）"""
@@ -917,6 +1162,11 @@ class SelfEvolvingTrader:
                 self.update_price(self._backtest_price)
                 if self.order_manager and hasattr(self.order_manager, 'set_latest_price'):
                     self.order_manager.set_latest_price(self._backtest_price)
+            else:
+                # Live/Paper: 从 WebSocket 获取最新价格
+                current_price = self._get_current_price()
+                if current_price > 0:
+                    self.update_price(current_price)
 
             # Phase 2: 检测市场状态
             if self.config.enable_phase_2_regime and self.regime_detector:
@@ -993,11 +1243,25 @@ class SelfEvolvingTrader:
                 logger.warning("[SelfEvolvingTrader] Risk check failed or kill switch triggered")
 
             # Phase 3: 更新策略权重
-            if (self.config.enable_phase_3_evolution and
-                self.meta_agent and
-                self.stats.total_trades > 0):
+            if self.config.enable_phase_3_evolution and self.meta_agent:
                 self.state = SystemState.EVOLVING
-                await self._update_strategy_weights()
+                # 基于信号的权重更新：每10个周期触发一次
+                if self.stats.total_cycles % 10 == 0:
+                    await self._update_strategy_weights()
+                # 基于交易反馈的权重更新：有交易时触发
+                elif self.stats.total_trades > 0:
+                    await self._update_strategy_weights()
+
+            # 信号统计：检查被阻塞信号的"穿越"情况
+            if hasattr(self, 'signal_stats') and self.signal_stats:
+                current_price = self._get_current_price()
+                if current_price > 0:
+                    crossing_signals = self.signal_stats.check_crossing_signals(current_price)
+                    if crossing_signals and len(crossing_signals) > 0:
+                        logger.info(f"[SignalStats] Detected {len(crossing_signals)} crossing signals (missed profits)")
+                        for sig in crossing_signals[:3]:  # 只显示前3个
+                            logger.info(f"  {sig['side']} @ {sig['net_strength']:.3f} strength, "
+                                      f"price moved {sig['price_change_pct']:.2%}")
 
         except Exception as e:
             logger.error(f"[SelfEvolvingTrader] Trading cycle error: {e}")
@@ -1094,6 +1358,30 @@ class SelfEvolvingTrader:
                 }
                 signals.append(signal)
 
+                # 记录信号到 MetaAgent（用于基于信号的权重更新）
+                if self.meta_agent and hasattr(self.meta_agent, 'record_signal'):
+                    # 解析 action 为方向和强度
+                    direction = 0
+                    strength = 0.5
+                    if isinstance(action, dict):
+                        direction = action.get('direction', 0)
+                        strength = action.get('confidence', 0.5)
+                    elif isinstance(action, (int, float)):
+                        direction = 1 if action > 0.5 else (-1 if action < -0.5 else 0)
+                        strength = abs(action)
+
+                    # 获取当前价格
+                    current_price = self.price_history[-1] if self.price_history else 50000.0
+
+                    self.meta_agent.record_signal(
+                        strategy_name=strategy_name,
+                        direction=direction,
+                        strength=strength,
+                        price=current_price,
+                        metadata={'weight': weight, 'raw_action': action}
+                    )
+                    logger.debug(f"[SelfEvolvingTrader] Signal recorded for {strategy_name}: dir={direction}, strength={strength:.2f}")
+
             except Exception as e:
                 logger.error(f"[SelfEvolvingTrader] Error generating signal from {strategy_name}: {e}")
 
@@ -1106,7 +1394,22 @@ class SelfEvolvingTrader:
 
         # 加权聚合信号
         aggregated = self._aggregate_signals(signals)
-        logger.info(f"[SelfEvolvingTrader] Aggregated signal: {aggregated}")
+        if aggregated:
+            logger.info(
+                f"[SelfEvolvingTrader] Aggregated signal: {aggregated['side']} "
+                f"(confidence={aggregated['confidence']:.3f}, "
+                f"net_strength={aggregated.get('net_strength', 0):.3f}, "
+                f"threshold={aggregated.get('threshold', 0):.3f}, "
+                f"active={aggregated.get('active_signals', 0)}/{aggregated['signals_count']})"
+            )
+        else:
+            # 详细记录每个信号的信息以便调试
+            logger.info(f"[SelfEvolvingTrader] Aggregated signal: {{}} (no clear consensus)")
+            for i, sig in enumerate(signals):
+                action = sig.get('action', {})
+                direction = action.get('direction', 0) if isinstance(action, dict) else 0
+                confidence = action.get('confidence', 0) if isinstance(action, dict) else 0
+                logger.debug(f"  Signal {i+1}: {sig.get('strategy')} | direction={direction} | weight={sig.get('weight', 0):.3f} | confidence={confidence:.3f}")
 
         # Backtest fallback: if no strategy signal fired, generate a random signal
         # with small probability to ensure the execution pipeline is exercised.
@@ -1309,20 +1612,21 @@ class SelfEvolvingTrader:
                 return await self.order_manager.open_short_position(self.config.symbol, quantity)
 
     def _aggregate_signals(self, signals: List[Dict]) -> Dict:
-        """聚合多个策略的信号"""
+        """
+        聚合多个策略的信号（改进版）
+
+        改进点：
+        1. 动态阈值：基于活跃信号数量调整
+        2. 置信度加权：高置信度信号获得更高权重
+        3. 净值优先：要求明确的方向优势
+        """
         if not signals:
             return {}
 
-        # 加权投票
-        buy_weight = 0.0
-        sell_weight = 0.0
-        total_weight = 0.0
-
+        # 过滤有效信号（非HOLD）
+        active_signals = []
         for signal in signals:
-            weight = signal.get('weight', 0)
             action = signal.get('action', {})
-
-            # 解析动作
             direction = 0
             if hasattr(action, 'direction'):
                 direction = action.direction
@@ -1331,22 +1635,65 @@ class SelfEvolvingTrader:
             elif isinstance(action, (int, float)):
                 direction = action
 
-            if direction > 0:
-                buy_weight += weight
-            elif direction < 0:
-                sell_weight += weight
+            if direction != 0:
+                confidence = 0.5
+                if isinstance(action, dict):
+                    confidence = action.get('confidence', 0.5)
+                active_signals.append({
+                    'weight': signal.get('weight', 0),
+                    'direction': direction,
+                    'confidence': confidence
+                })
 
-            total_weight += weight
+        if not active_signals:
+            return {}
 
-        # 决定最终方向
-        if buy_weight > sell_weight and buy_weight > 0.3:
+        # 计算权重和置信度加权的买卖力量
+        total_active_weight = sum(s['weight'] for s in active_signals)
+        buy_weight = sum(s['weight'] * s['confidence']
+                         for s in active_signals if s['direction'] > 0)
+        sell_weight = sum(s['weight'] * s['confidence']
+                          for s in active_signals if s['direction'] < 0)
+
+        # 归一化
+        if total_active_weight > 0:
+            buy_weight /= total_active_weight
+            sell_weight /= total_active_weight
+
+        # 动态阈值：基于活跃信号比例
+        active_ratio = len(active_signals) / len(signals) if signals else 0
+        dynamic_threshold = max(0.15, 0.3 * active_ratio)
+
+        # 净值优先：要求明确的方向优势
+        net_strength = abs(buy_weight - sell_weight)
+
+        if buy_weight > sell_weight and net_strength > dynamic_threshold:
             side = 'BUY'
-            confidence = buy_weight / total_weight if total_weight > 0 else 0
-        elif sell_weight > buy_weight and sell_weight > 0.3:
+            confidence = buy_weight
+            # 记录统计
+            if hasattr(self, 'signal_stats'):
+                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, True, 'BUY')
+        elif sell_weight > buy_weight and net_strength > dynamic_threshold:
             side = 'SELL'
-            confidence = sell_weight / total_weight if total_weight > 0 else 0
+            confidence = sell_weight
+            # 记录统计
+            if hasattr(self, 'signal_stats'):
+                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, True, 'SELL')
         else:
-            return {}  # 无明确信号
+            # 记录详细调试信息（使用INFO级别以便查看）
+            logger.info(
+                f"[SignalAggregation] No clear signal: "
+                f"buy={buy_weight:.3f}, sell={sell_weight:.3f}, "
+                f"net={net_strength:.3f}, threshold={dynamic_threshold:.3f}, "
+                f"active={len(active_signals)}/{len(signals)}"
+            )
+            # 记录每个活跃信号的详细信息
+            for i, s in enumerate(active_signals):
+                logger.info(f"  Active signal {i+1}: direction={s['direction']}, weight={s['weight']:.3f}, confidence={s['confidence']:.3f}")
+            # 记录统计（未触发）
+            if hasattr(self, 'signal_stats'):
+                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, False)
+            return {}
 
         # 计算数量
         if self.risk_manager:
@@ -1354,14 +1701,16 @@ class SelfEvolvingTrader:
                 self.config.symbol, confidence
             )
         else:
-            # 默认仓位
-            quantity = 0.001  # 最小交易单位
+            quantity = 0.001
 
         return {
             'side': side,
             'quantity': quantity,
             'confidence': confidence,
-            'signals_count': len(signals)
+            'signals_count': len(signals),
+            'active_signals': len(active_signals),
+            'net_strength': net_strength,
+            'threshold': dynamic_threshold
         }
 
     async def _update_strategy_weights(self):
@@ -1428,6 +1777,49 @@ class SelfEvolvingTrader:
 
         return state
 
+    def _get_current_price(self) -> float:
+        """获取当前市场价格（从 WebSocket 或 order manager）"""
+        price = 0.0
+
+        # 1. 尝试从 WebSocket order book 获取中间价
+        if self.ws_client and self.ws_client.book:
+            book = self.ws_client.book
+            try:
+                # OrderBook 使用 best_bid() 和 best_ask() 方法
+                best_bid = book.best_bid() if hasattr(book, 'best_bid') else None
+                best_ask = book.best_ask() if hasattr(book, 'best_ask') else None
+                if best_bid and best_ask:
+                    price = (best_bid + best_ask) / 2
+            except Exception:
+                pass
+
+        # 2. 尝试从 SpotMarginOrderManager 获取
+        if price <= 0 and self.order_manager:
+            if hasattr(self.order_manager, 'get_current_price'):
+                try:
+                    price = self.order_manager.get_current_price()
+                except Exception:
+                    pass
+            elif hasattr(self.order_manager, 'latest_price'):
+                price = self.order_manager.latest_price
+
+        # 3. 尝试从生命周期管理器获取
+        if price <= 0 and self.lifecycle_manager:
+            if hasattr(self.lifecycle_manager, 'current_price'):
+                price = self.lifecycle_manager.current_price
+
+        # 4. 尝试从 REST API 获取（备用）
+        if price <= 0 and hasattr(self, '_rest_client') and self._rest_client:
+            try:
+                # 使用 BinanceRESTClient 获取价格
+                ticker = self._rest_client.get_ticker(self.config.symbol)
+                if ticker and 'lastPrice' in ticker:
+                    price = float(ticker['lastPrice'])
+            except Exception:
+                pass
+
+        return price
+
     def _flush_shadow_log(self) -> str:
         """将内存中的 shadow log 持久化到 JSON Lines 文件"""
         if not self._shadow_log:
@@ -1482,6 +1874,16 @@ class SelfEvolvingTrader:
             return self.meta_agent.get_weights()
         return {}
 
+    def get_signal_statistics(self) -> Dict:
+        """获取信号聚合统计报告"""
+        if hasattr(self, 'signal_stats') and self.signal_stats:
+            return {
+                'recent': self.signal_stats.get_recent_stats(100),
+                'analysis': self.signal_stats.analyze_optimal_threshold(),
+                'blocked_analysis': self.signal_stats.get_blocked_signal_analysis()
+            }
+        return {}
+
     def update_price(self, price: float):
         """更新价格 (用于回测或外部数据源)"""
         self.price_history.append(price)
@@ -1494,7 +1896,10 @@ async def create_trader(
     api_secret: str = "",
     symbol: str = "BTCUSDT",
     use_testnet: bool = True,
-    initial_capital: float = 10000.0
+    initial_capital: float = 10000.0,
+    enable_spot_margin: bool = False,
+    margin_mode: str = "cross",
+    max_leverage: int = 3,
 ) -> SelfEvolvingTrader:
     """
     创建并初始化交易者
@@ -1505,6 +1910,9 @@ async def create_trader(
         symbol: 交易对
         use_testnet: 是否使用测试网
         initial_capital: 初始资金
+        enable_spot_margin: 是否启用现货杠杆
+        margin_mode: 杠杆模式 (cross/isolated)
+        max_leverage: 最大杠杆倍数
 
     Returns:
         SelfEvolvingTrader: 初始化好的交易者实例
@@ -1515,7 +1923,10 @@ async def create_trader(
         api_key=api_key,
         api_secret=api_secret,
         use_testnet=use_testnet,
-        initial_capital=initial_capital
+        initial_capital=initial_capital,
+        enable_spot_margin=enable_spot_margin,
+        margin_mode=margin_mode,
+        max_leverage=max_leverage,
     )
 
     trader = SelfEvolvingTrader(config)

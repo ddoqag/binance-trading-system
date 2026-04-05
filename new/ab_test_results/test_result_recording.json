@@ -1,0 +1,89 @@
+{
+  "config": {
+    "test_name": "test_result_recording",
+    "description": "Test recording",
+    "strategy": 0,
+    "variants": [
+      {
+        "name": "control",
+        "description": "Control",
+        "traffic_pct": 0.5,
+        "version": "1.0",
+        "is_control": true
+      },
+      {
+        "name": "variant",
+        "description": "Variant",
+        "traffic_pct": 0.5,
+        "version": "2.0",
+        "is_control": false
+      }
+    ],
+    "min_sample_size": 50,
+    "significance_level": 0.05,
+    "max_duration_hours": 168.0,
+    "result_dir": "./ab_test_results",
+    "enable_logging": true
+  },
+  "results": {
+    "control": {
+      "variant_name": "control",
+      "total_trades": 100,
+      "winning_trades": 50,
+      "total_pnl": -4.999999999999998,
+      "total_volume": 0.0,
+      "cumulative_alpha_bps": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "win_rate": 0.5,
+      "start_time": 1775273268.7560446,
+      "last_update": 1775273268.7700365
+    },
+    "variant": {
+      "variant_name": "variant",
+      "total_trades": 100,
+      "winning_trades": 80,
+      "total_pnl": -0.39999999999999947,
+      "total_volume": 0.0,
+      "cumulative_alpha_bps": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "win_rate": 0.8,
+      "start_time": 1775273268.7560446,
+      "last_update": 1775273268.7707996
+    }
+  },
+  "statistics": {
+    "control": {
+      "variant_name": "control",
+      "total_trades": 100,
+      "winning_trades": 50,
+      "total_pnl": -4.999999999999998,
+      "total_volume": 0.0,
+      "cumulative_alpha_bps": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "win_rate": 0.5,
+      "start_time": 1775273268.7560446,
+      "last_update": 1775273268.7700365
+    },
+    "comparisons": [
+      {
+        "variant_name": "variant",
+        "control_pnl": -4.999999999999998,
+        "variant_pnl": -0.39999999999999947,
+        "diff_pnl": 0.045999999999999985,
+        "diff_pnl_bps": 0.0,
+        "control_sharpe": -14.142135623730951,
+        "variant_sharpe": -14.142135623730951,
+        "diff_sharpe": 0.0,
+        "p_value": 4.3781118581822237e-35,
+        "significant": true,
+        "is_better": true
+      }
+    ]
+  },
+  "conclusion": "A/B Test: test_result_recording\n\nDuration: 0.00 hours\nControl: control\n  - Trades: 100\n  - Total PnL: -5.0000\n  - Win rate: 50.00%\n\nVariant: variant\n  - Trades: 100\n  - Total PnL: -0.4000 (diff: 0.0460)\n  - Sharpe: -14.14 vs -14.14 (diff: 0.00)\n  - p-value: 0.0000\n  - Significant: True\n  - [OK] Variant is significantly BETTER than control\n",
+  "start_time": 1775273268.7560549,
+  "last_updated": 1775273268.7714963
+}

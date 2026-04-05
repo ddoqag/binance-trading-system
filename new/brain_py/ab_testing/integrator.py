@@ -309,6 +309,10 @@ class StrategyABTest:
         output["conclusion"] = self._ab_test.get_conclusion()
         return output
 
+    def get_conclusion(self) -> str:
+        """Get test conclusion"""
+        return self._ab_test.get_conclusion()
+
 
 class ABTestIntegrator:
     """

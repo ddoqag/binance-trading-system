@@ -12,7 +12,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
-from threading import Lock
+from threading import RLock as Lock
 
 
 class SplitStrategyType:
@@ -253,11 +253,11 @@ class ABTest:
             conclusion.append(f"  - Significant: {comp.significant}")
             if comp.significant:
                 if comp.is_better:
-                    conclusion.append("  - ✅ Variant is significantly BETTER than control")
+                    conclusion.append("  - [OK] Variant is significantly BETTER than control")
                 else:
-                    conclusion.append("  - ❌ Variant is significantly WORSE than control")
+                    conclusion.append("  - [NG] Variant is significantly WORSE than control")
             else:
-                conclusion.append("  - ⚠️  Not statistically significant")
+                conclusion.append("  - [WARN] Not statistically significant")
             conclusion.append("")
 
         return "\n".join(conclusion)

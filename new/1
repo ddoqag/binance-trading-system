@@ -1,0 +1,26 @@
+2026-04-02 21:43:12,448 - __main__ - INFO - Loaded environment from D:\binance\new\.env
+2026-04-02 21:43:14,577 - __main__ - INFO - Initializing trader...
+2026-04-02 21:43:14,577 - self_evolving_trader - INFO - [SelfEvolvingTrader] Initializing...
+2026-04-02 21:43:14,660 - SpotMarginOrderManager - INFO - [SpotMarginOrderManager] Initialized (testnet=False, leverage=3x, mode=cross)
+2026-04-02 21:43:17,736 - SpotMarginOrderManager - INFO - [SpotMarginOrderManager] Using python-binance AsyncClient
+2026-04-02 21:43:26,504 - SpotMarginOrderManager - INFO - [SpotMarginOrderManager] Started
+2026-04-02 21:43:26,504 - self_evolving_trader - INFO - [SelfEvolvingTrader] SpotMarginOrderManager initialized (mode=cross, leverage=3x)
+2026-04-02 21:43:26,504 - core.live_risk_manager - INFO - [LiveRiskManager] Initialized
+2026-04-02 21:43:26,506 - core.live_risk_manager - INFO -   - Max single position: 20.0%
+2026-04-02 21:43:26,506 - core.live_risk_manager - INFO -   - Max total position: 80.0%
+2026-04-02 21:43:26,506 - core.live_risk_manager - INFO -   - Max daily loss: 5.0%
+2026-04-02 21:43:26,506 - core.live_risk_manager - INFO -   - Max drawdown: 15.0%
+2026-04-02 21:43:26,506 - core.live_risk_manager - INFO - [LiveRiskManager] Started
+2026-04-02 21:43:26,506 - self_evolving_trader - INFO - [SelfEvolvingTrader] LiveRiskManager initialized
+2026-04-02 21:43:26,513 - self_evolving_trader - INFO - [SelfEvolvingTrader] Loaded 3/3 strategies
+2026-04-02 21:43:26,513 - self_evolving_trader - INFO - [SelfEvolvingTrader] Phase 1: AgentRegistry initialized
+2026-04-02 21:43:26,513 - self_evolving_trader - INFO - [SelfEvolvingTrader] Phase 2: RegimeDetector initialized
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] Phase 3: MetaAgent initialized
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] Phase 4: PBT Trainer initialized
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] Phase 9: Civilization initialized
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] No checkpoint found, starting fresh
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] All components initialized successfully
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] Starting...
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [SelfEvolvingTrader] Started successfully
+2026-04-02 21:43:26,514 - self_evolving_trader - INFO - [Main] Running indefinitely (Press Ctrl+C to stop)...
+2026-04-02 21:44:26,522 - self_evolving_trader - INFO - [SelfEvolvingTrader] Checkpoint saved to checkpoints\checkpoint_20260402_214426

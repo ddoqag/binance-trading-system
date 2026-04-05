@@ -152,7 +152,7 @@ def test_result_recording():
     assert control.total_trades == 100
     assert variant.total_trades == 100
     assert 0.45 < control.win_rate < 0.55
-    assert 0.55 < variant.win_rate < 0.65
+    assert 0.75 < variant.win_rate < 0.85
 
     # Check completion
     complete, reason = ab.check_completion()

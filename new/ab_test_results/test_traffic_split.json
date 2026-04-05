@@ -1,0 +1,89 @@
+{
+  "config": {
+    "test_name": "test_traffic_split",
+    "description": "Test 80/20 split",
+    "strategy": 0,
+    "variants": [
+      {
+        "name": "A",
+        "description": "A",
+        "traffic_pct": 0.8,
+        "version": "1.0",
+        "is_control": true
+      },
+      {
+        "name": "B",
+        "description": "B",
+        "traffic_pct": 0.2,
+        "version": "2.0",
+        "is_control": false
+      }
+    ],
+    "min_sample_size": 100,
+    "significance_level": 0.05,
+    "max_duration_hours": 168.0,
+    "result_dir": "./ab_test_results",
+    "enable_logging": true
+  },
+  "results": {
+    "A": {
+      "variant_name": "A",
+      "total_trades": 0,
+      "winning_trades": 0,
+      "total_pnl": 0.0,
+      "total_volume": 0.0,
+      "cumulative_alpha_bps": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "win_rate": 0.0,
+      "start_time": 1775273268.7477133,
+      "last_update": 1775273268.7477167
+    },
+    "B": {
+      "variant_name": "B",
+      "total_trades": 0,
+      "winning_trades": 0,
+      "total_pnl": 0.0,
+      "total_volume": 0.0,
+      "cumulative_alpha_bps": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "win_rate": 0.0,
+      "start_time": 1775273268.7477133,
+      "last_update": 1775273268.7477179
+    }
+  },
+  "statistics": {
+    "control": {
+      "variant_name": "A",
+      "total_trades": 0,
+      "winning_trades": 0,
+      "total_pnl": 0.0,
+      "total_volume": 0.0,
+      "cumulative_alpha_bps": 0.0,
+      "max_drawdown": 0.0,
+      "sharpe_ratio": 0.0,
+      "win_rate": 0.0,
+      "start_time": 1775273268.7477133,
+      "last_update": 1775273268.7477167
+    },
+    "comparisons": [
+      {
+        "variant_name": "B",
+        "control_pnl": 0.0,
+        "variant_pnl": 0.0,
+        "diff_pnl": 0,
+        "diff_pnl_bps": 0.0,
+        "control_sharpe": 0.0,
+        "variant_sharpe": 0.0,
+        "diff_sharpe": 0.0,
+        "p_value": 1.0,
+        "significant": false,
+        "is_better": false
+      }
+    ]
+  },
+  "conclusion": "A/B Test: test_traffic_split\n\nDuration: 0.00 hours\nControl: A\n  - Trades: 0\n  - Total PnL: 0.0000\n  - Win rate: 0.00%\n\nVariant: B\n  - Trades: 0\n  - Total PnL: 0.0000 (diff: 0.0000)\n  - Sharpe: 0.00 vs 0.00 (diff: 0.00)\n  - p-value: 1.0000\n  - Significant: False\n  - [WARN] Not statistically significant\n",
+  "start_time": 1775273268.74772,
+  "last_updated": 1775273268.7528844
+}

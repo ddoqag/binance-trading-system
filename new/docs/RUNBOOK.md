@@ -45,12 +45,17 @@ vim .env
 
 ```bash
 # 方式1: 启动交易者 (推荐)
-python start_trader.py --mode paper --symbol BTCUSDT --interval 5
+python start_live_trader.py --symbol BTCUSDT --capital 1000
 
-# 方式2: 实盘模式 (谨慎使用)
-python start_trader.py --mode live --symbol BTCUSDT --production
+# 方式2: 启用现货杠杆交易 (3x Cross)
+python start_live_trader.py --symbol BTCUSDT --capital 1000 \
+    --spot-margin --margin-mode cross --max-leverage 3
 
-# 方式3: 使用Go引擎 + Python Agent
+# 方式3: 24小时信号统计数据收集
+python start_data_collection.py --symbol BTCUSDT --capital 1000 \
+    --spot-margin --margin-mode cross --max-leverage 3 --duration 24
+
+# 方式4: 使用Go引擎 + Python Agent
 cd core_go
 ./hft_engine.exe &
 cd ../brain_py
@@ -73,6 +78,12 @@ python shm_check.py
 
 # 检查WebSocket连接
 curl -s http://localhost:8080/health
+
+# 查看信号统计（运行中）
+python check_live_stats.py
+
+# 生成详细统计报告
+python check_signal_stats.py
 
 # 查看日志
 tail -f logs/hft_engine.log
@@ -258,4 +269,4 @@ python -c "from core_go.live_api_client import *; get_account_status()"
 
 ---
 
-*本文档由 Claude Code 自动生成，最后更新: 2026-04-02*
+*本文档由 Claude Code 自动生成，最后更新: 2026-04-05*

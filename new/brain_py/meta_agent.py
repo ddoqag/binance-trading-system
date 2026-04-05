@@ -688,21 +688,45 @@ class ExpertAdapter(BaseStrategy):
 
 class StrategyBaseAdapter(BaseStrategy):
     """
-    适配器: 将 strategies/ 目录下的 StrategyBase 适配为 BaseStrategy
+    适配器: 将 strategies/ 目录下的 StrategyBase 或 BaseAgent 适配为 BaseStrategy
     """
 
     def __init__(self, strategy):
         from strategies.base import StrategyBase
-        if not isinstance(strategy, StrategyBase):
-            raise TypeError(f"Expected StrategyBase, got {type(strategy)}")
-        strategy_type = self._infer_strategy_type(strategy)
-        super().__init__(strategy._metadata.name, strategy_type)
+        from brain_py.agent_registry import BaseAgent
+
+        # 接受 StrategyBase 或 BaseAgent
+        if not isinstance(strategy, (StrategyBase, BaseAgent)):
+            raise TypeError(f"Expected StrategyBase or BaseAgent, got {type(strategy)}")
+
         self.strategy = strategy
+        strategy_type = self._infer_strategy_type(strategy)
+
+        # 获取策略名称
+        if hasattr(strategy, '_metadata') and strategy._metadata is not None:
+            name = strategy._metadata.name
+        elif hasattr(strategy, 'METADATA') and strategy.METADATA is not None:
+            name = strategy.METADATA.name
+        else:
+            name = strategy.__class__.__name__
+
+        super().__init__(name, strategy_type)
 
     def _infer_strategy_type(self, strategy) -> StrategyType:
         """从策略元数据推断 StrategyType"""
-        suitable = getattr(strategy._metadata, 'suitable_regimes', [])
-        tags = [t.lower() for t in getattr(strategy._metadata, 'tags', [])]
+        # 获取元数据
+        meta = None
+        if hasattr(strategy, '_metadata') and strategy._metadata is not None:
+            meta = strategy._metadata
+        elif hasattr(strategy, 'METADATA') and strategy.METADATA is not None:
+            meta = strategy.METADATA
+
+        # 从元数据提取信息
+        suitable = []
+        tags = []
+        if meta is not None:
+            suitable = getattr(meta, 'suitable_regimes', [])
+            tags = [t.lower() for t in getattr(meta, 'tags', [])]
         if any(r in ("TRENDING", "BULL", "BEAR") for r in suitable) or "trend" in tags:
             return StrategyType.TREND_FOLLOWING
         elif any(r in ("RANGE", "MEAN_REVERTING") for r in suitable) or "mean_reversion" in tags:

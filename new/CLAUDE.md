@@ -89,8 +89,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 模块 | 目录 | 说明 | 状态 |
 |------|------|------|------|
 | **core_go/** | `core_go/` | Go 执行引擎（微秒级延迟） | 活跃开发 |
-| **brain_py/** | `brain_py/` | Python AI 决策引擎（SAC/AB测试） | 活跃开发 |
-| **shared/** | `shared/` | 跨语言共享内存协议 | 设计中 |
+| **brain_py/** | `brain_py/` | Python AI 决策引擎（SAC/AB测试/MoE） | 活跃开发 |
+| **shared/** | `shared/` | 跨语言共享内存协议（mmap + Sequence Lock） | 已完成 |
 
 ### core_go (Go Execution Engine)
 
@@ -121,9 +121,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | `queue_dynamics/` | Queue Dynamics 训练仿真 |
 | `features/` | 微观结构特征工程 |
 | `agents/` | SAC 专家策略实现 |
+| `agents/execution_sac.py` | 执行优化 SAC Agent |
 | `meta_agent.py` | 元智能体调度器 |
 | `moe/` | Mixture of Experts 混合专家系统 |
-| `live_integrator.py` | 实盘主循环集成 |
+| `moe/mixture_of_experts.py` | MoE 融合引擎 |
+| `qlib_models/` | Microsoft Qlib 模型集成 |
+| `qlib_models/adapters.py` | Qlib 专家适配器 |
+| `qlib_models/gbdt/` | LightGBM/DoubleEnsemble |
+| `qlib_models/neural/` | LSTM/GRU/TCN/Transformer |
+| `qlib_models/historical_trainer.py` | 历史数据预训练 |
+| `live_integrator.py` | 实盘主循环集成（Meta-Agent + MoE + SAC）|
 
 ### 架构文档
 
@@ -544,12 +551,24 @@ go test -v -run TestABTest .
 ./hft_engine.exe --metrics-port=2112
 ```
 
-### Python A/B 测试运行
+### Python 测试
 
 ```bash
-# 运行 A/B 测试单元测试
 cd brain_py
+
+# 运行所有测试
+python -m pytest tests/ -v
+
+# 运行特定测试文件
+python -m pytest tests/test_live_integrator_moe.py -v
+python -m pytest tests/test_meta_agent.py -v
+python -m pytest tests/test_execution_sac.py -v
+
+# 运行 A/B 测试
 python -m pytest ab_testing/test_ab_testing.py -v -s
+
+# 运行 Qlib 模型测试
+python -m pytest qlib_models/tests/ -v
 
 # 简单演示
 python test_ab_simple.py
@@ -595,6 +614,8 @@ python test_ab_simple.py
 | P2-004 | Multi-Asset 执行优化 | ⏳ 进行中 |
 | P2-005 | A/B Testing 框架（Go/Python） | ✅ 完成 |
 | P2-006 | Model Manager（热更新+自动回滚） | ✅ 完成 |
+| P2-007 | Qlib 模型集成（LightGBM/TCN/LSTM） | ✅ 完成 |
+| P2-008 | MoE + Qlib 专家融合 | ✅ 完成 |
 
 ### Phase 3: 对抗鲁棒性 (P3) - 待开始
 - [ ] 对抗训练（做市商收割防御）
@@ -606,7 +627,7 @@ python test_ab_simple.py
 - [ ] 多级降级策略（网络拥塞/高延迟应对）
 - [ ] 杠杆全仓交易支持
 
-**总计: P1 完成 (10/10), P2 完成 (4/6), 总计 14/20 = 70%**
+**总计: P1 完成 (10/10), P2 完成 (6/6), 总计 16/20 = 80%**
 
 ---
 
@@ -683,7 +704,25 @@ else:
 - **流量分配**: 新版本先用 10-20% 流量，再逐步提升
 - **时长**: 至少运行 24 小时，覆盖不同市场时段
 
-### 5. 模型衰退检测
+### 5. Qlib 模型集成
+
+**MoE 融合流程**:
+```python
+# live_integrator.py 中的典型流程
+1. Meta-Agent 检测市场状态 → 过滤专家池
+2. MoE 从 Qlib 专家获取预测 (LightGBM + TCN + LSTM)
+3. SoftmaxGatingNetwork 根据历史表现加权融合
+4. SAC Agent 接收融合后的 position_size 作为目标方向
+5. SAC 输出 aggression + size_scale 优化执行
+```
+
+**历史预训练**:
+```bash
+cd brain_py
+python qlib_models/historical_trainer.py  # 训练并保存到 checkpoints/
+```
+
+### 6. 模型衰退检测
 - 对比夏普比率相对于基准下降 > 20% 触发衰退
 - 对比胜率下降 > 10% 触发衰退
 - 错误率上升 > 5% 触发衰退
@@ -697,5 +736,5 @@ else:
 - **Hazard Rate Math**: docs/ARCHITECTURE_OVERVIEW.md v4.5
 - **Monitoring Setup**: docs/MONITORING_SETUP.md
 - **Self-Evolving Design**: docs/SELF_EVOLVING_LIVE_DESIGN.md
-- **Task Tracking**: 总纲.txt / docs/project_management/
 - **A/B Testing Statistical**: Welch's t-test for unequal variances
+- **Qlib Integration**: brain_py/qlib_models/

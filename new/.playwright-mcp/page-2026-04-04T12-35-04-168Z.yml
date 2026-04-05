@@ -1,0 +1,58 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - heading "Self-Evolving Trading System" [level=1] [ref=e3]
+    - paragraph [ref=e4]: Real-time Trading Dashboard
+  - generic [ref=e5]:
+    - generic [ref=e6]:
+      - heading "Total Equity" [level=3] [ref=e7]
+      - generic [ref=e8]: $10,050
+      - generic [ref=e9]: Available + Positions
+    - generic [ref=e10]:
+      - heading "Daily P&L" [level=3] [ref=e11]
+      - generic [ref=e12]: $50
+      - generic [ref=e13]: Today's profit/loss
+    - generic [ref=e14]:
+      - heading "Win Rate" [level=3] [ref=e15]
+      - generic [ref=e16]: 50.0%
+      - generic [ref=e17]: Overall trade success
+    - generic [ref=e18]:
+      - heading "Active Strategies" [level=3] [ref=e19]
+      - generic [ref=e20]: Currently running
+  - generic [ref=e21]:
+    - heading "System Status" [level=2] [ref=e22]
+    - table [ref=e23]:
+      - rowgroup [ref=e24]:
+        - row "Component Status Details" [ref=e25]:
+          - columnheader "Component" [ref=e26]
+          - columnheader "Status" [ref=e27]
+          - columnheader "Details" [ref=e28]
+        - row "Trading Engine Active Running" [ref=e29]:
+          - cell "Trading Engine" [ref=e30]
+          - cell "Active" [ref=e31]:
+            - generic [ref=e32]: Active
+          - cell "Running" [ref=e33]
+        - row "Risk Manager Normal Within limits" [ref=e34]:
+          - cell "Risk Manager" [ref=e35]
+          - cell "Normal" [ref=e36]:
+            - generic [ref=e37]: Normal
+          - cell "Within limits" [ref=e38]
+        - row "Data Feed Connected Live" [ref=e39]:
+          - cell "Data Feed" [ref=e40]
+          - cell "Connected" [ref=e41]:
+            - generic [ref=e42]: Connected
+          - cell "Live" [ref=e43]
+  - generic [ref=e44]:
+    - heading "Recent Trades" [level=2] [ref=e45]
+    - table [ref=e46]:
+      - rowgroup [ref=e47]:
+        - row "Time Symbol Side Quantity Price P&L" [ref=e48]:
+          - columnheader "Time" [ref=e49]
+          - columnheader "Symbol" [ref=e50]
+          - columnheader "Side" [ref=e51]
+          - columnheader "Quantity" [ref=e52]
+          - columnheader "Price" [ref=e53]
+          - columnheader "P&L" [ref=e54]
+  - generic [ref=e55]:
+    - text: Auto-refresh every 5 seconds |
+    - link "API" [ref=e56] [cursor=pointer]:
+      - /url: /api/metrics
