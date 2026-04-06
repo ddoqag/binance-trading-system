@@ -160,11 +160,14 @@ class LiveRiskManager:
         # 订单频率控制
         self._order_timestamps: deque = deque(maxlen=100)
 
-        logger.info("[LiveRiskManager] Initialized")
-        logger.info(f"  - Max single position: {self.limits.max_single_position_pct:.1%}")
-        logger.info(f"  - Max total position: {self.limits.max_total_position_pct:.1%}")
-        logger.info(f"  - Max daily loss: {self.limits.max_daily_loss_pct:.1%}")
-        logger.info(f"  - Max drawdown: {self.limits.max_drawdown_pct:.1%}")
+        # Logger
+        self.logger = logging.getLogger(__name__)
+
+        self.logger.info("[LiveRiskManager] Initialized")
+        self.logger.info(f"  - Max single position: {self.limits.max_single_position_pct:.1%}")
+        self.logger.info(f"  - Max total position: {self.limits.max_total_position_pct:.1%}")
+        self.logger.info(f"  - Max daily loss: {self.limits.max_daily_loss_pct:.1%}")
+        self.logger.info(f"  - Max drawdown: {self.limits.max_drawdown_pct:.1%}")
 
     async def start(self):
         """启动风险管理器"""
@@ -179,7 +182,7 @@ class LiveRiskManager:
         # 注册订单回调
         self.order_manager.on_order_filled = self._on_order_filled
 
-        logger.info("[LiveRiskManager] Started")
+        self.logger.info("[LiveRiskManager] Started")
 
     async def stop(self):
         """停止风险管理器"""
@@ -192,7 +195,7 @@ class LiveRiskManager:
             except asyncio.CancelledError:
                 pass
 
-        logger.info("[LiveRiskManager] Stopped")
+        self.logger.info("[LiveRiskManager] Stopped")
 
     async def _monitoring_loop(self):
         """风险监控循环"""
@@ -225,7 +228,7 @@ class LiveRiskManager:
                 await asyncio.sleep(2)
 
             except Exception as e:
-                logger.error(f"[LiveRiskManager] Monitoring error: {e}")
+                self.logger.error(f"[LiveRiskManager] Monitoring error: {e}")
                 await asyncio.sleep(5)
 
     # ==================== 风险计算 ====================
@@ -348,7 +351,7 @@ class LiveRiskManager:
         old_level = self.current_level
         self.current_level = new_level
 
-        logger.warning(
+        self.logger.warning(
             f"[LiveRiskManager] Risk level changed: {old_level.value} -> {new_level.value}"
         )
 
@@ -358,12 +361,12 @@ class LiveRiskManager:
         if new_level == RiskLevel.WARNING:
             # 警告级别：降低杠杆，减少新订单
             action_taken = "Reduced position sizing"
-            logger.warning("[LiveRiskManager] WARNING: Reducing position sizes")
+            self.logger.warning("[LiveRiskManager] WARNING: Reducing position sizes")
 
         elif new_level == RiskLevel.CRITICAL:
             # 严重级别：平仓 50%，暂停新订单
             action_taken = "Emergency position reduction"
-            logger.error("[LiveRiskManager] CRITICAL: Reducing positions by 50%")
+            self.logger.error("[LiveRiskManager] CRITICAL: Reducing positions by 50%")
             await self._emergency_reduce_positions(0.5)
 
         elif new_level == RiskLevel.EMERGENCY:
@@ -393,7 +396,7 @@ class LiveRiskManager:
 
             # 检查是否触发止损
             if unrealized_pnl_pct <= -self.limits.stop_loss_pct:
-                logger.warning(
+                self.logger.warning(
                     f"[LiveRiskManager] Stop loss triggered for {position.symbol}: "
                     f"{unrealized_pnl_pct:.2%}"
                 )
@@ -415,10 +418,10 @@ class LiveRiskManager:
             else:
                 await self.order_manager.buy_market(position.symbol, position.quantity)
 
-            logger.info(f"[LiveRiskManager] Closed position: {position.symbol}")
+            self.logger.info(f"[LiveRiskManager] Closed position: {position.symbol}")
 
         except Exception as e:
-            logger.error(f"[LiveRiskManager] Failed to close position: {e}")
+            self.logger.error(f"[LiveRiskManager] Failed to close position: {e}")
 
     # ==================== 紧急操作 ====================
 
@@ -437,12 +440,12 @@ class LiveRiskManager:
                 else:
                     await self.order_manager.buy_market(position.symbol, reduce_qty)
 
-                logger.info(
+                self.logger.info(
                     f"[LiveRiskManager] Reduced {position.symbol} by {reduction_pct:.1%}"
                 )
 
             except Exception as e:
-                logger.error(f"[LiveRiskManager] Failed to reduce position: {e}")
+                self.logger.error(f"[LiveRiskManager] Failed to reduce position: {e}")
 
     async def _trigger_kill_switch(self):
         """触发 Kill Switch - 紧急停止所有交易"""
@@ -451,7 +454,7 @@ class LiveRiskManager:
 
         self._kill_switch_triggered = True
 
-        logger.critical("[LiveRiskManager] KILL SWITCH TRIGGERED - Stopping all trading")
+        self.logger.critical("[LiveRiskManager] KILL SWITCH TRIGGERED - Stopping all trading")
 
         # 1. 取消所有未成交订单
         symbols = set(p.symbol for p in self.order_manager.get_all_positions())
@@ -557,16 +560,30 @@ class LiveRiskManager:
         max_position_value = self.current_capital * self.limits.max_single_position_pct
         recommended_value = max_position_value * confidence
 
-        # 假设当前价格获取 (简化)
+        # 获取当前价格
         position = self.order_manager.get_position(symbol)
         if position:
             current_price = position.entry_price
         else:
-            current_price = 0  # 需要外部传入
+            # 尝试从 order_manager 获取最新价格
+            current_price = getattr(self.order_manager, 'latest_price', 0)
+            # 或者通过 _get_current_price 方法获取
+            if current_price <= 0 and hasattr(self.order_manager, '_get_current_price'):
+                try:
+                    import asyncio
+                    if asyncio.iscoroutinefunction(self.order_manager._get_current_price):
+                        # 异步方法，暂时无法调用
+                        pass
+                    else:
+                        current_price = self.order_manager._get_current_price(symbol)
+                except:
+                    pass
 
         if current_price > 0:
             return recommended_value / current_price
 
+        # 如果无法获取价格，返回一个默认的小仓位（以价值计）
+        self.logger.warning(f"[RiskManager] Cannot get current price for {symbol}, returning 0 quantity")
         return 0
 
     def get_current_metrics(self) -> Optional[RiskMetrics]:
@@ -622,7 +639,7 @@ class LiveRiskManager:
         """重置日度统计 (每日调用)"""
         self.daily_pnl = 0.0
         self._order_timestamps.clear()
-        logger.info("[LiveRiskManager] Daily stats reset")
+        self.logger.info("[LiveRiskManager] Daily stats reset")
 
     # ==================== 回调注册 ====================
 
@@ -640,4 +657,4 @@ class LiveRiskManager:
                 else:
                     callback(data)
             except Exception as e:
-                logger.error(f"[LiveRiskManager] Callback error: {e}")
+                self.logger.error(f"[LiveRiskManager] Callback error: {e}")

@@ -174,6 +174,36 @@ stats = detector.get_performance_stats()
 print(f"P99: {stats['detection_latency_ms']['p99']:.2f}ms")
 ```
 
+### 问题5: 检查点磁盘空间不足
+
+**症状**: `checkpoints/` 目录占用空间过大 (>10GB)
+
+**原因**:
+- 历史 `price_history` 数据累积
+- 检查点数量过多 (447+ 个)
+
+**修复**:
+```bash
+# 手动清理旧检查点
+python -c "
+import os
+import shutil
+
+checkpoints = sorted([d for d in os.listdir('checkpoints') if d.startswith('checkpoint_')])
+keep = set(checkpoints[-10:])  # 保留最近10个
+for cp in checkpoints:
+    if cp not in keep and int(cp.split('_')[1]) % 50 != 0:
+        shutil.rmtree(os.path.join('checkpoints', cp))
+        print(f'Removed: {cp}')
+"
+```
+
+**自动优化**: 系统已启用自动清理机制
+- 保留最近 10 个检查点
+- 保留每 50 个里程碑检查点
+- 限制 `price_history` 保存 100 条
+- 限制 `market_prices` 保存 100 个
+
 ### 问题5: 高延迟
 
 **症状**: 延迟持续 > 50ms
@@ -269,4 +299,4 @@ python -c "from core_go.live_api_client import *; get_account_status()"
 
 ---
 
-*本文档由 Claude Code 自动生成，最后更新: 2026-04-05*
+*本文档由 Claude Code 自动生成，最后更新: 2026-04-06*

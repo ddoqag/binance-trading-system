@@ -16,7 +16,7 @@ from .hf_types import (
     PerformanceRecord,
 )
 from .state import StateMachine
-from .orchestrator import Orchestrator
+from .orchestrator import Orchestrator, OrchestratorConfig
 from .risk_kernel import (
     DynamicRiskMonitor,
     RiskCheckEngine,
@@ -24,6 +24,8 @@ from .risk_kernel import (
     PnLSignal,
     SystemMetrics,
     RiskEvent,
+    RiskKernel,
+    ModeManager,
 )
 from .go_client import GoEngineClient, MockGoEngineClient
 from .meta_brain import (
@@ -32,6 +34,13 @@ from .meta_brain import (
     SimpleRegimeDetector,
     StrategySelector,
     StrategyType,
+)
+from .meta_brain_enhanced import (
+    MetaBrainEnhanced,
+    EnhancedMetaBrainConfig,
+    EnhancedRegimeDetector,
+    EnhancedStrategySelector,
+    RegimeMapper,
 )
 from .capital_allocator import (
     CapitalAllocator,
@@ -59,6 +68,48 @@ from .strategy_lifecycle import (
     create_lifecycle_manager,
     LifecycleConfig,
 )
+from .event_bus import (
+    EventBus,
+    Event,
+    EventType,
+    EventPriority,
+    create_event_bus,
+    EventBusAware,
+)
+from .lifecycle import (
+    LifecycleManager,
+    LifecycleComponent,
+    ComponentState,
+    ComponentHealth,
+    HealthStatus,
+)
+from .strategy_genome import (
+    StrategyGenome,
+    GenomeDatabase,
+    PerformanceRecord,
+)
+from .mutation import (
+    MutationOperator,
+    GaussianMutation,
+    PerturbMutation,
+    UniformMutation,
+    PolynomialMutation,
+    AdaptiveMutation,
+    CompositeMutation,
+)
+from .selection import (
+    SelectionOperator,
+    TournamentSelection,
+    RouletteSelection,
+    RankSelection,
+    EliteSelection,
+    BoltzmannSelection,
+    CompositeSelection,
+)
+from .evolution_engine import (
+    EvolutionEngine,
+    EvolutionConfig,
+)
 
 __all__ = [
     # Types
@@ -76,6 +127,7 @@ __all__ = [
     # Core
     "StateMachine",
     "Orchestrator",
+    "OrchestratorConfig",
     # Risk
     "DynamicRiskMonitor",
     "RiskCheckEngine",
@@ -83,6 +135,8 @@ __all__ = [
     "PnLSignal",
     "SystemMetrics",
     "RiskEvent",
+    "RiskKernel",
+    "ModeManager",
     # Client
     "GoEngineClient",
     "MockGoEngineClient",
@@ -92,6 +146,12 @@ __all__ = [
     "SimpleRegimeDetector",
     "StrategySelector",
     "StrategyType",
+    # Meta Brain Enhanced
+    "MetaBrainEnhanced",
+    "EnhancedMetaBrainConfig",
+    "EnhancedRegimeDetector",
+    "EnhancedStrategySelector",
+    "RegimeMapper",
     # Allocator
     "CapitalAllocator",
     "CapitalAllocatorConfig",
@@ -112,4 +172,37 @@ __all__ = [
     "StrategyLifecycleManager",
     "create_lifecycle_manager",
     "LifecycleConfig",
+    # Event Bus
+    "EventBus",
+    "Event",
+    "EventType",
+    "EventPriority",
+    "create_event_bus",
+    "EventBusAware",
+    # Lifecycle Management
+    "LifecycleManager",
+    "LifecycleComponent",
+    "ComponentState",
+    "ComponentHealth",
+    "HealthStatus",
+    # Evolution Engine
+    "StrategyGenome",
+    "GenomeDatabase",
+    "PerformanceRecord",
+    "MutationOperator",
+    "GaussianMutation",
+    "PerturbMutation",
+    "UniformMutation",
+    "PolynomialMutation",
+    "AdaptiveMutation",
+    "CompositeMutation",
+    "SelectionOperator",
+    "TournamentSelection",
+    "RouletteSelection",
+    "RankSelection",
+    "EliteSelection",
+    "BoltzmannSelection",
+    "CompositeSelection",
+    "EvolutionEngine",
+    "EvolutionConfig",
 ]

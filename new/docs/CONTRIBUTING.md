@@ -64,10 +64,14 @@ go env GOPATH
 |------|------|------|
 | `python start_live_trader.py --symbol BTCUSDT --capital 1000` | 启动实盘/模拟交易者 | 主入口 |
 | `python start_live_trader.py --spot-margin --margin-mode cross --max-leverage 3` | 启用现货杠杆交易 | 3x杠杆 |
+| `python start_live_trader.py --yes` | 跳过确认自动启动 | 后台模式 |
 | `python start_data_collection.py --duration 24` | 24小时信号统计数据收集 | 分析模式 |
 | `python start_trader.py --mode paper --symbol BTCUSDT` | 启动交易者 (模拟模式) | 回测 |
 | `python start_ab_test.py` | 启动A/B测试框架 | 策略对比 |
 | `python start_full_autoresearch_trading.py` | 启动全自动研究交易 | 研究模式 |
+| `python check_signal_stats.py` | 查看信号统计报告 | 诊断 |
+| `python check_live_stats.py` | 实时检查运行中统计 | 监控 |
+| `python generate_report.py` | 生成交易报告 | 分析 |
 
 ### 监控与诊断
 
@@ -75,8 +79,9 @@ go env GOPATH
 |------|------|------|
 | `python check_signal_stats.py` | 查看信号聚合统计报告 | 阈值优化 |
 | `python check_live_stats.py` | 实时检查运行中统计 | 监控 |
-| `python stability_monitor.py` | 系统稳定性监控 | 健康检查 |
+| `python check_signal_stats.py --analyze` | 信号阈值优化分析 | 参数调优 |
 | `python generate_report.py` | 生成交易报告 | 绩效分析 |
+| `python force_save_stats.py` | 强制保存统计到文件 | 调试 |
 | `python shm_check.py` | 共享内存检查 | 调试 |
 
 ### 测试命令
@@ -93,6 +98,7 @@ go env GOPATH
 | `go test ./core_go/... -v` | Go单元测试 | 67+项测试 |
 | `python end_to_end_test.py` | 端到端集成测试 | 全流程验证 |
 | `python test_ab_simple.py` | 简单A/B测试演示 | 快速验证 |
+| `python verify_structure.py` | 验证项目结构 | 结构检查 |
 
 ### 构建命令
 
@@ -190,4 +196,4 @@ python e2e_simple.py
 
 ---
 
-*本文档由 Claude Code 自动生成，最后更新: 2026-04-05*
+*本文档由 Claude Code 自动生成，最后更新: 2026-04-06*

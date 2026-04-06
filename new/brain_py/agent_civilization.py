@@ -374,7 +374,7 @@ class AgentCivilization:
             'global_knowledge': {
                 k_id: _knowledge_to_dict(k) for k_id, k in self.global_knowledge.items()
             },
-            'market_prices': dict(self.market_prices),
+            'market_prices': dict(list(self.market_prices.items())[-100:]),  # 只保留最近100个价格
             'generation': self.generation,
             'history': list(self.history),
         }

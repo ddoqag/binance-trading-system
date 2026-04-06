@@ -181,7 +181,7 @@ async def main():
         api_secret=api_secret,
         symbol=args.symbol,
         trading_mode=TradingMode.PAPER,  # 使用模拟模式进行数据收集
-        use_testnet=True,
+        use_testnet=False,  # 使用生产环境API（模拟模式）
         initial_capital=args.capital,
         check_interval_seconds=args.check_interval,
         enable_spot_margin=args.spot_margin,
@@ -203,7 +203,7 @@ async def main():
                         api_key=api_key,
                         api_secret=api_secret,
                         symbol=args.symbol,
-                        use_testnet=True,
+                        use_testnet=False,  # 使用生产环境API（模拟模式）
                         initial_capital=args.capital,
                         enable_spot_margin=args.spot_margin,
                         margin_mode=args.margin_mode,
@@ -223,7 +223,7 @@ async def main():
 
         # 配置信号统计持久化
         if hasattr(trader, 'signal_stats') and trader.signal_stats:
-            trader.signal_stats._persist_file = args.persist_file
+            trader.signal_stats.set_persist_file(args.persist_file)
             logger.info(f"Signal statistics will be persisted to: {args.persist_file}")
 
         logger.info(f"Trader initialized. Starting {args.duration}-hour data collection...")
@@ -262,6 +262,10 @@ async def main():
         raise
     finally:
         if trader_instance:
+            # 保存统计
+            if hasattr(trader_instance, 'signal_stats') and trader_instance.signal_stats:
+                trader_instance.signal_stats._persist()
+                logger.info(f"Statistics saved to: {trader_instance.signal_stats._persist_file}")
             await trader_instance.stop()
 
         # 打印最终报告

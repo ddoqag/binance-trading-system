@@ -126,6 +126,9 @@ class SpotMarginOrderManager:
         self._session: Optional[Any] = None
         self._update_task: Optional[asyncio.Task] = None
 
+        # 时间同步 (用于解决 Binance API 时间戳错误)
+        self._server_time_offset: int = 0  # 服务器时间 - 本地时间 (毫秒)
+
         # 回调注册
         self._callbacks: Dict[str, List[Callable]] = {
             'on_order_created': [],
@@ -156,11 +159,26 @@ class SpotMarginOrderManager:
                 testnet=self.use_testnet,
                 https_proxy=https_proxy
             )
+            if https_proxy:
+                self.logger.info(f"[SpotMarginOrderManager] Using proxy: {https_proxy}")
             self.logger.info("[SpotMarginOrderManager] Using python-binance AsyncClient")
         else:
             import aiohttp
-            self._session = aiohttp.ClientSession()
-            self.logger.info("[SpotMarginOrderManager] Using aiohttp fallback")
+            import os
+            http_proxy = os.getenv('HTTP_PROXY')
+            https_proxy = os.getenv('HTTPS_PROXY')
+            if http_proxy or https_proxy:
+                proxy = https_proxy or http_proxy
+                connector = aiohttp.connector.TCPConnector()
+                self._session = aiohttp.ClientSession(connector=connector)
+                # aiohttp 会从环境变量自动读取代理
+                self.logger.info(f"[SpotMarginOrderManager] Using aiohttp with proxy: {proxy}")
+            else:
+                self._session = aiohttp.ClientSession()
+                self.logger.info("[SpotMarginOrderManager] Using aiohttp fallback (no proxy)")
+
+        # 同步服务器时间 (Binance API 要求)
+        await self._sync_server_time()
 
         # 加载交易对信息
         await self._load_exchange_info()
@@ -197,14 +215,39 @@ class SpotMarginOrderManager:
 
     async def _sync_loop(self):
         """后台同步循环"""
+        time_error_count = 0
         while self._running:
             try:
                 await self.sync_margin_account()
                 await self.sync_open_orders()
+                time_error_count = 0  # 成功时重置计数
                 await asyncio.sleep(5)
             except Exception as e:
-                self.logger.error(f"[SpotMarginOrderManager] Sync error: {e}")
-                await asyncio.sleep(10)
+                error_msg = str(e)
+                # 处理时间戳错误
+                if "Timestamp" in error_msg and "server" in error_msg:
+                    time_error_count += 1
+                    self.logger.warning(f"[SpotMarginOrderManager] Time sync error ({time_error_count}): {e}")
+                    # 每5次时间错误，尝试重新初始化客户端以同步时间
+                    if time_error_count >= 5 and HAS_BINANCE:
+                        self.logger.info("[SpotMarginOrderManager] Recreating client to resync time...")
+                        try:
+                            await self._client.close_connection()
+                            https_proxy = __import__('os').getenv('HTTPS_PROXY') or __import__('os').getenv('HTTP_PROXY')
+                            self._client = await AsyncClient.create(
+                                api_key=self.api_key,
+                                api_secret=self.api_secret,
+                                testnet=self.use_testnet,
+                                https_proxy=https_proxy
+                            )
+                            time_error_count = 0
+                            self.logger.info("[SpotMarginOrderManager] Client recreated successfully")
+                        except Exception as reinit_error:
+                            self.logger.error(f"[SpotMarginOrderManager] Failed to recreate client: {reinit_error}")
+                    await asyncio.sleep(10)
+                else:
+                    self.logger.error(f"[SpotMarginOrderManager] Sync error: {e}")
+                    await asyncio.sleep(10)
 
     # ==================== 现货杠杆核心流程 ====================
 
@@ -985,6 +1028,39 @@ class SpotMarginOrderManager:
 
     # ==================== 请求工具 ====================
 
+    async def _sync_server_time(self):
+        """同步服务器时间 (Binance API 要求)"""
+        try:
+            import aiohttp
+            url = f"{self.base_url}/api/v3/time"
+
+            # 使用 python-binance 客户端直接获取服务器时间
+            if self._client is not None:
+                try:
+                    server_time = await self._client.get_server_time()
+                    if server_time and 'serverTime' in server_time:
+                        server_time_ms = server_time['serverTime']
+                        local_time = int(time.time() * 1000)
+                        self._server_time_offset = server_time_ms - local_time
+                        self.logger.debug(f"[TimeSync] Offset: {self._server_time_offset}ms")
+                        return
+                except Exception as client_error:
+                    self.logger.debug(f"[TimeSync] Client time sync failed: {client_error}")
+
+            # 回退到 aiohttp (仅当 _session 已初始化时)
+            if self._session is not None:
+                async with self._session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        server_time = data.get('serverTime', 0)
+                        local_time = int(time.time() * 1000)
+                        self._server_time_offset = server_time - local_time
+                        self.logger.debug(f"[TimeSync] Offset: {self._server_time_offset}ms")
+            else:
+                self.logger.warning("[TimeSync] No HTTP session available, skipping time sync")
+        except Exception as e:
+            self.logger.warning(f"[TimeSync] Failed: {e}")
+
     async def _request(self, method: str, endpoint: str, params: Dict = None, signed: bool = False) -> Dict:
         """发送 HTTP 请求 (aiohttp fallback)"""
         import aiohttp
@@ -996,8 +1072,10 @@ class SpotMarginOrderManager:
 
         if signed:
             params = params or {}
-            params['timestamp'] = int(time.time() * 1000)
-            params['recvWindow'] = 5000
+            # 使用同步后的服务器时间
+            local_timestamp = int(time.time() * 1000)
+            params['timestamp'] = local_timestamp + self._server_time_offset
+            params['recvWindow'] = 10000  # 增加 recvWindow 到 10 秒
             query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
             params['signature'] = hmac.new(
                 self.api_secret.encode('utf-8'),
@@ -1008,6 +1086,10 @@ class SpotMarginOrderManager:
         async with self._session.request(method, url, headers=headers, params=params) as response:
             data = await response.json()
             if response.status != 200:
+                # 如果是时间戳错误，尝试重新同步
+                if data.get('code') == -1021:
+                    self.logger.warning("[Request] Timestamp error, resyncing...")
+                    await self._sync_server_time()
                 raise Exception(f"API error: {data}")
             return data
 

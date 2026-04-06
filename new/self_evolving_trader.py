@@ -45,6 +45,7 @@ import signal
 import logging
 import os
 import datetime
+import shutil
 from typing import Dict, List, Optional, Callable, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -138,6 +139,13 @@ class SignalStatistics:
             except Exception as e:
                 print(f"[SignalStats] Failed to load persistence file: {e}")
 
+    def set_persist_file(self, filepath: str):
+        """设置持久化文件路径并立即保存"""
+        self._persist_file = filepath
+        if self.history:
+            self._persist()
+            print(f"[SignalStats] Persisted {len(self.history)} records to {filepath}")
+
     def record(self, buy_weight: float, sell_weight: float, threshold: float,
                would_trigger: bool, aggregated_side: str = None,
                current_price: float = None):
@@ -171,14 +179,16 @@ class SignalStatistics:
             for r in removed:
                 self.price_history.pop(r['timestamp'], None)
 
-        # 持久化到文件（如果配置了）
-        if self._persist_file and len(self.history) % 100 == 0:
+        # 持久化到文件（如果配置了）- 数据收集模式下每次记录都保存
+        if self._persist_file:
             self._persist()
 
     def _persist(self):
         """持久化统计数据到文件（原子写入防止损坏）"""
-        import tempfile
         import os
+
+        if not self._persist_file:
+            return
 
         try:
             data = {
@@ -192,13 +202,20 @@ class SignalStatistics:
             with open(temp_file, 'w') as f:
                 json.dump(data, f)
                 f.flush()
-                os.fsync(f.fileno())  # 确保数据写入磁盘
+                # Windows 上 os.fsync 可能有问题，使用 try/except
+                try:
+                    os.fsync(f.fileno())
+                except:
+                    pass
 
             # 原子重命名
             os.replace(temp_file, self._persist_file)
+            print(f"[SignalStats] Persisted {len(self.history)} records to {self._persist_file}")
 
         except Exception as e:
             print(f"[SignalStats] Persistence failed: {e}")
+            import traceback
+            traceback.print_exc()
             # 清理临时文件
             try:
                 if os.path.exists(temp_file):
@@ -621,7 +638,30 @@ class SelfEvolvingTrader:
                         mutation_type=MutationType.PERTURB
                     )
                 )
-                logger.info("[SelfEvolvingTrader] Phase 4: PBT Trainer initialized")
+
+                # Register strategy factories for PBT
+                from brain_py.agents import TrendFollowingExpert, MeanReversionExpert, VolatilityExpert, ExpertConfig
+
+                def create_trend_expert(config: ExpertConfig):
+                    return TrendFollowingExpert(config)
+
+                def create_mean_rev_expert(config: ExpertConfig):
+                    return MeanReversionExpert(config)
+
+                def create_volatility_expert(config: ExpertConfig):
+                    return VolatilityExpert(config)
+
+                self.pbt_trainer.register_strategy_factory("trend", create_trend_expert)
+                self.pbt_trainer.register_strategy_factory("mean_rev", create_mean_rev_expert)
+                self.pbt_trainer.register_strategy_factory("volatility", create_volatility_expert)
+
+                # Initialize population with mixed strategy types
+                self.pbt_trainer.initialize_population(
+                    strategy_types=["trend", "mean_rev", "volatility", "trend", "mean_rev",
+                                   "volatility", "trend", "mean_rev", "trend", "mean_rev"]
+                )
+
+                logger.info(f"[SelfEvolvingTrader] Phase 4: PBT Trainer initialized with {len(self.pbt_trainer.population)} individuals")
 
             # 7. Phase 6: MoE
             if self.config.enable_phase_6_moe and self.agent_registry:
@@ -1033,7 +1073,8 @@ class SelfEvolvingTrader:
                     "initial_capital": self.config.initial_capital,
                     "check_interval_seconds": self.config.check_interval_seconds,
                 },
-                "price_history": list(self.price_history),
+                # 不保存 price_history 到检查点，只保留最近100个用于恢复
+                "price_history": list(self.price_history)[-100:] if len(self.price_history) > 100 else list(self.price_history),
                 "timestamp": time.time(),
             }, f, indent=2)
 
@@ -1061,6 +1102,47 @@ class SelfEvolvingTrader:
 
         self._update_latest_index(checkpoint_dir)
         logger.info(f"[SelfEvolvingTrader] Checkpoint saved to {checkpoint_dir}")
+
+        # 清理旧检查点（保留最近10个 + 每50个里程碑）
+        await self._cleanup_old_checkpoints()
+
+    async def _cleanup_old_checkpoints(self, keep_latest: int = 10, milestone_interval: int = 50):
+        """清理旧检查点，只保留最近的和里程碑检查点"""
+        try:
+            checkpoint_root = "checkpoints"
+            if not os.path.exists(checkpoint_root):
+                return
+
+            all_dirs = sorted([d for d in os.listdir(checkpoint_root)
+                              if d.startswith("checkpoint_")])
+
+            if len(all_dirs) <= keep_latest:
+                return
+
+            # 保留最近的 N 个
+            keep_dirs = set(all_dirs[-keep_latest:])
+
+            # 保留里程碑（每50个）
+            for i, d in enumerate(all_dirs):
+                if i % milestone_interval == 0:
+                    keep_dirs.add(d)
+
+            # 删除其他
+            deleted = 0
+            for d in all_dirs:
+                if d not in keep_dirs:
+                    d_path = os.path.join(checkpoint_root, d)
+                    try:
+                        shutil.rmtree(d_path)
+                        deleted += 1
+                    except Exception as e:
+                        logger.warning(f"[Checkpoint Cleanup] Failed to delete {d}: {e}")
+
+            if deleted > 0:
+                logger.info(f"[Checkpoint Cleanup] Removed {deleted} old checkpoints, kept {len(keep_dirs)}")
+
+        except Exception as e:
+            logger.warning(f"[Checkpoint Cleanup] Error: {e}")
 
     async def _maybe_load_checkpoint(self):
         """尝试从最新检查点恢复状态"""
@@ -1101,6 +1183,30 @@ class SelfEvolvingTrader:
             pbt_path = os.path.join(latest_dir, "pbt_population.json")
             if self.pbt_trainer and os.path.exists(pbt_path):
                 self.pbt_trainer.load_checkpoint(pbt_path)
+                # Re-register factories and re-create strategies after loading
+                from brain_py.agents import TrendFollowingExpert, MeanReversionExpert, VolatilityExpert, ExpertConfig
+
+                def create_trend_expert(config: ExpertConfig):
+                    return TrendFollowingExpert(config)
+
+                def create_mean_rev_expert(config: ExpertConfig):
+                    return MeanReversionExpert(config)
+
+                def create_volatility_expert(config: ExpertConfig):
+                    return VolatilityExpert(config)
+
+                self.pbt_trainer.register_strategy_factory("trend", create_trend_expert)
+                self.pbt_trainer.register_strategy_factory("mean_rev", create_mean_rev_expert)
+                self.pbt_trainer.register_strategy_factory("volatility", create_volatility_expert)
+
+                # Re-create strategy instances for loaded individuals
+                if self.pbt_trainer.population:
+                    for ind_id, individual in self.pbt_trainer.population.items():
+                        if individual.strategy is None:
+                            # Determine strategy type from hyperparams or use default
+                            stype = individual.hyperparams.get('strategy_type', 'trend')
+                            individual.strategy = self.pbt_trainer._create_strategy(stype, individual.hyperparams)
+                    logger.info(f"[SelfEvolvingTrader] PBT population restored with {len(self.pbt_trainer.population)} individuals")
 
             # 4. Regime Detector
             regime_path = os.path.join(latest_dir, "regime_detector.pkl")
@@ -1318,6 +1424,11 @@ class SelfEvolvingTrader:
         """生成交易信号"""
         signals = []
 
+        # 确保有足够的历史数据（至少30条，满足最慢的策略周期）
+        if len(self.price_history) < 30:
+            logger.debug(f"[SelfEvolvingTrader] Insufficient price history: {len(self.price_history)}/30")
+            return signals
+
         state = self._build_current_state()
 
         for strategy_name, weight in allocations.items():
@@ -1418,7 +1529,11 @@ class SelfEvolvingTrader:
                 side = 'BUY' if np.random.random() < 0.5 else 'SELL'
                 # Use 5% of available capital per trade
                 price = self._backtest_price if self._backtest_price > 0 else 50000.0
-                quantity = (self.config.initial_capital * 0.05) / max(price, 1.0)
+                # 使用实际账户余额或初始资金
+                available_balance = self.config.initial_capital
+                if self.order_manager and hasattr(self.order_manager, 'account'):
+                    available_balance = getattr(self.order_manager.account, 'available_balance', available_balance)
+                quantity = (available_balance * 0.05) / max(price, 1.0)
                 aggregated = {
                     'side': side,
                     'quantity': quantity,
@@ -1645,7 +1760,13 @@ class SelfEvolvingTrader:
                     'confidence': confidence
                 })
 
+        # 获取当前价格
+        current_price = self.price_history[-1] if self.price_history else None
+
         if not active_signals:
+            # 记录统计（无活跃信号）
+            if hasattr(self, 'signal_stats'):
+                self.signal_stats.record(0, 0, 0.15, False, None, current_price)
             return {}
 
         # 计算权重和置信度加权的买卖力量
@@ -1672,13 +1793,13 @@ class SelfEvolvingTrader:
             confidence = buy_weight
             # 记录统计
             if hasattr(self, 'signal_stats'):
-                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, True, 'BUY')
+                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, True, 'BUY', current_price)
         elif sell_weight > buy_weight and net_strength > dynamic_threshold:
             side = 'SELL'
             confidence = sell_weight
             # 记录统计
             if hasattr(self, 'signal_stats'):
-                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, True, 'SELL')
+                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, True, 'SELL', current_price)
         else:
             # 记录详细调试信息（使用INFO级别以便查看）
             logger.info(
@@ -1692,16 +1813,49 @@ class SelfEvolvingTrader:
                 logger.info(f"  Active signal {i+1}: direction={s['direction']}, weight={s['weight']:.3f}, confidence={s['confidence']:.3f}")
             # 记录统计（未触发）
             if hasattr(self, 'signal_stats'):
-                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, False)
+                self.signal_stats.record(buy_weight, sell_weight, dynamic_threshold, False, None, current_price)
             return {}
 
-        # 计算数量
-        if self.risk_manager:
+        # 计算数量 - 使用当前价格和实际账户余额
+        current_price = self.price_history[-1] if self.price_history else 0
+
+        # 获取可用余额（优先使用杠杆账户余额）
+        available_balance = self.config.initial_capital  # 默认使用配置的初始资金
+        if self.order_manager:
+            if hasattr(self.order_manager, 'account') and hasattr(self.order_manager.account, 'available_balance'):
+                account_balance = self.order_manager.account.available_balance
+                if account_balance > 0:
+                    available_balance = account_balance
+                    logger.debug(f"[SignalAggregation] Using account balance: {available_balance}")
+            elif hasattr(self.order_manager, 'get_available_balance'):
+                try:
+                    account_balance = self.order_manager.get_available_balance('USDT')
+                    if account_balance > 0:
+                        available_balance = account_balance
+                        logger.debug(f"[SignalAggregation] Using account balance: {available_balance}")
+                except:
+                    pass
+
+        if self.risk_manager and current_price > 0:
+            # 临时设置 order_manager 的 latest_price 以便 risk_manager 使用
+            if hasattr(self.order_manager, 'latest_price'):
+                self.order_manager.latest_price = current_price
             quantity = self.risk_manager.get_recommended_position_size(
                 self.config.symbol, confidence
             )
+            if quantity <= 0:
+                # 如果 risk_manager 返回 0，使用默认计算（使用实际账户余额的5%）
+                max_position_value = available_balance * 0.05  # 5% of available balance
+                quantity = max_position_value / current_price
+                logger.debug(f"[SignalAggregation] Using default quantity calculation: {quantity}")
         else:
-            quantity = 0.001
+            # 默认数量：使用实际账户余额的5%
+            if current_price > 0:
+                max_position_value = available_balance * 0.05
+                quantity = max_position_value / current_price
+            else:
+                quantity = 0.001
+                logger.warning("[SignalAggregation] No price available, using minimum quantity")
 
         return {
             'side': side,
@@ -1780,6 +1934,7 @@ class SelfEvolvingTrader:
     def _get_current_price(self) -> float:
         """获取当前市场价格（从 WebSocket 或 order manager）"""
         price = 0.0
+        source = None
 
         # 1. 尝试从 WebSocket order book 获取中间价
         if self.ws_client and self.ws_client.book:
@@ -1790,33 +1945,52 @@ class SelfEvolvingTrader:
                 best_ask = book.best_ask() if hasattr(book, 'best_ask') else None
                 if best_bid and best_ask:
                     price = (best_bid + best_ask) / 2
-            except Exception:
-                pass
+                    source = f"ws_book(bid={best_bid}, ask={best_ask})"
+            except Exception as e:
+                logger.debug(f"[Price] WebSocket book error: {e}")
+        elif self.ws_client and not self.ws_client.book:
+            logger.debug("[Price] WebSocket client exists but book is None")
+        elif not self.ws_client:
+            logger.debug("[Price] WebSocket client is None")
 
         # 2. 尝试从 SpotMarginOrderManager 获取
         if price <= 0 and self.order_manager:
             if hasattr(self.order_manager, 'get_current_price'):
                 try:
                     price = self.order_manager.get_current_price()
-                except Exception:
-                    pass
+                    if price > 0:
+                        source = "order_manager.get_current_price()"
+                except Exception as e:
+                    logger.debug(f"[Price] OrderManager error: {e}")
             elif hasattr(self.order_manager, 'latest_price'):
                 price = self.order_manager.latest_price
+                if price > 0:
+                    source = "order_manager.latest_price"
 
         # 3. 尝试从生命周期管理器获取
         if price <= 0 and self.lifecycle_manager:
             if hasattr(self.lifecycle_manager, 'current_price'):
                 price = self.lifecycle_manager.current_price
+                if price > 0:
+                    source = "lifecycle_manager.current_price"
 
         # 4. 尝试从 REST API 获取（备用）
-        if price <= 0 and hasattr(self, '_rest_client') and self._rest_client:
+        if price <= 0 and self.rest_client:
             try:
                 # 使用 BinanceRESTClient 获取价格
-                ticker = self._rest_client.get_ticker(self.config.symbol)
+                ticker = self.rest_client.get_ticker(self.config.symbol)
                 if ticker and 'lastPrice' in ticker:
                     price = float(ticker['lastPrice'])
-            except Exception:
-                pass
+                    source = "rest_api"
+            except Exception as e:
+                logger.debug(f"[Price] REST API error: {e}")
+
+        # 每100个周期记录一次价格来源（避免日志过多）
+        if hasattr(self, 'stats') and self.stats.total_cycles % 100 == 0:
+            if price > 0:
+                logger.info(f"[Price] Got price {price:.2f} from {source}, history_len={len(self.price_history)}")
+            else:
+                logger.warning(f"[Price] Failed to get price from any source! ws={self.ws_client is not None}, om={self.order_manager is not None}, lm={self.lifecycle_manager is not None}, rc={self.rest_client is not None}")
 
         return price
 

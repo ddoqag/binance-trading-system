@@ -34,16 +34,43 @@ logger = logging.getLogger(__name__)
 async def verify_api_connection(api_key: str, api_secret: str) -> bool:
     """验证 API 连接和权限"""
     import requests
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
 
     try:
+        # 从环境变量读取代理配置
+        proxies = {}
+        http_proxy = os.getenv('HTTP_PROXY')
+        https_proxy = os.getenv('HTTPS_PROXY')
+        if http_proxy:
+            proxies['http'] = http_proxy
+        if https_proxy:
+            proxies['https'] = https_proxy
+        if not proxies:
+            proxies = None
+        if proxies:
+            logger.info(f"[Verify] Using proxy: {proxies}")
+
+        # 创建带重试的 session
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[500, 502, 503, 504]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        session.proxies = proxies
+
         # 测试连接 - 获取服务器时间
-        resp = requests.get('https://api.binance.com/api/v3/time', timeout=5)
+        resp = session.get('https://api.binance.com/api/v3/time', timeout=10)
         server_time = resp.json()['serverTime']
         logger.info(f"[Verify] Server time: {server_time}")
 
-        # 测试账户权限（需要签名）
-        timestamp = int(time.time() * 1000)
-        query_string = f'timestamp={timestamp}'
+        # 使用服务器时间进行签名，避免本地时钟偏移问题
+        # 添加 recvWindow 扩大时间容差
+        query_string = f'timestamp={server_time}&recvWindow=5000'
         signature = hmac.new(
             api_secret.encode(),
             query_string.encode(),
@@ -53,7 +80,7 @@ async def verify_api_connection(api_key: str, api_secret: str) -> bool:
         headers = {'X-MBX-APIKEY': api_key}
         url = f'https://api.binance.com/api/v3/account?{query_string}&signature={signature}'
 
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = session.get(url, headers=headers, timeout=10)
 
         if resp.status_code == 200:
             data = resp.json()
@@ -67,8 +94,8 @@ async def verify_api_connection(api_key: str, api_secret: str) -> bool:
             return False
 
     except Exception as e:
-        logger.error(f"[Verify] Connection failed: {e}")
-        return False
+            logger.error(f"[Verify] Connection failed: {e}")
+            return False
 
 
 async def main():
@@ -81,6 +108,7 @@ async def main():
     parser.add_argument('--spot-margin', action='store_true', help='Enable spot margin trading (3x leverage)')
     parser.add_argument('--margin-mode', type=str, default='cross', choices=['cross', 'isolated'], help='Margin mode: cross or isolated')
     parser.add_argument('--max-leverage', type=int, default=3, help='Maximum leverage (1-10)')
+    parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation (auto-confirm LIVE)')
 
     args = parser.parse_args()
 
@@ -126,7 +154,12 @@ async def main():
     print("\n" + "!" * 60)
     print("  WARNING: This will execute REAL trades with REAL money!")
     print("!" * 60)
-    confirm = input("\nType 'LIVE' to confirm: ")
+
+    if args.yes:
+        confirm = 'LIVE'
+        logger.info("[Auto-Confirm] --yes flag provided, skipping confirmation.")
+    else:
+        confirm = input("\nType 'LIVE' to confirm: ")
 
     if confirm != 'LIVE':
         logger.info("Aborted.")

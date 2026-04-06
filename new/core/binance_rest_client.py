@@ -2,27 +2,45 @@ import time
 import hmac
 import hashlib
 import requests
+import os
 from urllib.parse import urlencode
 from typing import Optional
 
 
 class BinanceRESTClient:
-    def __init__(self, api_key: str, api_secret: str, base_url: str = "https://api.binance.com"):
+    def __init__(self, api_key: str, api_secret: str, base_url: str = "https://api.binance.com", proxies = None):
         self.api_key = api_key
         self.api_secret = api_secret
         self.base_url = base_url
         self.time_offset = 0
+
+        # 从环境变量读取代理配置
+        if proxies is None:
+            self.proxies = {}
+            http_proxy = os.getenv('HTTP_PROXY')
+            https_proxy = os.getenv('HTTPS_PROXY')
+            if http_proxy:
+                self.proxies['http'] = http_proxy
+            if https_proxy:
+                self.proxies['https'] = https_proxy
+            if not self.proxies:
+                self.proxies = None
+        else:
+            self.proxies = proxies
+
         self._sync_server_time()
 
     def _sync_server_time(self):
         """同步 Binance 服务器时间"""
         try:
-            resp = requests.get(f"{self.base_url}/api/v3/time", timeout=5)
+            resp = requests.get(f"{self.base_url}/api/v3/time", timeout=5, proxies=self.proxies)
             data = resp.json()
             server_time = data['serverTime']
             local_time = int(time.time() * 1000)
             self.time_offset = server_time - local_time
             print(f"[BinanceRESTClient] Time synced: offset={self.time_offset}ms")
+            if self.proxies:
+                print(f"[BinanceRESTClient] Using proxy: {self.proxies}")
         except Exception as e:
             print(f"[BinanceRESTClient] Failed to sync time: {e}")
             self.time_offset = 0
@@ -56,7 +74,8 @@ class BinanceRESTClient:
             "side": side,
             "type": order_type,
             "quantity": f"{quantity:.6f}",
-            "timestamp": self._get_timestamp()
+            "timestamp": self._get_timestamp(),
+            "recvWindow": 5000
         }
         if order_type == "LIMIT" and price is not None:
             params["price"] = f"{price:.2f}"
@@ -68,18 +87,23 @@ class BinanceRESTClient:
             f"{self.base_url}/api/v3/order",
             headers=self._headers(),
             params=params,
-            timeout=10
+            timeout=10,
+            proxies=self.proxies
         )
         return resp.json()
 
     def get_account(self) -> dict:
-        params = {"timestamp": int(time.time() * 1000)}
+        params = {
+            "timestamp": self._get_timestamp(),
+            "recvWindow": 5000  # 增加接收窗口容忍时钟偏移
+        }
         params["signature"] = self._sign(params)
         resp = requests.get(
             f"{self.base_url}/api/v3/account",
             headers=self._headers(),
             params=params,
-            timeout=10
+            timeout=10,
+            proxies=self.proxies
         )
         return resp.json()
 
@@ -87,27 +111,31 @@ class BinanceRESTClient:
         params = {
             "symbol": symbol.upper(),
             "origClientOrderId": order_id,
-            "timestamp": self._get_timestamp()
+            "timestamp": self._get_timestamp(),
+            "recvWindow": 5000
         }
         params["signature"] = self._sign(params)
         resp = requests.delete(
             f"{self.base_url}/api/v3/order",
             headers=self._headers(),
             params=params,
-            timeout=10
+            timeout=10,
+            proxies=self.proxies
         )
         return resp.json()
 
     def get_open_orders(self, symbol: str) -> list:
         params = {
             "symbol": symbol.upper(),
-            "timestamp": self._get_timestamp()
+            "timestamp": self._get_timestamp(),
+            "recvWindow": 5000
         }
         params["signature"] = self._sign(params)
         resp = requests.get(
             f"{self.base_url}/api/v3/openOrders",
             headers=self._headers(),
             params=params,
-            timeout=10
+            timeout=10,
+            proxies=self.proxies
         )
         return resp.json()
