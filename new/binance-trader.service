@@ -1,0 +1,35 @@
+[Unit]
+Description=Binance Self-Evolving Trader
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+Group=trader
+WorkingDirectory=/opt/binance-trader
+Environment=PYTHONPATH=/opt/binance-trader
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/opt/binance-trader/.env
+
+# 启动命令
+ExecStart=/usr/bin/python3 start_live_trader.py --symbol BTCUSDT --capital 1000 --spot-margin --yes
+
+# 重启策略
+Restart=always
+RestartSec=10
+
+# 优雅关闭
+TimeoutStopSec=60
+KillSignal=SIGTERM
+
+# 资源限制
+LimitAS=4G
+LimitRSS=2G
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=binance-trader
+
+[Install]
+WantedBy=multi-user.target

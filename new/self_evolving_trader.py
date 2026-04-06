@@ -81,6 +81,10 @@ from core.execution_policy import ExecutionPolicy, ExecutionAction
 from core.queue_model import QueueModel
 from core.fill_model import FillModel
 from core.slippage_model import SlippageModel
+from config.mode import TradingMode
+from utils.resilient_loop import health_check_loop
+from utils.telegram_notify import send_telegram
+from risk.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 
 try:
     from rl.sac_execution_agent import SACExecutionAgent
@@ -427,6 +431,9 @@ class TraderConfig:
     sac_model_path: Optional[str] = None
     sac_shadow_log_path: str = "logs/sac_shadow.log"
 
+    # 熔断器配置
+    circuit_breaker_config: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
+
 
 @dataclass
 class TradingStats:
@@ -502,6 +509,12 @@ class SelfEvolvingTrader:
         # Checkpoint
         self._checkpoint_task: Optional[asyncio.Task] = None
 
+        # Circuit Breaker (风控熔断)
+        self.circuit_breaker = CircuitBreaker(
+            config=config.circuit_breaker_config,
+            notify_fn=self._notify_circuit_breaker
+        )
+
         # Phase C: Live Execution Core
         self.rest_client: Optional[BinanceRESTClient] = None
         self.ws_client: Optional[BinanceWSClient] = None
@@ -575,6 +588,11 @@ class SelfEvolvingTrader:
                 )
                 await self.risk_manager.start()
                 logger.info("[SelfEvolvingTrader] LiveRiskManager initialized")
+
+            # 3. 初始化熔断器余额
+            if self.circuit_breaker:
+                self.circuit_breaker.initialize_balance(self.config.initial_capital)
+                logger.info(f"[SelfEvolvingTrader] CircuitBreaker initialized with balance: {self.config.initial_capital}")
 
             # 3. Phase 1: Agent Registry
             if self.config.enable_phase_1_registry:
@@ -913,10 +931,53 @@ class SelfEvolvingTrader:
         if self.config.checkpoint_interval_seconds > 0:
             self._checkpoint_task = asyncio.create_task(self._auto_save_loop())
 
+        # 启动健康检查循环
+        self._health_check_task = asyncio.create_task(
+            health_check_loop(
+                check_fn=self._health_check,
+                notify_fn=self._health_notify,
+                interval=60,
+                shutdown_event=self._shutdown_event
+            )
+        )
+
         # 设置信号处理
         self._setup_signal_handlers()
 
         logger.info("[SelfEvolvingTrader] Started successfully")
+
+    def _health_check(self) -> bool:
+        """健康检查 - 返回系统是否健康"""
+        try:
+            # 检查 WebSocket 连接
+            ws_healthy = self.ws_client is not None and hasattr(self.ws_client, '_running') and self.ws_client._running
+
+            # 检查风险状态
+            risk_healthy = self.risk_manager is not None and not self.risk_manager.is_kill_switch_triggered()
+
+            # 检查订单管理器
+            om_healthy = self.order_manager is not None
+
+            # 检查价格数据是否更新（5分钟内必须有更新）
+            price_healthy = False
+            if len(self.price_history) > 0:
+                # 回测模式没有实时价格，认为健康
+                if self.config.trading_mode == TradingMode.BACKTEST:
+                    price_healthy = True
+                else:
+                    # 实盘模式检查是否有价格数据
+                    price_healthy = self._get_current_price() > 0
+
+            return ws_healthy and risk_healthy and om_healthy and price_healthy
+
+        except Exception as e:
+            logger.warning(f"[HealthCheck] Error during check: {e}")
+            return False
+
+    async def _health_notify(self, msg: str):
+        """健康检查失败时的通知"""
+        logger.warning(f"[HealthCheck] {msg}")
+        await send_telegram(msg, level="WARNING", throttle=300)  # 5分钟限流
 
     async def stop(self):
         """停止交易系统 - 幂等设计，确保只执行一次"""
@@ -947,6 +1008,14 @@ class SelfEvolvingTrader:
             self._checkpoint_task.cancel()
             try:
                 await self._checkpoint_task
+            except asyncio.CancelledError:
+                pass
+
+        # 停止健康检查
+        if hasattr(self, '_health_check_task') and self._health_check_task:
+            self._health_check_task.cancel()
+            try:
+                await self._health_check_task
             except asyncio.CancelledError:
                 pass
 
@@ -1510,6 +1579,18 @@ class SelfEvolvingTrader:
         if not signals:
             return
 
+        # 熔断器检查
+        if hasattr(self, 'circuit_breaker') and self.circuit_breaker:
+            # 更新当前余额
+            current_balance = self.config.initial_capital
+            if self.order_manager and hasattr(self.order_manager, 'account'):
+                current_balance = getattr(self.order_manager.account, 'total_balance', current_balance)
+
+            can_trade = await self.circuit_breaker.check(current_balance)
+            if not can_trade:
+                logger.warning("[SelfEvolvingTrader] Trade rejected by circuit breaker")
+                return
+
         # 加权聚合信号
         aggregated = self._aggregate_signals(signals)
         if aggregated:
@@ -1907,10 +1988,24 @@ class SelfEvolvingTrader:
                 best_strategy = max(allocations, key=allocations.get)
                 self.meta_agent.feedback_strategy_pnl(best_strategy, realized_pnl)
 
+        # 上报给熔断器
+        if hasattr(self, 'circuit_breaker') and self.circuit_breaker:
+            self.circuit_breaker.record_trade_result(realized_pnl)
+
         logger.info(
             f"[SelfEvolvingTrader] Order filled: {order.id}, "
             f"PnL: {realized_pnl:.4f}, Total PnL: {self.stats.total_pnl:.4f}"
         )
+
+    async def _notify_circuit_breaker(self, msg: str, level: str):
+        """熔断器通知回调"""
+        await send_telegram(msg, level=level, throttle=0)
+
+    def can_trade(self) -> bool:
+        """检查是否可以交易（熔断器）"""
+        if hasattr(self, 'circuit_breaker') and self.circuit_breaker:
+            return self.circuit_breaker.can_place_order()
+        return True
 
     def _build_current_state(self) -> np.ndarray:
         """构建当前市场状态向量"""

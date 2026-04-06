@@ -21,10 +21,13 @@ from decimal import Decimal
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
+from config.mode import TradingMode
 from self_evolving_trader import (
-    SelfEvolvingTrader, TraderConfig, TradingMode,
+    SelfEvolvingTrader, TraderConfig,
     create_trader, run_trader
 )
+from utils.telegram_notify import notify_start, notify_stop, notify_crash
+from scheduler.daily_report_scheduler import daily_report_loop
 
 logging.basicConfig(
     level=logging.INFO,
@@ -156,6 +159,8 @@ async def main():
     parser.add_argument('--margin-mode', type=str, default='cross', choices=['cross', 'isolated'], help='Margin mode: cross or isolated')
     parser.add_argument('--max-leverage', type=int, default=3, help='Maximum leverage (1-10)')
     parser.add_argument('--yes', '-y', action='store_true', help='Skip confirmation (auto-confirm LIVE)')
+    parser.add_argument('--mode', type=str, choices=['live', 'paper'], default=None,
+                        help='Trading mode: live (real money) or paper (simulation). Overrides env/config.')
 
     args = parser.parse_args()
 
@@ -166,12 +171,29 @@ async def main():
     api_key = os.getenv('BINANCE_API_KEY', '')
     api_secret = os.getenv('BINANCE_API_SECRET', '')
 
+    # 确定交易模式
+    from config.trading_mode_switcher import TradingModeSwitcher
+    mode_switcher = TradingModeSwitcher()
+
+    if args.mode:
+        # 命令行参数优先
+        trading_mode = TradingMode.from_string(args.mode)
+        mode_switcher.set_mode(trading_mode)
+    else:
+        # 从环境变量或配置文件读取
+        trading_mode = mode_switcher.get_current_mode()
+
+    # 显示模式信息
     print("=" * 60)
-    print("  LIVE TRADING MODE - Self-Evolving Trader")
+    if trading_mode.is_live():
+        print("  LIVE TRADING MODE - Self-Evolving Trader")
+    else:
+        print("  PAPER TRADING MODE - Simulation Only")
     print("=" * 60)
     print(f"\nSymbol: {args.symbol}")
     print(f"Capital: ${args.capital:,.2f}")
     print(f"Max Position: {args.max_position*100:.0f}%")
+    print(f"Mode: {trading_mode.value.upper()}")
     print(f"Dry Run: {args.dry_run}")
     print(f"Spot Margin: {args.spot_margin}")
     if args.spot_margin:
@@ -197,20 +219,24 @@ async def main():
         logger.info("\n[Dry Run] Connection verified. Exiting without trading.")
         sys.exit(0)
 
-    # 安全确认
-    print("\n" + "!" * 60)
-    print("  WARNING: This will execute REAL trades with REAL money!")
-    print("!" * 60)
+    # LIVE 模式安全确认
+    if trading_mode.is_live():
+        print("\n" + "!" * 60)
+        print("  WARNING: This will execute REAL trades with REAL money!")
+        print("!" * 60)
 
-    if args.yes:
-        confirm = 'LIVE'
-        logger.info("[Auto-Confirm] --yes flag provided, skipping confirmation.")
+        if args.yes:
+            confirm = 'LIVE'
+            logger.info("[Auto-Confirm] --yes flag provided, skipping confirmation.")
+        else:
+            confirm = input("\nType 'LIVE' to confirm: ")
+
+        if confirm != 'LIVE':
+            logger.info("Aborted.")
+            sys.exit(0)
     else:
-        confirm = input("\nType 'LIVE' to confirm: ")
-
-    if confirm != 'LIVE':
-        logger.info("Aborted.")
-        sys.exit(0)
+        # PAPER 模式自动确认
+        logger.info("[Paper Mode] Simulation mode, no confirmation needed.")
 
     # 创建配置
     logger.info("\n[2/3] Initializing trader...")
@@ -219,7 +245,7 @@ async def main():
         api_key=api_key,
         api_secret=api_secret,
         symbol=args.symbol,
-        trading_mode=TradingMode.LIVE,
+        trading_mode=trading_mode,
         use_testnet=False,
         initial_capital=args.capital,
         check_interval_seconds=args.check_interval,
@@ -245,16 +271,40 @@ async def main():
         logger.info("Starting live trading...")
         logger.info("Press Ctrl+C to stop\n")
 
+        # 发送启动通知
+        await notify_start()
+
+        # 启动日报调度器（后台任务）
+        report_task = None
+        try:
+            report_task = asyncio.create_task(daily_report_loop(trader))
+            logger.info("[DailyReport] Scheduler started")
+        except Exception as e:
+            logger.warning(f"[DailyReport] Failed to start scheduler: {e}")
+
         # 运行交易者
         await run_trader(trader, duration_seconds=None)  # 无限运行
+
+        # 取消日报调度器
+        if report_task:
+            report_task.cancel()
+            try:
+                await report_task
+            except asyncio.CancelledError:
+                pass
+
+        # 发送停止通知
+        await notify_stop()
 
     except KeyboardInterrupt:
         logger.info("\nStopping trader...")
         await trader.stop()
+        await notify_stop()
         logger.info("Trader stopped.")
 
     except Exception as e:
         logger.error(f"Error: {e}")
+        await notify_crash(str(e))
         raise
 
 
