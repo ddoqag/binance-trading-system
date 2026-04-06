@@ -76,8 +76,14 @@ class MLMomentumStrategy(StrategyBase):
             return np.zeros(15)  # 返回零特征
 
         close = data['close']
-        high = data['high']
-        low = data['low']
+        # 检查是否有 high/low 数据，如果没有则使用 close 的近似值
+        if 'high' in data.columns and 'low' in data.columns:
+            high = data['high']
+            low = data['low']
+        else:
+            # 使用 close 价格作为 high/low 的近似
+            high = close
+            low = close
         volume = data.get('volume', pd.Series([1] * len(data)))
 
         # 1. 价格动量特征
