@@ -919,10 +919,17 @@ class SelfEvolvingTrader:
         logger.info("[SelfEvolvingTrader] Started successfully")
 
     async def stop(self):
-        """停止交易系统"""
-        if not self._running:
+        """停止交易系统 - 幂等设计，确保只执行一次"""
+        # 幂等检查：如果已经停止或正在停止，直接返回
+        if getattr(self, '_stopping', False):
+            logger.debug("[SelfEvolvingTrader] Stop already in progress, skipping...")
             return
 
+        if not self._running and not self._shutdown_event.is_set():
+            logger.debug("[SelfEvolvingTrader] Not running, nothing to stop")
+            return
+
+        self._stopping = True
         logger.info("[SelfEvolvingTrader] Stopping...")
         self._running = False
         self._shutdown_event.set()
@@ -972,10 +979,10 @@ class SelfEvolvingTrader:
         logger.info("[SelfEvolvingTrader] Stopped")
 
     def _setup_signal_handlers(self):
-        """设置信号处理"""
-        def handle_signal(sig, frame):
-            logger.info(f"[SelfEvolvingTrader] Received signal {sig}, shutting down...")
-            asyncio.create_task(self.stop())
+        """设置信号处理 - 使用 Event 机制避免僵尸进程"""
+        def handle_signal(sig, _):
+            logger.info(f"[SelfEvolvingTrader] Received signal {sig}, scheduling shutdown...")
+            self._shutdown_event.set()
 
         signal.signal(signal.SIGINT, handle_signal)
         signal.signal(signal.SIGTERM, handle_signal)
@@ -2111,7 +2118,7 @@ async def create_trader(
 
 async def run_trader(trader: SelfEvolvingTrader, duration_seconds: float = None):
     """
-    运行交易者
+    运行交易者 - 使用 Event 机制实现干净退出
 
     Args:
         trader: 交易者实例
@@ -2125,11 +2132,12 @@ async def run_trader(trader: SelfEvolvingTrader, duration_seconds: float = None)
             await asyncio.sleep(duration_seconds)
         else:
             logger.info("[Main] Running indefinitely (Press Ctrl+C to stop)...")
-            while trader._running:
-                await asyncio.sleep(1)
+            # 等待 shutdown_event，而不是轮询 _running
+            await trader._shutdown_event.wait()
 
     except KeyboardInterrupt:
-        logger.info("[Main] Interrupted by user")
+        # 不再处理 KeyboardInterrupt，信号处理程序会设置 event
+        pass
 
     finally:
         await trader.stop()

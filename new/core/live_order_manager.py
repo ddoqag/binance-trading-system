@@ -274,13 +274,21 @@ class LiveOrderManager:
         logger.info("[LiveOrderManager] Stopped")
 
     async def _sync_loop(self):
-        """后台同步循环"""
+        """后台同步循环 - 带 timeout 防止卡死"""
         while self._running:
             try:
-                # 每5秒同步一次账户和订单状态
-                await self.sync_account()
-                await self.sync_open_orders()
+                # 每5秒同步一次账户和订单状态，带 10 秒超时
+                await asyncio.wait_for(
+                    self.sync_account(),
+                    timeout=10
+                )
+                await asyncio.wait_for(
+                    self.sync_open_orders(),
+                    timeout=10
+                )
                 await asyncio.sleep(5)
+            except asyncio.TimeoutError:
+                logger.warning("[LiveOrderManager] sync_account/open_orders timed out")
             except Exception as e:
                 logger.error(f"[LiveOrderManager] Sync error: {e}")
                 await asyncio.sleep(10)

@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 实盘交易启动脚本 - 带安全检查
 
@@ -9,6 +9,8 @@ Usage:
 
 import sys
 import os
+import psutil
+import atexit
 import asyncio
 import argparse
 import logging
@@ -28,6 +30,51 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# ========= PID 文件管理 =========
+PID_FILE = "trader.pid"
+
+
+def write_pid():
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def remove_pid():
+    if os.path.exists(PID_FILE):
+        os.remove(PID_FILE)
+
+
+def check_existing_instance():
+    if not os.path.exists(PID_FILE):
+        return False
+
+    try:
+        with open(PID_FILE, "r") as f:
+            pid = int(f.read().strip())
+
+        if psutil.pid_exists(pid):
+            proc = psutil.Process(pid)
+            cmdline = " ".join(proc.cmdline())
+            if "start_live_trader" in cmdline:
+                return True
+    except (ValueError, psutil.NoSuchProcess, FileNotFoundError):
+        # PID 文件损坏或进程已不存在
+        pass
+
+    # 清理过期的 PID 文件
+    if os.path.exists(PID_FILE):
+        os.remove(PID_FILE)
+    return False
+
+
+# 检查是否已有实例在运行
+if check_existing_instance():
+    print("ERROR: Trader is already running.")
+    sys.exit(1)
+
+write_pid()
+atexit.register(remove_pid)
 logger = logging.getLogger(__name__)
 
 
