@@ -212,6 +212,9 @@ class LiveOrderManager:
 
     async def _sync_server_time(self):
         """同步服务器时间"""
+        if self._session is None:
+            logger.warning("[LiveOrderManager] Cannot sync time: session not initialized")
+            return
         try:
             url = f"{self.base_url}/api/v3/time"
             async with self._session.get(url, proxy=self._proxy) as response:
