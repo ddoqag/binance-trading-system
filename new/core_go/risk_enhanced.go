@@ -319,8 +319,6 @@ func (ern *EnhancedRiskManager) GetConfig() *RiskConfig {
 // SetRiskLevel changes the risk level and updates parameters
 func (ern *EnhancedRiskManager) SetRiskLevel(level RiskLevelType) {
 	ern.configMu.Lock()
-	defer ern.configMu.Unlock()
-
 	oldLevel := ern.config.RiskLevel
 	ern.config.ApplyRiskLevel(level)
 
@@ -331,10 +329,11 @@ func (ern *EnhancedRiskManager) SetRiskLevel(level RiskLevelType) {
 	ern.RiskManager.maxDrawdown = ern.config.MaxDrawdown
 	ern.RiskManager.maxOrdersPerMin = ern.config.MaxOrdersPerMin
 	ern.RiskManager.mu.Unlock()
+	ern.configMu.Unlock()
 
 	log.Printf("[RISK] Risk level changed from %s to %s", oldLevel, level)
 
-	// Generate alert
+	// Generate alert (must be outside lock to avoid deadlock)
 	ern.generateAlert(AlertLevelInfo, AlertTypeVolatility, fmt.Sprintf("Risk level changed to %s", level), "", nil)
 }
 

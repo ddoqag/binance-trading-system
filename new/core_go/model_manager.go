@@ -185,6 +185,9 @@ type ModelManager struct {
 	current   *ModelVersion
 	mu        sync.RWMutex
 
+	// Unique ID generation
+	loadCounter uint64
+
 	// A/B testing
 	abTest    *ModelABTestConfig
 	abResults map[string]*ModelABTestResult
@@ -379,8 +382,9 @@ func (mm *ModelManager) LoadModel(ctx context.Context, name, path string, modelT
 		return fmt.Errorf("model file not found: %w", err)
 	}
 
-	// Generate version ID
-	versionID := fmt.Sprintf("%s_%d", name, time.Now().Unix())
+	// Generate version ID (using nanoseconds + counter to ensure uniqueness)
+	mm.loadCounter++
+	versionID := fmt.Sprintf("%s_%d_%d", name, time.Now().UnixNano(), mm.loadCounter)
 
 	// Create model version
 	model := &ModelVersion{

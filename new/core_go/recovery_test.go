@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -212,7 +213,11 @@ func TestRecoveryManagerPauseResume(t *testing.T) {
 
 // TestCreateCheckpoint tests checkpoint creation
 func TestCreateCheckpoint(t *testing.T) {
-	tempDir := t.TempDir()
+	// Use os.MkdirTemp instead of t.TempDir() to avoid automatic cleanup issues on Windows
+	tempDir, err := os.MkdirTemp("", "checkpoint_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
 
 	config := DefaultRecoveryConfig()
 	config.StateRecoveryEnabled = true
@@ -220,9 +225,9 @@ func TestCreateCheckpoint(t *testing.T) {
 
 	rm, err := NewRecoveryManager(config)
 	if err != nil {
+		os.RemoveAll(tempDir)
 		t.Fatalf("Failed to create RecoveryManager: %v", err)
 	}
-	defer rm.Stop()
 
 	rm.RegisterComponent("comp1", func() error { return nil })
 	rm.ReportHealth("comp1", true, 10*time.Millisecond, nil)
@@ -233,6 +238,18 @@ func TestCreateCheckpoint(t *testing.T) {
 	}
 
 	t.Logf("✓ Checkpoint creation test passed")
+
+	// Cleanup with retry for Windows file handle release
+	rm.Stop()
+	for i := 0; i < 10; i++ {
+		err = os.RemoveAll(tempDir)
+		if err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// If cleanup fails, just log it - don't fail the test
+	t.Logf("Warning: Could not clean up temp dir: %v", err)
 }
 
 // TestRecoveryHistory tests recovery history tracking

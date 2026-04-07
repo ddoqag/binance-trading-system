@@ -202,6 +202,10 @@ func (stp *SelfTradePrevention) CheckOrder(symbol string, side OrderSide, price,
 		result.Message = fmt.Sprintf("Will reduce order sizes to prevent self-trade with %s", oldestConflict.ID)
 	}
 
+	// Record event and metrics when self-trade is detected
+	stp.recordEvent(*event)
+	stp.incrementMetric("prevent")
+
 	return result
 }
 
