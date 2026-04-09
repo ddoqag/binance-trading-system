@@ -1,0 +1,1143 @@
+- generic [ref=e2]:
+  - region
+  - generic [ref=e3]:
+    - link "Skip to content" [ref=e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=e6]:
+      - heading "Navigation Menu" [level=2] [ref=e7]
+      - generic [ref=e8]:
+        - link "Homepage" [ref=e10] [cursor=pointer]:
+          - /url: /
+          - img [ref=e11]
+        - generic [ref=e13]:
+          - navigation "Global" [ref=e16]:
+            - list [ref=e17]:
+              - listitem [ref=e18]:
+                - button "Platform" [ref=e20] [cursor=pointer]:
+                  - text: Platform
+                  - img [ref=e21]
+              - listitem [ref=e23]:
+                - button "Solutions" [ref=e25] [cursor=pointer]:
+                  - text: Solutions
+                  - img [ref=e26]
+              - listitem [ref=e28]:
+                - button "Resources" [ref=e30] [cursor=pointer]:
+                  - text: Resources
+                  - img [ref=e31]
+              - listitem [ref=e33]:
+                - button "Open Source" [ref=e35] [cursor=pointer]:
+                  - text: Open Source
+                  - img [ref=e36]
+              - listitem [ref=e38]:
+                - button "Enterprise" [ref=e40] [cursor=pointer]:
+                  - text: Enterprise
+                  - img [ref=e41]
+              - listitem [ref=e43]:
+                - link "Pricing" [ref=e44] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+                  - generic [ref=e45]: Pricing
+          - generic [ref=e46]:
+            - button "Search or jump to…" [ref=e49] [cursor=pointer]:
+              - img [ref=e51]
+            - link "Sign in" [ref=e54] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2Fddoqag%2Fbinance-trading-system%2Fcommits%2Ffeature%2Fsignal-aggregator-metrics
+            - link "Sign up" [ref=e55] [cursor=pointer]:
+              - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E%2Fcommits%2Fshow&source=header-repo&source_repo=ddoqag%2Fbinance-trading-system
+            - button "Appearance settings" [disabled] [ref=e58]:
+              - img
+  - main [ref=e62]:
+    - generic [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e66]:
+          - img [ref=e67]
+          - link "ddoqag" [ref=e70] [cursor=pointer]:
+            - /url: /ddoqag
+          - generic [ref=e71]: /
+          - strong [ref=e72]:
+            - link "binance-trading-system" [ref=e73] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system
+          - generic [ref=e74]: Public
+        - generic [ref=e75]:
+          - list:
+            - listitem [ref=e76]:
+              - link "You must be signed in to change notification settings" [ref=e77] [cursor=pointer]:
+                - /url: /login?return_to=%2Fddoqag%2Fbinance-trading-system
+                - img [ref=e78]
+                - text: Notifications
+            - listitem [ref=e80]:
+              - link "Fork 0" [ref=e81] [cursor=pointer]:
+                - /url: /login?return_to=%2Fddoqag%2Fbinance-trading-system
+                - img [ref=e82]
+                - text: Fork
+                - generic "0" [ref=e84]
+            - listitem [ref=e85]:
+              - link "You must be signed in to star a repository" [ref=e87] [cursor=pointer]:
+                - /url: /login?return_to=%2Fddoqag%2Fbinance-trading-system
+                - img [ref=e88]
+                - text: Star
+                - generic "0 users starred this repository" [ref=e90]: "0"
+      - navigation "Repository" [ref=e91]:
+        - list [ref=e92]:
+          - listitem [ref=e93]:
+            - link "Code" [ref=e94] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/tree/feature/signal-aggregator-metrics
+              - img [ref=e95]
+              - generic [ref=e97]: Code
+          - listitem [ref=e98]:
+            - link "Issues" [ref=e99] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/issues
+              - img [ref=e100]
+              - generic [ref=e103]: Issues
+          - listitem [ref=e104]:
+            - link "Pull requests" [ref=e105] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/pulls
+              - img [ref=e106]
+              - generic [ref=e108]: Pull requests
+          - listitem [ref=e109]:
+            - link "Actions" [ref=e110] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/actions
+              - img [ref=e111]
+              - generic [ref=e113]: Actions
+          - listitem [ref=e114]:
+            - link "Projects" [ref=e115] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/projects
+              - img [ref=e116]
+              - generic [ref=e118]: Projects
+          - listitem [ref=e119]:
+            - link "Security and quality" [ref=e120] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/security
+              - img [ref=e121]
+              - generic [ref=e123]: Security and quality
+          - listitem [ref=e124]:
+            - link "Insights" [ref=e125] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/pulse
+              - img [ref=e126]
+              - generic [ref=e128]: Insights
+    - generic [ref=e134]:
+      - heading "Commits" [level=1] [ref=e138]
+      - generic [ref=e143]:
+        - generic [ref=e144]:
+          - heading "Branch selector" [level=2] [ref=e145]
+          - button "feature/signal-aggregator-metrics branch" [ref=e146] [cursor=pointer]:
+            - generic [ref=e147]:
+              - generic [ref=e149]:
+                - img [ref=e151]
+                - generic [ref=e154]: feature/signal-aggregator-metrics
+              - generic:
+                - img
+          - generic [ref=e155]:
+            - heading "User selector" [level=2] [ref=e156]
+            - button "All users" [ref=e158] [cursor=pointer]:
+              - generic [ref=e161]:
+                - img [ref=e163]
+                - generic [ref=e165]: All users
+              - generic:
+                - img
+            - heading "Datepicker" [level=2] [ref=e166]
+            - button "All time" [ref=e167] [cursor=pointer]:
+              - generic [ref=e168]:
+                - generic:
+                  - img
+                - generic [ref=e169]: All time
+                - generic:
+                  - img
+        - generic [ref=e170]:
+          - heading "Commit History" [level=2] [ref=e171]
+          - generic [ref=e172]:
+            - generic [ref=e173]:
+              - img [ref=e176]
+              - generic [ref=e178]:
+                - heading "Commits on Apr 6, 2026" [level=3] [ref=e179]
+                - list "Commits on Apr 6, 2026" [ref=e182]:
+                  - 'listitem "feat: add circuit breaker, paper trading mode, and production readiness. More information available below." [ref=e183]':
+                    - generic [ref=e184]:
+                      - 'heading "feat: add circuit breaker, paper trading mode, and production readiness" [level=4] [ref=e185]':
+                        - 'link "feat: add circuit breaker, paper trading mode, and production readiness" [ref=e187] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/8e5f2e8a2a81e075c8767fa0545fc974657ba940
+                      - button "Show description for 8e5f2e8" [ref=e188] [cursor=pointer]:
+                        - img [ref=e189]
+                    - generic [ref=e195]:
+                      - generic [ref=e197]:
+                        - img "Trader" [ref=e198]
+                        - img "claude" [ref=e199]
+                      - generic "Trader" [ref=e201]
+                      - generic [ref=e202]: and
+                      - link "commits by claude" [ref=e204] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e205]: committed
+                      - generic "Apr 6, 2026, 10:16 PM GMT+8" [ref=e206]: Apr 6, 20263 minutes ago
+                    - generic [ref=e209]:
+                      - generic [ref=e210]:
+                        - tooltip "View commit details" [ref=e211]:
+                          - link "8e5f2e8" [ref=e212] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/8e5f2e8a2a81e075c8767fa0545fc974657ba940
+                            - generic [ref=e214]: 8e5f2e8
+                        - button "Copy full SHA for 8e5f2e8" [ref=e216] [cursor=pointer]:
+                          - img [ref=e217]
+                      - tooltip "Browse repository at this point" [ref=e220]:
+                        - link "Browse repository at this point" [ref=e221] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/8e5f2e8a2a81e075c8767fa0545fc974657ba940
+                          - img [ref=e222]
+                  - 'listitem "feat: implement PID file lock and graceful shutdown to prevent zombie processes. More information available below." [ref=e224]':
+                    - generic [ref=e225]:
+                      - 'heading "feat: implement PID file lock and graceful shutdown to prevent zombie processes" [level=4] [ref=e226]':
+                        - 'link "feat: implement PID file lock and graceful shutdown to prevent zombie processes" [ref=e228] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/d1e1ceb1d360497a931f57cc8074f7057485e322
+                      - button "Show description for d1e1ceb" [ref=e229] [cursor=pointer]:
+                        - img [ref=e230]
+                    - generic [ref=e236]:
+                      - generic [ref=e238]:
+                        - img "Trader" [ref=e239]
+                        - img "claude" [ref=e240]
+                      - generic "Trader" [ref=e242]
+                      - generic [ref=e243]: and
+                      - link "commits by claude" [ref=e245] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e246]: committed
+                      - generic "Apr 6, 2026, 5:43 PM GMT+8" [ref=e247]: Apr 6, 20264 hours ago
+                    - generic [ref=e250]:
+                      - generic [ref=e251]:
+                        - tooltip "View commit details" [ref=e252]:
+                          - link "d1e1ceb" [ref=e253] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/d1e1ceb1d360497a931f57cc8074f7057485e322
+                            - generic [ref=e255]: d1e1ceb
+                        - button "Copy full SHA for d1e1ceb" [ref=e257] [cursor=pointer]:
+                          - img [ref=e258]
+                      - tooltip "Browse repository at this point" [ref=e261]:
+                        - link "Browse repository at this point" [ref=e262] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/d1e1ceb1d360497a931f57cc8074f7057485e322
+                          - img [ref=e263]
+                  - 'listitem "fix: LiveOrderManager add session null check in time sync. More information available below." [ref=e265]':
+                    - generic [ref=e266]:
+                      - 'heading "fix: LiveOrderManager add session null check in time sync" [level=4] [ref=e267]':
+                        - 'link "fix: LiveOrderManager add session null check in time sync" [ref=e269] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/8de621c8568c114151e9bce1594285b26de302a3
+                      - button "Show description for 8de621c" [ref=e270] [cursor=pointer]:
+                        - img [ref=e271]
+                    - generic [ref=e277]:
+                      - generic [ref=e279]:
+                        - img "Trader" [ref=e280]
+                        - img "claude" [ref=e281]
+                      - generic "Trader" [ref=e283]
+                      - generic [ref=e284]: and
+                      - link "commits by claude" [ref=e286] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e287]: committed
+                      - generic "Apr 6, 2026, 5:31 PM GMT+8" [ref=e288]: Apr 6, 20264 hours ago
+                    - generic [ref=e291]:
+                      - generic [ref=e292]:
+                        - tooltip "View commit details" [ref=e293]:
+                          - link "8de621c" [ref=e294] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/8de621c8568c114151e9bce1594285b26de302a3
+                            - generic [ref=e296]: 8de621c
+                        - button "Copy full SHA for 8de621c" [ref=e298] [cursor=pointer]:
+                          - img [ref=e299]
+                      - tooltip "Browse repository at this point" [ref=e302]:
+                        - link "Browse repository at this point" [ref=e303] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/8de621c8568c114151e9bce1594285b26de302a3
+                          - img [ref=e304]
+                  - 'listitem "fix: ML momentum strategy handle missing high/low data. More information available below." [ref=e306]':
+                    - generic [ref=e307]:
+                      - 'heading "fix: ML momentum strategy handle missing high/low data" [level=4] [ref=e308]':
+                        - 'link "fix: ML momentum strategy handle missing high/low data" [ref=e310] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/5acf38d4120ddcde64125c922e9065c51476a6a4
+                      - button "Show description for 5acf38d" [ref=e311] [cursor=pointer]:
+                        - img [ref=e312]
+                    - generic [ref=e318]:
+                      - generic [ref=e320]:
+                        - img "Trader" [ref=e321]
+                        - img "claude" [ref=e322]
+                      - generic "Trader" [ref=e324]
+                      - generic [ref=e325]: and
+                      - link "commits by claude" [ref=e327] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e328]: committed
+                      - generic "Apr 6, 2026, 5:24 PM GMT+8" [ref=e329]: Apr 6, 20265 hours ago
+                    - generic [ref=e332]:
+                      - generic [ref=e333]:
+                        - tooltip "View commit details" [ref=e334]:
+                          - link "5acf38d" [ref=e335] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/5acf38d4120ddcde64125c922e9065c51476a6a4
+                            - generic [ref=e337]: 5acf38d
+                        - button "Copy full SHA for 5acf38d" [ref=e339] [cursor=pointer]:
+                          - img [ref=e340]
+                      - tooltip "Browse repository at this point" [ref=e343]:
+                        - link "Browse repository at this point" [ref=e344] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/5acf38d4120ddcde64125c922e9065c51476a6a4
+                          - img [ref=e345]
+                  - 'listitem "fix: LiveRiskManager logger and SpotMarginOrderManager time sync. More information available below." [ref=e347]':
+                    - generic [ref=e348]:
+                      - 'heading "fix: LiveRiskManager logger and SpotMarginOrderManager time sync" [level=4] [ref=e349]':
+                        - 'link "fix: LiveRiskManager logger and SpotMarginOrderManager time sync" [ref=e351] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/48dc6622496abdcc3c6f680846ca69eee3122852
+                      - button "Show description for 48dc662" [ref=e352] [cursor=pointer]:
+                        - img [ref=e353]
+                    - generic [ref=e359]:
+                      - generic [ref=e361]:
+                        - img "Trader" [ref=e362]
+                        - img "claude" [ref=e363]
+                      - generic "Trader" [ref=e365]
+                      - generic [ref=e366]: and
+                      - link "commits by claude" [ref=e368] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e369]: committed
+                      - generic "Apr 6, 2026, 5:23 PM GMT+8" [ref=e370]: Apr 6, 20265 hours ago
+                    - generic [ref=e373]:
+                      - generic [ref=e374]:
+                        - tooltip "View commit details" [ref=e375]:
+                          - link "48dc662" [ref=e376] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/48dc6622496abdcc3c6f680846ca69eee3122852
+                            - generic [ref=e378]: 48dc662
+                        - button "Copy full SHA for 48dc662" [ref=e380] [cursor=pointer]:
+                          - img [ref=e381]
+                      - tooltip "Browse repository at this point" [ref=e384]:
+                        - link "Browse repository at this point" [ref=e385] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/48dc6622496abdcc3c6f680846ca69eee3122852
+                          - img [ref=e386]
+            - generic [ref=e388]:
+              - img [ref=e391]
+              - generic [ref=e393]:
+                - heading "Commits on Apr 5, 2026" [level=3] [ref=e394]
+                - list "Commits on Apr 5, 2026" [ref=e397]:
+                  - 'listitem "feat: implement signal statistics and blocked signal crossing analysis. More information available below." [ref=e398]':
+                    - generic [ref=e399]:
+                      - 'heading "feat: implement signal statistics and blocked signal crossing analysis" [level=4] [ref=e400]':
+                        - 'link "feat: implement signal statistics and blocked signal crossing analysis" [ref=e402] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/b2c1b07bb13ab028550d0183945ad54a3e37bd92
+                      - button "Show description for b2c1b07" [ref=e403] [cursor=pointer]:
+                        - img [ref=e404]
+                    - generic [ref=e410]:
+                      - generic [ref=e411]:
+                        - img "author" [ref=e412]
+                        - generic "Trader" [ref=e413]
+                      - generic [ref=e414]: committed
+                      - generic "Apr 5, 2026, 3:41 PM GMT+8" [ref=e415]: Apr 5, 2026yesterday
+                    - generic [ref=e418]:
+                      - generic [ref=e419]:
+                        - tooltip "View commit details" [ref=e420]:
+                          - link "b2c1b07" [ref=e421] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/b2c1b07bb13ab028550d0183945ad54a3e37bd92
+                            - generic [ref=e423]: b2c1b07
+                        - button "Copy full SHA for b2c1b07" [ref=e425] [cursor=pointer]:
+                          - img [ref=e426]
+                      - tooltip "Browse repository at this point" [ref=e429]:
+                        - link "Browse repository at this point" [ref=e430] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/b2c1b07bb13ab028550d0183945ad54a3e37bd92
+                          - img [ref=e431]
+            - generic [ref=e433]:
+              - img [ref=e436]
+              - generic [ref=e438]:
+                - heading "Commits on Apr 4, 2026" [level=3] [ref=e439]
+                - list "Commits on Apr 4, 2026" [ref=e442]:
+                  - 'listitem "feat: 6-strategy signal-based autoresearch trading system. More information available below." [ref=e443]':
+                    - generic [ref=e444]:
+                      - 'heading "feat: 6-strategy signal-based autoresearch trading system" [level=4] [ref=e445]':
+                        - 'link "feat: 6-strategy signal-based autoresearch trading system" [ref=e447] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/02d5db707a867dc2bf63756498808fb0104ad8ef
+                      - button "Show description for 02d5db7" [ref=e448] [cursor=pointer]:
+                        - img [ref=e449]
+                    - generic [ref=e455]:
+                      - generic [ref=e457]:
+                        - img "Trader" [ref=e458]
+                        - img "claude" [ref=e459]
+                      - generic "Trader" [ref=e461]
+                      - generic [ref=e462]: and
+                      - link "commits by claude" [ref=e464] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e465]: committed
+                      - generic "Apr 4, 2026, 5:58 PM GMT+8" [ref=e466]: Apr 4, 20262 days ago
+                    - generic [ref=e469]:
+                      - generic [ref=e470]:
+                        - tooltip "View commit details" [ref=e471]:
+                          - link "02d5db7" [ref=e472] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/02d5db707a867dc2bf63756498808fb0104ad8ef
+                            - generic [ref=e474]: 02d5db7
+                        - button "Copy full SHA for 02d5db7" [ref=e476] [cursor=pointer]:
+                          - img [ref=e477]
+                      - tooltip "Browse repository at this point" [ref=e480]:
+                        - link "Browse repository at this point" [ref=e481] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/02d5db707a867dc2bf63756498808fb0104ad8ef
+                          - img [ref=e482]
+                  - 'listitem "feat: backtest execution path, Qlib models, and Phase C execution core. More information available below." [ref=e484]':
+                    - generic [ref=e485]:
+                      - 'heading "feat: backtest execution path, Qlib models, and Phase C execution core" [level=4] [ref=e486]':
+                        - 'link "feat: backtest execution path, Qlib models, and Phase C execution core" [ref=e488] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/bfb10c248287a1dbf127ef4cb4a49d85da8e11b1
+                      - button "Show description for bfb10c2" [ref=e489] [cursor=pointer]:
+                        - img [ref=e490]
+                    - generic [ref=e496]:
+                      - generic [ref=e498]:
+                        - img "Trader" [ref=e499]
+                        - img "claude" [ref=e500]
+                      - generic "Trader" [ref=e502]
+                      - generic [ref=e503]: and
+                      - link "commits by claude" [ref=e505] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e506]: committed
+                      - generic "Apr 4, 2026, 10:49 AM GMT+8" [ref=e507]: Apr 4, 20262 days ago
+                    - generic [ref=e510]:
+                      - generic [ref=e511]:
+                        - tooltip "View commit details" [ref=e512]:
+                          - link "bfb10c2" [ref=e513] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/bfb10c248287a1dbf127ef4cb4a49d85da8e11b1
+                            - generic [ref=e515]: bfb10c2
+                        - button "Copy full SHA for bfb10c2" [ref=e517] [cursor=pointer]:
+                          - img [ref=e518]
+                      - tooltip "Browse repository at this point" [ref=e521]:
+                        - link "Browse repository at this point" [ref=e522] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/bfb10c248287a1dbf127ef4cb4a49d85da8e11b1
+                          - img [ref=e523]
+                  - listitem "Update .env.backup.testnet. More information available below." [ref=e525]:
+                    - heading "Update .env.backup.testnet" [level=4] [ref=e527]:
+                      - link "Update .env.backup.testnet" [ref=e529] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commit/ffdd26c3ae3010ef0b87385daa184206fde4bafd
+                    - generic [ref=e534]:
+                      - generic [ref=e535]:
+                        - link "ddoqag" [ref=e536] [cursor=pointer]:
+                          - /url: /ddoqag
+                          - img "ddoqag" [ref=e537]
+                        - link "commits by ddoqag" [ref=e538] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/commits?author=ddoqag
+                          - text: ddoqag
+                      - generic [ref=e539]: authored
+                      - generic "Apr 4, 2026, 9:36 AM GMT+8" [ref=e540]: Apr 4, 20263 days ago
+                    - generic [ref=e541]:
+                      - button "Verified" [ref=e543] [cursor=pointer]
+                      - generic [ref=e544]:
+                        - generic [ref=e545]:
+                          - tooltip "View commit details" [ref=e546]:
+                            - link "ffdd26c" [ref=e547] [cursor=pointer]:
+                              - /url: /ddoqag/binance-trading-system/commit/ffdd26c3ae3010ef0b87385daa184206fde4bafd
+                              - generic [ref=e549]: ffdd26c
+                          - button "Copy full SHA for ffdd26c" [ref=e551] [cursor=pointer]:
+                            - img [ref=e552]
+                        - tooltip "Browse repository at this point" [ref=e555]:
+                          - link "Browse repository at this point" [ref=e556] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/tree/ffdd26c3ae3010ef0b87385daa184206fde4bafd
+                            - img [ref=e557]
+                  - listitem "Clean up .env.backup.testnet by removing mainnet keys. More information available below." [ref=e559]:
+                    - generic [ref=e560]:
+                      - heading "Clean up .env.backup.testnet by removing mainnet keys" [level=4] [ref=e561]:
+                        - link "Clean up .env.backup.testnet by removing mainnet keys" [ref=e563] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/commit/9b46241b8294e9adec2a273a91e467215a407460
+                      - button "Show description for 9b46241" [ref=e564] [cursor=pointer]:
+                        - img [ref=e565]
+                    - generic [ref=e571]:
+                      - generic [ref=e572]:
+                        - link "ddoqag" [ref=e573] [cursor=pointer]:
+                          - /url: /ddoqag
+                          - img "ddoqag" [ref=e574]
+                        - link "commits by ddoqag" [ref=e575] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/commits?author=ddoqag
+                          - text: ddoqag
+                      - generic [ref=e576]: authored
+                      - generic "Apr 4, 2026, 9:35 AM GMT+8" [ref=e577]: Apr 4, 20263 days ago
+                    - generic [ref=e578]:
+                      - button "Verified" [ref=e580] [cursor=pointer]
+                      - generic [ref=e581]:
+                        - generic [ref=e582]:
+                          - tooltip "View commit details" [ref=e583]:
+                            - link "9b46241" [ref=e584] [cursor=pointer]:
+                              - /url: /ddoqag/binance-trading-system/commit/9b46241b8294e9adec2a273a91e467215a407460
+                              - generic [ref=e586]: 9b46241
+                          - button "Copy full SHA for 9b46241" [ref=e588] [cursor=pointer]:
+                            - img [ref=e589]
+                        - tooltip "Browse repository at this point" [ref=e592]:
+                          - link "Browse repository at this point" [ref=e593] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/tree/9b46241b8294e9adec2a273a91e467215a407460
+                            - img [ref=e594]
+                  - 'listitem "fix: add .env and secrets to .gitignore. More information available below." [ref=e596]':
+                    - generic [ref=e597]:
+                      - 'heading "fix: add .env and secrets to .gitignore" [level=4] [ref=e598]':
+                        - 'link "fix: add .env and secrets to .gitignore" [ref=e600] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/a37af3706398d565241c0f5c23d05ba20d1edf3b
+                      - button "Show description for a37af37" [ref=e601] [cursor=pointer]:
+                        - img [ref=e602]
+                    - generic [ref=e608]:
+                      - generic [ref=e609]:
+                        - img "author" [ref=e610]
+                        - generic "Trader" [ref=e611]
+                      - generic [ref=e612]: committed
+                      - generic "Apr 4, 2026, 9:33 AM GMT+8" [ref=e613]: Apr 4, 20263 days ago
+                    - generic [ref=e616]:
+                      - generic [ref=e617]:
+                        - tooltip "View commit details" [ref=e618]:
+                          - link "a37af37" [ref=e619] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/a37af3706398d565241c0f5c23d05ba20d1edf3b
+                            - generic [ref=e621]: a37af37
+                        - button "Copy full SHA for a37af37" [ref=e623] [cursor=pointer]:
+                          - img [ref=e624]
+                      - tooltip "Browse repository at this point" [ref=e627]:
+                        - link "Browse repository at this point" [ref=e628] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/a37af3706398d565241c0f5c23d05ba20d1edf3b
+                          - img [ref=e629]
+                  - 'listitem "docs: add corrected architecture diagram (mermaid). More information available below." [ref=e631]':
+                    - generic [ref=e632]:
+                      - 'heading "docs: add corrected architecture diagram (mermaid)" [level=4] [ref=e633]':
+                        - 'link "docs: add corrected architecture diagram (mermaid)" [ref=e635] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/6b7d3bd7d13a630e41083d72aa1045826c0c17cc
+                      - button "Show description for 6b7d3bd" [ref=e636] [cursor=pointer]:
+                        - img [ref=e637]
+                    - generic [ref=e643]:
+                      - generic [ref=e644]:
+                        - img "author" [ref=e645]
+                        - generic "Trader" [ref=e646]
+                      - generic [ref=e647]: committed
+                      - generic "Apr 4, 2026, 9:21 AM GMT+8" [ref=e648]: Apr 4, 20263 days ago
+                    - generic [ref=e651]:
+                      - generic [ref=e652]:
+                        - tooltip "View commit details" [ref=e653]:
+                          - link "6b7d3bd" [ref=e654] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/6b7d3bd7d13a630e41083d72aa1045826c0c17cc
+                            - generic [ref=e656]: 6b7d3bd
+                        - button "Copy full SHA for 6b7d3bd" [ref=e658] [cursor=pointer]:
+                          - img [ref=e659]
+                      - tooltip "Browse repository at this point" [ref=e662]:
+                        - link "Browse repository at this point" [ref=e663] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/6b7d3bd7d13a630e41083d72aa1045826c0c17cc
+                          - img [ref=e664]
+                  - 'listitem "fix: repair regime_detector compatibility and expert agent tests. More information available below." [ref=e666]':
+                    - generic [ref=e667]:
+                      - 'heading "fix: repair regime_detector compatibility and expert agent tests" [level=4] [ref=e668]':
+                        - 'link "fix: repair regime_detector compatibility and expert agent tests" [ref=e670] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/32a872f78282b4b1a704618b0236d3a8bb4f4194
+                      - button "Show description for 32a872f" [ref=e671] [cursor=pointer]:
+                        - img [ref=e672]
+                    - generic [ref=e678]:
+                      - generic [ref=e679]:
+                        - img "author" [ref=e680]
+                        - generic "Trader" [ref=e681]
+                      - generic [ref=e682]: committed
+                      - generic "Apr 4, 2026, 9:06 AM GMT+8" [ref=e683]: Apr 4, 20263 days ago
+                    - generic [ref=e686]:
+                      - generic [ref=e687]:
+                        - tooltip "View commit details" [ref=e688]:
+                          - link "32a872f" [ref=e689] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/32a872f78282b4b1a704618b0236d3a8bb4f4194
+                            - generic [ref=e691]: 32a872f
+                        - button "Copy full SHA for 32a872f" [ref=e693] [cursor=pointer]:
+                          - img [ref=e694]
+                      - tooltip "Browse repository at this point" [ref=e697]:
+                        - link "Browse repository at this point" [ref=e698] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/32a872f78282b4b1a704618b0236d3a8bb4f4194
+                          - img [ref=e699]
+            - generic [ref=e701]:
+              - img [ref=e704]
+              - generic [ref=e706]:
+                - heading "Commits on Apr 2, 2026" [level=3] [ref=e707]
+                - list "Commits on Apr 2, 2026" [ref=e710]:
+                  - 'listitem "docs: update CONTRIBUTING.md and RUNBOOK.md. More information available below." [ref=e711]':
+                    - generic [ref=e712]:
+                      - 'heading "docs: update CONTRIBUTING.md and RUNBOOK.md" [level=4] [ref=e713]':
+                        - 'link "docs: update CONTRIBUTING.md and RUNBOOK.md" [ref=e715] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/c3ecd6ea352181822caab1ec581416db5df5c804
+                      - button "Show description for c3ecd6e" [ref=e716] [cursor=pointer]:
+                        - img [ref=e717]
+                    - generic [ref=e723]:
+                      - generic [ref=e725]:
+                        - img "Trader" [ref=e726]
+                        - img "claude" [ref=e727]
+                      - generic "Trader" [ref=e729]
+                      - generic [ref=e730]: and
+                      - link "commits by claude" [ref=e732] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e733]: committed
+                      - generic "Apr 2, 2026, 8:38 PM GMT+8" [ref=e734]: Apr 2, 20264 days ago
+                    - generic [ref=e737]:
+                      - generic [ref=e738]:
+                        - tooltip "View commit details" [ref=e739]:
+                          - link "c3ecd6e" [ref=e740] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/c3ecd6ea352181822caab1ec581416db5df5c804
+                            - generic [ref=e742]: c3ecd6e
+                        - button "Copy full SHA for c3ecd6e" [ref=e744] [cursor=pointer]:
+                          - img [ref=e745]
+                      - tooltip "Browse repository at this point" [ref=e748]:
+                        - link "Browse repository at this point" [ref=e749] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/c3ecd6ea352181822caab1ec581416db5df5c804
+                          - img [ref=e750]
+                  - 'listitem "fix: add missing multiprocessing import in start_trader.py. More information available below." [ref=e752]':
+                    - generic [ref=e753]:
+                      - 'heading "fix: add missing multiprocessing import in start_trader.py" [level=4] [ref=e754]':
+                        - 'link "fix: add missing multiprocessing import in start_trader.py" [ref=e756] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/aa89a1b38cc399cc503ce94002594f7fb287a873
+                      - button "Show description for aa89a1b" [ref=e757] [cursor=pointer]:
+                        - img [ref=e758]
+                    - generic [ref=e764]:
+                      - generic [ref=e766]:
+                        - img "Trader" [ref=e767]
+                        - img "claude" [ref=e768]
+                      - generic "Trader" [ref=e770]
+                      - generic [ref=e771]: and
+                      - link "commits by claude" [ref=e773] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e774]: committed
+                      - generic "Apr 2, 2026, 8:29 PM GMT+8" [ref=e775]: Apr 2, 20264 days ago
+                    - generic [ref=e778]:
+                      - generic [ref=e779]:
+                        - tooltip "View commit details" [ref=e780]:
+                          - link "aa89a1b" [ref=e781] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/aa89a1b38cc399cc503ce94002594f7fb287a873
+                            - generic [ref=e783]: aa89a1b
+                        - button "Copy full SHA for aa89a1b" [ref=e785] [cursor=pointer]:
+                          - img [ref=e786]
+                      - tooltip "Browse repository at this point" [ref=e789]:
+                        - link "Browse repository at this point" [ref=e790] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/aa89a1b38cc399cc503ce94002594f7fb287a873
+                          - img [ref=e791]
+                  - 'listitem "feat: optimize regime_detector for Windows multiprocessing. More information available below." [ref=e793]':
+                    - generic [ref=e794]:
+                      - 'heading "feat: optimize regime_detector for Windows multiprocessing" [level=4] [ref=e795]':
+                        - 'link "feat: optimize regime_detector for Windows multiprocessing" [ref=e797] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/2b3b55398acabaf71a87d24d0a57487439ea2f97
+                      - button "Show description for 2b3b553" [ref=e798] [cursor=pointer]:
+                        - img [ref=e799]
+                    - generic [ref=e805]:
+                      - generic [ref=e807]:
+                        - img "Trader" [ref=e808]
+                        - img "claude" [ref=e809]
+                      - generic "Trader" [ref=e811]
+                      - generic [ref=e812]: and
+                      - link "commits by claude" [ref=e814] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e815]: committed
+                      - generic "Apr 2, 2026, 8:24 PM GMT+8" [ref=e816]: Apr 2, 20264 days ago
+                    - generic [ref=e819]:
+                      - generic [ref=e820]:
+                        - tooltip "View commit details" [ref=e821]:
+                          - link "2b3b553" [ref=e822] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/2b3b55398acabaf71a87d24d0a57487439ea2f97
+                            - generic [ref=e824]: 2b3b553
+                        - button "Copy full SHA for 2b3b553" [ref=e826] [cursor=pointer]:
+                          - img [ref=e827]
+                      - tooltip "Browse repository at this point" [ref=e830]:
+                        - link "Browse repository at this point" [ref=e831] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/2b3b55398acabaf71a87d24d0a57487439ea2f97
+                          - img [ref=e832]
+                  - 'listitem "refactor: simplify regime_detector and clean up unused code. More information available below." [ref=e834]':
+                    - generic [ref=e835]:
+                      - 'heading "refactor: simplify regime_detector and clean up unused code" [level=4] [ref=e836]':
+                        - 'link "refactor: simplify regime_detector and clean up unused code" [ref=e838] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/60e12137674fb176afa558027895aff5b591bffa
+                      - button "Show description for 60e1213" [ref=e839] [cursor=pointer]:
+                        - img [ref=e840]
+                    - generic [ref=e846]:
+                      - generic [ref=e848]:
+                        - img "Trader" [ref=e849]
+                        - img "claude" [ref=e850]
+                      - generic "Trader" [ref=e852]
+                      - generic [ref=e853]: and
+                      - link "commits by claude" [ref=e855] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e856]: committed
+                      - generic "Apr 2, 2026, 7:40 PM GMT+8" [ref=e857]: Apr 2, 20264 days ago
+                    - generic [ref=e860]:
+                      - generic [ref=e861]:
+                        - tooltip "View commit details" [ref=e862]:
+                          - link "60e1213" [ref=e863] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/60e12137674fb176afa558027895aff5b591bffa
+                            - generic [ref=e865]: "60e1213"
+                        - button "Copy full SHA for 60e1213" [ref=e867] [cursor=pointer]:
+                          - img [ref=e868]
+                      - tooltip "Browse repository at this point" [ref=e871]:
+                        - link "Browse repository at this point" [ref=e872] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/60e12137674fb176afa558027895aff5b591bffa
+                          - img [ref=e873]
+                  - 'listitem "feat: improve start_trader.py with proper logging and error handling. More information available below." [ref=e875]':
+                    - generic [ref=e876]:
+                      - 'heading "feat: improve start_trader.py with proper logging and error handling" [level=4] [ref=e877]':
+                        - 'link "feat: improve start_trader.py with proper logging and error handling" [ref=e879] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/ebbdf7d3756bb1acce22cfb353393cddb98a9d40
+                      - button "Show description for ebbdf7d" [ref=e880] [cursor=pointer]:
+                        - img [ref=e881]
+                    - generic [ref=e887]:
+                      - generic [ref=e889]:
+                        - img "Trader" [ref=e890]
+                        - img "claude" [ref=e891]
+                      - generic "Trader" [ref=e893]
+                      - generic [ref=e894]: and
+                      - link "commits by claude" [ref=e896] [cursor=pointer]:
+                        - /url: /ddoqag/binance-trading-system/commits?author=claude
+                        - text: claude
+                      - generic [ref=e897]: committed
+                      - generic "Apr 2, 2026, 6:24 PM GMT+8" [ref=e898]: Apr 2, 20264 days ago
+                    - generic [ref=e901]:
+                      - generic [ref=e902]:
+                        - tooltip "View commit details" [ref=e903]:
+                          - link "ebbdf7d" [ref=e904] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/ebbdf7d3756bb1acce22cfb353393cddb98a9d40
+                            - generic [ref=e906]: ebbdf7d
+                        - button "Copy full SHA for ebbdf7d" [ref=e908] [cursor=pointer]:
+                          - img [ref=e909]
+                      - tooltip "Browse repository at this point" [ref=e912]:
+                        - link "Browse repository at this point" [ref=e913] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/ebbdf7d3756bb1acce22cfb353393cddb98a9d40
+                          - img [ref=e914]
+                  - 'listitem "docs: add deployment manual and post-deployment verification script. More information available below." [ref=e916]':
+                    - generic [ref=e917]:
+                      - 'heading "docs: add deployment manual and post-deployment verification script" [level=4] [ref=e918]':
+                        - 'link "docs: add deployment manual and post-deployment verification script" [ref=e920] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/28f1d8719e982f14281499b5ea4b77ddbd010950
+                      - button "Show description for 28f1d87" [ref=e921] [cursor=pointer]:
+                        - img [ref=e922]
+                    - generic [ref=e928]:
+                      - generic [ref=e929]:
+                        - img "author" [ref=e930]
+                        - generic "Trader" [ref=e931]
+                      - generic [ref=e932]: committed
+                      - generic "Apr 2, 2026, 1:24 PM GMT+8" [ref=e933]: Apr 2, 20264 days ago
+                    - generic [ref=e936]:
+                      - generic [ref=e937]:
+                        - tooltip "View commit details" [ref=e938]:
+                          - link "28f1d87" [ref=e939] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/28f1d8719e982f14281499b5ea4b77ddbd010950
+                            - generic [ref=e941]: 28f1d87
+                        - button "Copy full SHA for 28f1d87" [ref=e943] [cursor=pointer]:
+                          - img [ref=e944]
+                      - tooltip "Browse repository at this point" [ref=e947]:
+                        - link "Browse repository at this point" [ref=e948] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/28f1d8719e982f14281499b5ea4b77ddbd010950
+                          - img [ref=e949]
+                  - 'listitem "feat: add Strategy Entropy Monitor and Robust Risk Parity Allocator. More information available below." [ref=e951]':
+                    - generic [ref=e952]:
+                      - 'heading "feat: add Strategy Entropy Monitor and Robust Risk Parity Allocator" [level=4] [ref=e953]':
+                        - 'link "feat: add Strategy Entropy Monitor and Robust Risk Parity Allocator" [ref=e955] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/af7c91e4308c639a8a0d8a5e493a1546abe02014
+                      - button "Show description for af7c91e" [ref=e956] [cursor=pointer]:
+                        - img [ref=e957]
+                    - generic [ref=e963]:
+                      - generic [ref=e964]:
+                        - img "author" [ref=e965]
+                        - generic "Trader" [ref=e966]
+                      - generic [ref=e967]: committed
+                      - generic "Apr 2, 2026, 1:18 PM GMT+8" [ref=e968]: Apr 2, 20264 days ago
+                    - generic [ref=e971]:
+                      - generic [ref=e972]:
+                        - tooltip "View commit details" [ref=e973]:
+                          - link "af7c91e" [ref=e974] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/af7c91e4308c639a8a0d8a5e493a1546abe02014
+                            - generic [ref=e976]: af7c91e
+                        - button "Copy full SHA for af7c91e" [ref=e978] [cursor=pointer]:
+                          - img [ref=e979]
+                      - tooltip "Browse repository at this point" [ref=e982]:
+                        - link "Browse repository at this point" [ref=e983] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/af7c91e4308c639a8a0d8a5e493a1546abe02014
+                          - img [ref=e984]
+                  - 'listitem "fix: resolve exporter attribute errors and add performance benchmark. More information available below." [ref=e986]':
+                    - generic [ref=e987]:
+                      - 'heading "fix: resolve exporter attribute errors and add performance benchmark" [level=4] [ref=e988]':
+                        - 'link "fix: resolve exporter attribute errors and add performance benchmark" [ref=e990] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/13ce920a7d5f52dde75985d78b727ff0ed733072
+                      - button "Show description for 13ce920" [ref=e991] [cursor=pointer]:
+                        - img [ref=e992]
+                    - generic [ref=e998]:
+                      - generic [ref=e999]:
+                        - img "author" [ref=e1000]
+                        - generic "Trader" [ref=e1001]
+                      - generic [ref=e1002]: committed
+                      - generic "Apr 2, 2026, 1:06 PM GMT+8" [ref=e1003]: Apr 2, 20264 days ago
+                    - generic [ref=e1006]:
+                      - generic [ref=e1007]:
+                        - tooltip "View commit details" [ref=e1008]:
+                          - link "13ce920" [ref=e1009] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/13ce920a7d5f52dde75985d78b727ff0ed733072
+                            - generic [ref=e1011]: 13ce920
+                        - button "Copy full SHA for 13ce920" [ref=e1013] [cursor=pointer]:
+                          - img [ref=e1014]
+                      - tooltip "Browse repository at this point" [ref=e1017]:
+                        - link "Browse repository at this point" [ref=e1018] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/13ce920a7d5f52dde75985d78b727ff0ed733072
+                          - img [ref=e1019]
+                  - 'listitem "feat: add START_PRODUCTION.bat for full system with real monitoring. More information available below." [ref=e1021]':
+                    - 'heading "feat: add START_PRODUCTION.bat for full system with real monitoring" [level=4] [ref=e1023]':
+                      - 'link "feat: add START_PRODUCTION.bat for full system with real monitoring" [ref=e1025] [cursor=pointer]':
+                        - /url: /ddoqag/binance-trading-system/commit/97f16d55038402085ffa61e3f62d9d2174654394
+                    - generic [ref=e1030]:
+                      - generic [ref=e1031]:
+                        - img "author" [ref=e1032]
+                        - generic "Trader" [ref=e1033]
+                      - generic [ref=e1034]: committed
+                      - generic "Apr 2, 2026, 1:00 PM GMT+8" [ref=e1035]: Apr 2, 20264 days ago
+                    - generic [ref=e1038]:
+                      - generic [ref=e1039]:
+                        - tooltip "View commit details" [ref=e1040]:
+                          - link "97f16d5" [ref=e1041] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/97f16d55038402085ffa61e3f62d9d2174654394
+                            - generic [ref=e1043]: 97f16d5
+                        - button "Copy full SHA for 97f16d5" [ref=e1045] [cursor=pointer]:
+                          - img [ref=e1046]
+                      - tooltip "Browse repository at this point" [ref=e1049]:
+                        - link "Browse repository at this point" [ref=e1050] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/97f16d55038402085ffa61e3f62d9d2174654394
+                          - img [ref=e1051]
+                  - 'listitem "fix: improve START_SYSTEM.bat with better directory detection and error handling. More information available below." [ref=e1053]':
+                    - 'heading "fix: improve START_SYSTEM.bat with better directory detection and error handling" [level=4] [ref=e1055]':
+                      - 'link "fix: improve START_SYSTEM.bat with better directory detection and error handling" [ref=e1057] [cursor=pointer]':
+                        - /url: /ddoqag/binance-trading-system/commit/18963a9cbdd84cc94bef91513ce3958b360bc99b
+                    - generic [ref=e1062]:
+                      - generic [ref=e1063]:
+                        - img "author" [ref=e1064]
+                        - generic "Trader" [ref=e1065]
+                      - generic [ref=e1066]: committed
+                      - generic "Apr 2, 2026, 12:57 PM GMT+8" [ref=e1067]: Apr 2, 20264 days ago
+                    - generic [ref=e1070]:
+                      - generic [ref=e1071]:
+                        - tooltip "View commit details" [ref=e1072]:
+                          - link "18963a9" [ref=e1073] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/18963a9cbdd84cc94bef91513ce3958b360bc99b
+                            - generic [ref=e1075]: 18963a9
+                        - button "Copy full SHA for 18963a9" [ref=e1077] [cursor=pointer]:
+                          - img [ref=e1078]
+                      - tooltip "Browse repository at this point" [ref=e1081]:
+                        - link "Browse repository at this point" [ref=e1082] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/18963a9cbdd84cc94bef91513ce3958b360bc99b
+                          - img [ref=e1083]
+                  - 'listitem "docs(P10): add i9-13900H benchmark results - HFT-READY certification. More information available below." [ref=e1085]':
+                    - 'heading "docs(P10): add i9-13900H benchmark results - HFT-READY certification" [level=4] [ref=e1087]':
+                      - 'link "docs(P10): add i9-13900H benchmark results - HFT-READY certification" [ref=e1089] [cursor=pointer]':
+                        - /url: /ddoqag/binance-trading-system/commit/c36de86388a7c4d41b16fc94023db01c93cb306b
+                    - generic [ref=e1094]:
+                      - generic [ref=e1095]:
+                        - img "author" [ref=e1096]
+                        - generic "Trader" [ref=e1097]
+                      - generic [ref=e1098]: committed
+                      - generic "Apr 2, 2026, 12:20 PM GMT+8" [ref=e1099]: Apr 2, 20264 days ago
+                    - generic [ref=e1102]:
+                      - generic [ref=e1103]:
+                        - tooltip "View commit details" [ref=e1104]:
+                          - link "c36de86" [ref=e1105] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/c36de86388a7c4d41b16fc94023db01c93cb306b
+                            - generic [ref=e1107]: c36de86
+                        - button "Copy full SHA for c36de86" [ref=e1109] [cursor=pointer]:
+                          - img [ref=e1110]
+                      - tooltip "Browse repository at this point" [ref=e1113]:
+                        - link "Browse repository at this point" [ref=e1114] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/c36de86388a7c4d41b16fc94023db01c93cb306b
+                          - img [ref=e1115]
+                  - 'listitem "feat(P10): add final deployment package and cold start verification. More information available below." [ref=e1117]':
+                    - generic [ref=e1118]:
+                      - 'heading "feat(P10): add final deployment package and cold start verification" [level=4] [ref=e1119]':
+                        - 'link "feat(P10): add final deployment package and cold start verification" [ref=e1121] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/6d2a06a5aef7b70eb11628a5b03c0aa8b13c5d2e
+                      - button "Show description for 6d2a06a" [ref=e1122] [cursor=pointer]:
+                        - img [ref=e1123]
+                    - generic [ref=e1129]:
+                      - generic [ref=e1130]:
+                        - img "author" [ref=e1131]
+                        - generic "Trader" [ref=e1132]
+                      - generic [ref=e1133]: committed
+                      - generic "Apr 2, 2026, 12:19 PM GMT+8" [ref=e1134]: Apr 2, 20264 days ago
+                    - generic [ref=e1137]:
+                      - generic [ref=e1138]:
+                        - tooltip "View commit details" [ref=e1139]:
+                          - link "6d2a06a" [ref=e1140] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/6d2a06a5aef7b70eb11628a5b03c0aa8b13c5d2e
+                            - generic [ref=e1142]: 6d2a06a
+                        - button "Copy full SHA for 6d2a06a" [ref=e1144] [cursor=pointer]:
+                          - img [ref=e1145]
+                      - tooltip "Browse repository at this point" [ref=e1148]:
+                        - link "Browse repository at this point" [ref=e1149] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/6d2a06a5aef7b70eb11628a5b03c0aa8b13c5d2e
+                          - img [ref=e1150]
+                  - 'listitem "feat(P10): add performance benchmark suite for i9-13900H HFT latency test. More information available below." [ref=e1152]':
+                    - generic [ref=e1153]:
+                      - 'heading "feat(P10): add performance benchmark suite for i9-13900H HFT latency test" [level=4] [ref=e1154]':
+                        - 'link "feat(P10): add performance benchmark suite for i9-13900H HFT latency test" [ref=e1156] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/cb6eee9ce3839dae48a444f1aab8ee7fbb7906a2
+                      - button "Show description for cb6eee9" [ref=e1157] [cursor=pointer]:
+                        - img [ref=e1158]
+                    - generic [ref=e1164]:
+                      - generic [ref=e1165]:
+                        - img "author" [ref=e1166]
+                        - generic "Trader" [ref=e1167]
+                      - generic [ref=e1168]: committed
+                      - generic "Apr 2, 2026, 12:16 PM GMT+8" [ref=e1169]: Apr 2, 20264 days ago
+                    - generic [ref=e1172]:
+                      - generic [ref=e1173]:
+                        - tooltip "View commit details" [ref=e1174]:
+                          - link "cb6eee9" [ref=e1175] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/cb6eee9ce3839dae48a444f1aab8ee7fbb7906a2
+                            - generic [ref=e1177]: cb6eee9
+                        - button "Copy full SHA for cb6eee9" [ref=e1179] [cursor=pointer]:
+                          - img [ref=e1180]
+                      - tooltip "Browse repository at this point" [ref=e1183]:
+                        - link "Browse repository at this point" [ref=e1184] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/cb6eee9ce3839dae48a444f1aab8ee7fbb7906a2
+                          - img [ref=e1185]
+                  - 'listitem "docs(P10): add Windows integration guide for Go-Python dual-end testing. More information available below." [ref=e1187]':
+                    - generic [ref=e1188]:
+                      - 'heading "docs(P10): add Windows integration guide for Go-Python dual-end testing" [level=4] [ref=e1189]':
+                        - 'link "docs(P10): add Windows integration guide for Go-Python dual-end testing" [ref=e1191] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/ef2c426f42397221828c1a176b9932cef16e5a46
+                      - button "Show description for ef2c426" [ref=e1192] [cursor=pointer]:
+                        - img [ref=e1193]
+                    - generic [ref=e1199]:
+                      - generic [ref=e1200]:
+                        - img "author" [ref=e1201]
+                        - generic "Trader" [ref=e1202]
+                      - generic [ref=e1203]: committed
+                      - generic "Apr 2, 2026, 12:13 PM GMT+8" [ref=e1204]: Apr 2, 20264 days ago
+                    - generic [ref=e1207]:
+                      - generic [ref=e1208]:
+                        - tooltip "View commit details" [ref=e1209]:
+                          - link "ef2c426" [ref=e1210] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/ef2c426f42397221828c1a176b9932cef16e5a46
+                            - generic [ref=e1212]: ef2c426
+                        - button "Copy full SHA for ef2c426" [ref=e1214] [cursor=pointer]:
+                          - img [ref=e1215]
+                      - tooltip "Browse repository at this point" [ref=e1218]:
+                        - link "Browse repository at this point" [ref=e1219] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/ef2c426f42397221828c1a176b9932cef16e5a46
+                          - img [ref=e1220]
+                  - 'listitem "feat(P10): add Go-Python integration testing infrastructure. More information available below." [ref=e1222]':
+                    - generic [ref=e1223]:
+                      - 'heading "feat(P10): add Go-Python integration testing infrastructure" [level=4] [ref=e1224]':
+                        - 'link "feat(P10): add Go-Python integration testing infrastructure" [ref=e1226] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/0e52a3b36f2dd8839c7ada60c72869416b94325b
+                      - button "Show description for 0e52a3b" [ref=e1227] [cursor=pointer]:
+                        - img [ref=e1228]
+                    - generic [ref=e1234]:
+                      - generic [ref=e1235]:
+                        - img "author" [ref=e1236]
+                        - generic "Trader" [ref=e1237]
+                      - generic [ref=e1238]: committed
+                      - generic "Apr 2, 2026, 12:12 PM GMT+8" [ref=e1239]: Apr 2, 20264 days ago
+                    - generic [ref=e1242]:
+                      - generic [ref=e1243]:
+                        - tooltip "View commit details" [ref=e1244]:
+                          - link "0e52a3b" [ref=e1245] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/0e52a3b36f2dd8839c7ada60c72869416b94325b
+                            - generic [ref=e1247]: 0e52a3b
+                        - button "Copy full SHA for 0e52a3b" [ref=e1249] [cursor=pointer]:
+                          - img [ref=e1250]
+                      - tooltip "Browse repository at this point" [ref=e1253]:
+                        - link "Browse repository at this point" [ref=e1254] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/0e52a3b36f2dd8839c7ada60c72869416b94325b
+                          - img [ref=e1255]
+                  - 'listitem "feat(P10): add integration test for Python metrics handshake. More information available below." [ref=e1257]':
+                    - generic [ref=e1258]:
+                      - 'heading "feat(P10): add integration test for Python metrics handshake" [level=4] [ref=e1259]':
+                        - 'link "feat(P10): add integration test for Python metrics handshake" [ref=e1261] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/828859396d7797755054fce7c1fffdcea61be3a3
+                      - button "Show description for 8288593" [ref=e1262] [cursor=pointer]:
+                        - img [ref=e1263]
+                    - generic [ref=e1269]:
+                      - generic [ref=e1270]:
+                        - img "author" [ref=e1271]
+                        - generic "Trader" [ref=e1272]
+                      - generic [ref=e1273]: committed
+                      - generic "Apr 2, 2026, 12:07 PM GMT+8" [ref=e1274]: Apr 2, 20264 days ago
+                    - generic [ref=e1277]:
+                      - generic [ref=e1278]:
+                        - tooltip "View commit details" [ref=e1279]:
+                          - link "8288593" [ref=e1280] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/828859396d7797755054fce7c1fffdcea61be3a3
+                            - generic [ref=e1282]: "8288593"
+                        - button "Copy full SHA for 8288593" [ref=e1284] [cursor=pointer]:
+                          - img [ref=e1285]
+                      - tooltip "Browse repository at this point" [ref=e1288]:
+                        - link "Browse repository at this point" [ref=e1289] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/828859396d7797755054fce7c1fffdcea61be3a3
+                          - img [ref=e1290]
+                  - 'listitem "feat(P10): implement Evolution Engine preparation - lifecycle management & decision logging. More information available below." [ref=e1292]':
+                    - generic [ref=e1293]:
+                      - 'heading "feat(P10): implement Evolution Engine preparation - lifecycle management & decision logging" [level=4] [ref=e1294]':
+                        - 'link "feat(P10): implement Evolution Engine preparation - lifecycle management & decision logging" [ref=e1296] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/aa86f5a5f85eeb3424a52d3d460d6764f9c1a696
+                      - button "Show description for aa86f5a" [ref=e1297] [cursor=pointer]:
+                        - img [ref=e1298]
+                    - generic [ref=e1304]:
+                      - generic [ref=e1305]:
+                        - img "author" [ref=e1306]
+                        - generic "Trader" [ref=e1307]
+                      - generic [ref=e1308]: committed
+                      - generic "Apr 2, 2026, 12:02 PM GMT+8" [ref=e1309]: Apr 2, 20264 days ago
+                    - generic [ref=e1312]:
+                      - generic [ref=e1313]:
+                        - tooltip "View commit details" [ref=e1314]:
+                          - link "aa86f5a" [ref=e1315] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/aa86f5a5f85eeb3424a52d3d460d6764f9c1a696
+                            - generic [ref=e1317]: aa86f5a
+                        - button "Copy full SHA for aa86f5a" [ref=e1319] [cursor=pointer]:
+                          - img [ref=e1320]
+                      - tooltip "Browse repository at this point" [ref=e1323]:
+                        - link "Browse repository at this point" [ref=e1324] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/aa86f5a5f85eeb3424a52d3d460d6764f9c1a696
+                          - img [ref=e1325]
+                  - 'listitem "feat(P10): implement comprehensive monitoring & alerting system. More information available below." [ref=e1327]':
+                    - generic [ref=e1328]:
+                      - 'heading "feat(P10): implement comprehensive monitoring & alerting system" [level=4] [ref=e1329]':
+                        - 'link "feat(P10): implement comprehensive monitoring & alerting system" [ref=e1331] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/7bf6d08283b0ed0cc86954047c828cc9ae8aaef0
+                      - button "Show description for 7bf6d08" [ref=e1332] [cursor=pointer]:
+                        - img [ref=e1333]
+                    - generic [ref=e1339]:
+                      - generic [ref=e1340]:
+                        - img "author" [ref=e1341]
+                        - generic "Trader" [ref=e1342]
+                      - generic [ref=e1343]: committed
+                      - generic "Apr 2, 2026, 11:51 AM GMT+8" [ref=e1344]: Apr 2, 20264 days ago
+                    - generic [ref=e1347]:
+                      - generic [ref=e1348]:
+                        - tooltip "View commit details" [ref=e1349]:
+                          - link "7bf6d08" [ref=e1350] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/7bf6d08283b0ed0cc86954047c828cc9ae8aaef0
+                            - generic [ref=e1352]: 7bf6d08
+                        - button "Copy full SHA for 7bf6d08" [ref=e1354] [cursor=pointer]:
+                          - img [ref=e1355]
+                      - tooltip "Browse repository at this point" [ref=e1358]:
+                        - link "Browse repository at this point" [ref=e1359] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/7bf6d08283b0ed0cc86954047c828cc9ae8aaef0
+                          - img [ref=e1360]
+                  - 'listitem "fix(P10): rename types.py to hf_types.py to avoid stdlib conflict. More information available below." [ref=e1362]':
+                    - generic [ref=e1363]:
+                      - 'heading "fix(P10): rename types.py to hf_types.py to avoid stdlib conflict" [level=4] [ref=e1364]':
+                        - 'link "fix(P10): rename types.py to hf_types.py to avoid stdlib conflict" [ref=e1366] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/2022077f2650f158c2450a38a92c181c44cc7a3e
+                      - button "Show description for 2022077" [ref=e1367] [cursor=pointer]:
+                        - img [ref=e1368]
+                    - generic [ref=e1374]:
+                      - generic [ref=e1375]:
+                        - img "author" [ref=e1376]
+                        - generic "Trader" [ref=e1377]
+                      - generic [ref=e1378]: committed
+                      - generic "Apr 2, 2026, 11:39 AM GMT+8" [ref=e1379]: Apr 2, 20264 days ago
+                    - generic [ref=e1382]:
+                      - generic [ref=e1383]:
+                        - tooltip "View commit details" [ref=e1384]:
+                          - link "2022077" [ref=e1385] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/2022077f2650f158c2450a38a92c181c44cc7a3e
+                            - generic [ref=e1387]: "2022077"
+                        - button "Copy full SHA for 2022077" [ref=e1389] [cursor=pointer]:
+                          - img [ref=e1390]
+                      - tooltip "Browse repository at this point" [ref=e1393]:
+                        - link "Browse repository at this point" [ref=e1394] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/2022077f2650f158c2450a38a92c181c44cc7a3e
+                          - img [ref=e1395]
+                  - 'listitem "feat(P10): implement Capital Allocator (Phase 3). More information available below." [ref=e1397]':
+                    - generic [ref=e1398]:
+                      - 'heading "feat(P10): implement Capital Allocator (Phase 3)" [level=4] [ref=e1399]':
+                        - 'link "feat(P10): implement Capital Allocator (Phase 3)" [ref=e1401] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/6532748fb382d5ea66e1c11459baa3a0fffa3f9d
+                      - button "Show description for 6532748" [ref=e1402] [cursor=pointer]:
+                        - img [ref=e1403]
+                    - generic [ref=e1409]:
+                      - generic [ref=e1410]:
+                        - img "author" [ref=e1411]
+                        - generic "Trader" [ref=e1412]
+                      - generic [ref=e1413]: committed
+                      - generic "Apr 2, 2026, 11:31 AM GMT+8" [ref=e1414]: Apr 2, 20264 days ago
+                    - generic [ref=e1417]:
+                      - generic [ref=e1418]:
+                        - tooltip "View commit details" [ref=e1419]:
+                          - link "6532748" [ref=e1420] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/6532748fb382d5ea66e1c11459baa3a0fffa3f9d
+                            - generic [ref=e1422]: "6532748"
+                        - button "Copy full SHA for 6532748" [ref=e1424] [cursor=pointer]:
+                          - img [ref=e1425]
+                      - tooltip "Browse repository at this point" [ref=e1428]:
+                        - link "Browse repository at this point" [ref=e1429] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/6532748fb382d5ea66e1c11459baa3a0fffa3f9d
+                          - img [ref=e1430]
+                  - 'listitem "feat(P10): implement Meta Brain (Phase 2). More information available below." [ref=e1432]':
+                    - generic [ref=e1433]:
+                      - 'heading "feat(P10): implement Meta Brain (Phase 2)" [level=4] [ref=e1434]':
+                        - 'link "feat(P10): implement Meta Brain (Phase 2)" [ref=e1436] [cursor=pointer]':
+                          - /url: /ddoqag/binance-trading-system/commit/e2629901a97ce74c5a0e00303cfb1e4faa588bf7
+                      - button "Show description for e262990" [ref=e1437] [cursor=pointer]:
+                        - img [ref=e1438]
+                    - generic [ref=e1444]:
+                      - generic [ref=e1445]:
+                        - img "author" [ref=e1446]
+                        - generic "Trader" [ref=e1447]
+                      - generic [ref=e1448]: committed
+                      - generic "Apr 2, 2026, 11:21 AM GMT+8" [ref=e1449]: Apr 2, 20264 days ago
+                    - generic [ref=e1452]:
+                      - generic [ref=e1453]:
+                        - tooltip "View commit details" [ref=e1454]:
+                          - link "e262990" [ref=e1455] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/e2629901a97ce74c5a0e00303cfb1e4faa588bf7
+                            - generic [ref=e1457]: e262990
+                        - button "Copy full SHA for e262990" [ref=e1459] [cursor=pointer]:
+                          - img [ref=e1460]
+                      - tooltip "Browse repository at this point" [ref=e1463]:
+                        - link "Browse repository at this point" [ref=e1464] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/e2629901a97ce74c5a0e00303cfb1e4faa588bf7
+                          - img [ref=e1465]
+                  - 'listitem "feat(P10): implement Stale Data Protection and E2E HTTP integration. More information available below." [ref=e1467]':
+                    - 'heading "feat(P10): implement Stale Data Protection and E2E HTTP integration" [level=4] [ref=e1469]':
+                      - 'link "feat(P10): implement Stale Data Protection and E2E HTTP integration" [ref=e1471] [cursor=pointer]':
+                        - /url: /ddoqag/binance-trading-system/commit/104041e569413b39f5ceac36f37063574857a991
+                    - generic [ref=e1476]:
+                      - generic [ref=e1477]:
+                        - img "author" [ref=e1478]
+                        - generic "Trader" [ref=e1479]
+                      - generic [ref=e1480]: committed
+                      - generic "Apr 2, 2026, 11:12 AM GMT+8" [ref=e1481]: Apr 2, 20264 days ago
+                    - generic [ref=e1484]:
+                      - generic [ref=e1485]:
+                        - tooltip "View commit details" [ref=e1486]:
+                          - link "104041e" [ref=e1487] [cursor=pointer]:
+                            - /url: /ddoqag/binance-trading-system/commit/104041e569413b39f5ceac36f37063574857a991
+                            - generic [ref=e1489]: 104041e
+                        - button "Copy full SHA for 104041e" [ref=e1491] [cursor=pointer]:
+                          - img [ref=e1492]
+                      - tooltip "Browse repository at this point" [ref=e1495]:
+                        - link "Browse repository at this point" [ref=e1496] [cursor=pointer]:
+                          - /url: /ddoqag/binance-trading-system/tree/104041e569413b39f5ceac36f37063574857a991
+                          - img [ref=e1497]
+        - navigation "Pagination" [ref=e1499]:
+          - generic [ref=e1500]:
+            - generic [ref=e1501]:
+              - img [ref=e1502]
+              - text: Previous
+            - link "Next Page" [ref=e1504] [cursor=pointer]:
+              - /url: /ddoqag/binance-trading-system/commits/feature/signal-aggregator-metrics?after=8e5f2e8a2a81e075c8767fa0545fc974657ba940+34
+              - text: Next
+              - img [ref=e1505]
+  - contentinfo [ref=e1507]:
+    - heading "Footer" [level=2] [ref=e1508]
+    - generic [ref=e1509]:
+      - generic [ref=e1510]:
+        - link "GitHub Homepage" [ref=e1511] [cursor=pointer]:
+          - /url: https://github.com
+          - img [ref=e1512]
+        - generic [ref=e1514]: © 2026 GitHub, Inc.
+      - navigation "Footer" [ref=e1515]:
+        - heading "Footer navigation" [level=3] [ref=e1516]
+        - list "Footer navigation" [ref=e1517]:
+          - listitem [ref=e1518]:
+            - link "Terms" [ref=e1519] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=e1520]:
+            - link "Privacy" [ref=e1521] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
+          - listitem [ref=e1522]:
+            - link "Security" [ref=e1523] [cursor=pointer]:
+              - /url: https://github.com/security
+          - listitem [ref=e1524]:
+            - link "Status" [ref=e1525] [cursor=pointer]:
+              - /url: https://www.githubstatus.com/
+          - listitem [ref=e1526]:
+            - link "Community" [ref=e1527] [cursor=pointer]:
+              - /url: https://github.community/
+          - listitem [ref=e1528]:
+            - link "Docs" [ref=e1529] [cursor=pointer]:
+              - /url: https://docs.github.com/
+          - listitem [ref=e1530]:
+            - link "Contact" [ref=e1531] [cursor=pointer]:
+              - /url: https://support.github.com?tags=dotcom-footer
+          - listitem [ref=e1532]:
+            - button "Manage cookies" [ref=e1534] [cursor=pointer]
+          - listitem [ref=e1535]:
+            - button "Do not share my personal information" [ref=e1537] [cursor=pointer]

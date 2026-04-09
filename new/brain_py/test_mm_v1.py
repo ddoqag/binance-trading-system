@@ -124,6 +124,16 @@ def run_test(duration_seconds: int = 60):
             # 策略处理
             strategy.on_market_tick(market_state, position_info)
 
+            # 检查成交（模拟环境下需要主动查询）
+            try:
+                filled_orders = requests.get("http://localhost:8080/api/v1/orders/filled",
+                                            params={"symbol": "BTCUSDT"}, timeout=0.5)
+                if filled_orders.status_code == 200:
+                    for fill in filled_orders.json().get("fills", []):
+                        strategy.on_fill(fill)
+            except:
+                pass  # 端点可能不存在，忽略
+
             # 跟踪模式变化
             if strategy.mode != last_mode:
                 mode_changes[strategy.mode] = mode_changes.get(strategy.mode, 0) + 1

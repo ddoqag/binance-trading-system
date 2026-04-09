@@ -1,0 +1,47 @@
+{
+  "timestamp": "2026-04-07T11:17:58.897535",
+  "data_size": 1000,
+  "initial_capital": 1000.0,
+  "results": {
+    "normal": {
+      "test_name": "Normal Environment",
+      "sharpe": -42.20828118455042,
+      "total_pnl": -151.45846913817388,
+      "win_rate": 0.0,
+      "trade_count": 6,
+      "description": "Baseline test with normal market conditions"
+    },
+    "zero_spread": {
+      "test_name": "Zero Spread",
+      "sharpe": 0.0,
+      "total_pnl": 0.0,
+      "win_rate": 0.0,
+      "trade_count": 6,
+      "description": "Spread removed - tests if profit comes from spread capture"
+    },
+    "high_adverse": {
+      "test_name": "High Adverse Selection",
+      "sharpe": -9.410898001297525,
+      "total_pnl": -430.12208562842255,
+      "win_rate": 0.16666666666666666,
+      "trade_count": 6,
+      "description": "Tests sensitivity to adverse selection"
+    },
+    "random_queue": {
+      "test_name": "Random Queue Position",
+      "sharpe": -23.26130343433954,
+      "total_pnl": -32.92448281029022,
+      "win_rate": 0.0,
+      "trade_count": 2,
+      "description": "Tests dependency on optimal queue position"
+    },
+    "high_latency": {
+      "test_name": "High Latency",
+      "sharpe": -56.754115721422494,
+      "total_pnl": -136.2798843949938,
+      "win_rate": 0.0,
+      "trade_count": 2,
+      "description": "Tests sensitivity to latency disadvantage"
+    }
+  }
+}

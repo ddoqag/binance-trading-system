@@ -127,18 +127,18 @@ func NewOrderExecutorWithSTP(symbol string, paperTrading bool, apiKey, apiSecret
 	return executor
 }
 
-func (e *OrderExecutor) PlaceLimitBuy(price, size float64) error {
+func (e *OrderExecutor) PlaceLimitBuy(price, size float64, postOnly bool) error {
 	if e.paperTrading {
-		return e.simulateLimitOrder(SideBuy, price, size)
+		return e.simulateLimitOrder(SideBuy, price, size, postOnly)
 	}
-	return e.placeLiveLimitOrder(SideBuy, price, size)
+	return e.placeLiveLimitOrder(SideBuy, price, size, postOnly)
 }
 
-func (e *OrderExecutor) PlaceLimitSell(price, size float64) error {
+func (e *OrderExecutor) PlaceLimitSell(price, size float64, postOnly bool) error {
 	if e.paperTrading {
-		return e.simulateLimitOrder(SideSell, price, size)
+		return e.simulateLimitOrder(SideSell, price, size, postOnly)
 	}
-	return e.placeLiveLimitOrder(SideSell, price, size)
+	return e.placeLiveLimitOrder(SideSell, price, size, postOnly)
 }
 
 func (e *OrderExecutor) PlaceMarketBuy(size float64) error {
@@ -231,7 +231,7 @@ func (e *OrderExecutor) simulateMarketOrder(side OrderSide, size float64) error 
 	return nil
 }
 
-func (e *OrderExecutor) simulateLimitOrder(side OrderSide, price, size float64) error {
+func (e *OrderExecutor) simulateLimitOrder(side OrderSide, price, size float64, postOnly bool) error {
 	order := &Order{
 		ID:        generateOrderID(),
 		Symbol:    e.symbol,
@@ -249,8 +249,12 @@ func (e *OrderExecutor) simulateLimitOrder(side OrderSide, price, size float64) 
 	// In a real implementation, would check if limit can be filled immediately
 	// and monitor for fills
 
-	log.Printf("[PAPER] Limit %s: %.4f @ %.2f (order %s)",
-		sideToString(side), size, price, order.ID)
+	postOnlyStr := ""
+	if postOnly {
+		postOnlyStr = " POST_ONLY"
+	}
+	log.Printf("[PAPER] Limit %s%s: %.4f @ %.2f (order %s)",
+		sideToString(side), postOnlyStr, size, price, order.ID)
 
 	return nil
 }
@@ -318,7 +322,7 @@ func (e *OrderExecutor) placeLiveMarketOrder(side OrderSide, size float64) error
 	return nil
 }
 
-func (e *OrderExecutor) placeLiveLimitOrder(side OrderSide, price, size float64) error {
+func (e *OrderExecutor) placeLiveLimitOrder(side OrderSide, price, size float64, postOnly bool) error {
 	if e.binanceClient == nil {
 		return fmt.Errorf("binance client not initialized")
 	}
@@ -345,7 +349,13 @@ func (e *OrderExecutor) placeLiveLimitOrder(side OrderSide, price, size float64)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	resp, err := e.binanceClient.PlaceLimitOrder(ctx, e.symbol, sideStr, price, size, "GTC")
+	// Force maker orders with POST_ONLY time-in-force
+	timeInForce := "GTC"
+	if postOnly {
+		timeInForce = "GTX" // POST_ONLY in Binance API
+	}
+
+	resp, err := e.binanceClient.PlaceLimitOrder(ctx, e.symbol, sideStr, price, size, timeInForce)
 	if err != nil {
 		return fmt.Errorf("failed to place limit order: %w", err)
 	}
@@ -373,8 +383,12 @@ func (e *OrderExecutor) placeLiveLimitOrder(side OrderSide, price, size float64)
 		e.stp.TrackOrder(order)
 	}
 
-	log.Printf("[LIVE] Limit %s: %.4f @ %.2f (Binance ID: %d, Status: %s)",
-		sideStr, size, price, resp.OrderID, resp.Status)
+	postOnlyStr := ""
+	if postOnly {
+		postOnlyStr = " POST_ONLY"
+	}
+	log.Printf("[LIVE] Limit %s%s: %.4f @ %.2f (Binance ID: %d, Status: %s)",
+		sideStr, postOnlyStr, size, price, resp.OrderID, resp.Status)
 
 	return nil
 }

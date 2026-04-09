@@ -15,11 +15,30 @@ import (
 
 // 魔数和版本
 const (
-	HFTProtocolMagic   uint32 = 0x48465453 // "HFTS"
-	HFTProtocolVersion uint32 = 1
+	HFTProtocolMagic       uint32 = 0x48465453 // "HFTS"
+	HFTProtocolVersion     uint32 = 1
+	HFTMinCompatibleVersion uint32 = 1
+	HFTMaxCompatibleVersion uint32 = 1
 	HFTMaxOrderBookDepth   = 20
 	HFTMaxOrders           = 64
 	HFTShmSizeDefault      = 64 * 1024 * 1024 // 64MB
+)
+
+// 共享内存布局偏移量
+const (
+	HFTHeaderOffset     = 0
+	HFTAIContextOffset  = 4096
+	HFTFeaturesOffset   = 16384
+	HFTSignalOffset     = 17024 // 16384 + 640
+)
+
+// 结构体大小常量
+const (
+	HFTPriceLevelSize   = 20
+	HFTHeartbeatSize    = 24
+	HFTAccountInfoSize  = 56
+	HFTAIContextSize    = 64
+	HFTHeaderSize       = 1024
 )
 
 // 消息类型
@@ -120,6 +139,33 @@ type AIContext struct {
 }
 
 const AIContextOffset = 4096
+
+// FeatureVector 特征向量 (位于 HFTFeaturesOffset)
+type FeatureVector struct {
+	OFI              float64 // 订单流不平衡 [-1, +1]
+	QueueRatio       float64 // 队列位置 [0, 1]
+	HazardRate       float64 // 危险率
+	AdverseScore     float64 // 逆向选择分数 [-1, +1]
+	ToxicProb        float64 // 毒流概率 [0, 1]
+	Spread           float64 // 价差
+	MicroMomentum    float64 // 微观动量 [-1, +1]
+	Volatility       float64 // 波动率
+	TradeFlow        float64 // 交易流 [-1, +1]
+	Inventory        float64 // 持仓压力 [-1, +1]
+	Reserved         [70]float64 // 填充到640 bytes
+}
+
+// SignalVector 信号向量 (位于 HFTSignalOffset)
+type SignalVector struct {
+	ActionDirection  float64 // 动作方向 [-1, +1]
+	ActionAggression float64 // 激进度 [0, 1]
+	ActionSizeScale  float64 // 大小缩放 [0, 1]
+	PositionTarget   float64 // 目标仓位 [-1, +1]
+	Confidence       float64 // 置信度 [0, 1]
+	RegimeCode       uint32  // 市场状态编码
+	ExpertID         uint32  // 专家ID
+	Reserved         [26]float64 // 填充到256 bytes
+}
 
 // Heartbeat 心跳
 type Heartbeat struct {
@@ -432,7 +478,20 @@ func (h *SharedMemoryHeader) VerifyMagic() bool {
 
 // VerifyVersion 验证版本
 func (h *SharedMemoryHeader) VerifyVersion() bool {
-	return h.Version == HFTProtocolVersion
+	return h.Version >= HFTMinCompatibleVersion && h.Version <= HFTMaxCompatibleVersion
+}
+
+// CheckVersion 检查版本是否兼容
+func CheckVersion(version uint32) bool {
+	return version >= HFTMinCompatibleVersion && version <= HFTMaxCompatibleVersion
+}
+
+// NegotiateVersion 协商使用哪个版本
+func NegotiateVersion(goVersion, pyVersion uint32) uint32 {
+	if goVersion < pyVersion {
+		return goVersion
+	}
+	return pyVersion
 }
 
 // UpdateGoHeartbeat 更新Go端心跳
@@ -457,4 +516,297 @@ func (h *SharedMemoryHeader) IncrementGoWriteIndex(n int) {
 // IncrementAIWriteIndex 递增AI写索引
 func (h *SharedMemoryHeader) IncrementAIWriteIndex(n int) {
 	atomic.AddUint64(&h.AIWriteIndex, uint64(n))
+}
+
+// ============================================================================
+// Reversal Detection SHM Protocol (扩展协议)
+// ============================================================================
+
+// Reversal SHM 魔数和版本
+const (
+	ReversalSHMMagic       uint32 = 0x52455653 // "REVS"
+	ReversalSHMVersion     uint32 = 1
+	ReversalFeaturesOffset        = 16384
+	ReversalFeaturesSize          = 640 // 512 + 128 reason
+	ReversalSignalOffset          = 17024 // 16384 + 640
+	ReversalSignalSize            = 256
+)
+
+// ReversalFeaturesSHM 反转特征结构 (640 bytes)
+type ReversalFeaturesSHM struct {
+	// Header (24 bytes)
+	Magic       uint32
+	Version     uint32
+	TimestampNs uint64
+	Sequence    uint64
+
+	// Price features (64 bytes)
+	PriceMomentum1m    float64
+	PriceMomentum5m    float64
+	PriceMomentum15m   float64
+	PriceZScore        float64
+	PricePercentile    float64
+	PriceVelocity      float64
+	PriceAcceleration  float64
+	PriceMeanReversion float64
+
+	// Volume features (32 bytes)
+	VolumeSurge    float64
+	VolumeMomentum float64
+	VolumeZScore   float64
+	RelativeVolume float64
+
+	// Volatility features (32 bytes)
+	VolatilityCurrent float64
+	VolatilityRegime  float64
+	AtrRatio          float64
+	BollingerPosition float64
+
+	// Order flow features (40 bytes)
+	OfiSignal       float64
+	TradeImbalance  float64
+	BidAskPressure  float64
+	OrderBookSlope  float64
+	MicroPriceDrift float64
+
+	// Microstructure (32 bytes)
+	SpreadPercentile float64
+	TickPressure     float64
+	QueueImbalance   float64
+	TradeIntensity   float64
+
+	// Time features (16 bytes)
+	TimeOfDay    float64
+	DayOfWeek    uint32
+	IsMarketOpen uint32
+	SessionType  uint32
+	_            uint32 // padding
+
+	// Metadata (16 bytes)
+	SymbolID  uint32
+	Timeframe uint32
+	Reserved  uint32
+	_         uint32 // padding
+
+	// Reason field (128 bytes)
+	Reason [128]byte
+
+	// Padding to 640 bytes (640 - 264 - 128 = 248 bytes)
+	_ [248]byte
+}
+
+// ReversalSignalSHM 反转信号结构 (256 bytes)
+type ReversalSignalSHM struct {
+	// Header (24 bytes)
+	Magic       uint32
+	Version     uint32
+	TimestampNs uint64
+	Sequence    uint64
+
+	// Signal data (40 bytes)
+	SignalStrength float64 // -1.0 to 1.0
+	Confidence     float64 // 0.0 to 1.0
+	Probability    float64 // 0.0 to 1.0
+	ExpectedReturn float64
+	TimeHorizonMs  uint32
+	_              uint32 // padding
+
+	// Model info (24 bytes)
+	ModelVersion       uint32 // 0=LightGBM, 1=NN, 2=Ensemble
+	ModelType          uint32
+	InferenceLatencyUs uint32
+	_                  uint32 // padding
+	FeatureTimestampNs uint64
+
+	// Feature importance (64 bytes)
+	TopFeature1 float64
+	TopFeature2 float64
+	TopFeature3 float64
+	TopFeature4 float64
+	TopFeature5 float64
+	TopFeature6 float64
+	TopFeature7 float64
+	TopFeature8 float64
+
+	// Risk metrics (32 bytes)
+	PredictionUncertainty float64
+	MarketRegime          uint32 // 0=unknown, 1=trend_up, 2=trend_down, 3=range, 4=high_vol
+	_                     uint32 // padding
+	RiskScore             float64
+	MaxAdverseExcursion   float64
+
+	// Execution advice (24 bytes)
+	SuggestedUrgency  float64
+	SuggestedTTLMs    uint32
+	ExecutionPriority uint32 // 0=normal, 1=high, 2=critical
+	ReasonCode        uint32
+	_                 uint32 // padding
+
+	// Reason details (48 bytes)
+	ReasonDetails [48]byte
+}
+
+// ============================================================================
+// Verification Metrics SHM (真实性检验)
+// ============================================================================
+
+const (
+	VerificationSHMMagic        uint32 = 0x54525554 // "TRUT"
+	VerificationSHMVersion      uint32 = 1
+	VerificationMetricsOffset          = 17252     // ReversalSignalOffset + ReversalSignalSize
+	VerificationMetricsSize            = 288
+
+	// Version control
+	ProtocolVersionMajor = 1
+	ProtocolVersionMinor = 0
+	ProtocolVersionPatch = 0
+	ProtocolVersionFull  = (ProtocolVersionMajor << 16) | (ProtocolVersionMinor << 8) | ProtocolVersionPatch
+)
+
+// Verification flags
+const (
+	VerificationFlagLatencyOK     uint32 = 0x0001
+	VerificationFlagSlippageOK    uint32 = 0x0002
+	VerificationFlagConsistencyOK uint32 = 0x0004
+	VerificationFlagAnomalyFree   uint32 = 0x0008
+	VerificationFlagAllOK         uint32 = 0x000F
+)
+
+// VerificationMetricsSHM 真实性检验指标结构 (288 bytes)
+type VerificationMetricsSHM struct {
+	// Header (16 bytes)
+	Magic       uint32
+	Version     uint32
+	TimestampNs uint64
+
+	// Latency measurements (32 bytes)
+	LatencyTotalUs      uint32
+	LatencyFeatureUs    uint32
+	LatencyInferenceUs  uint32
+	LatencyDecisionUs   uint32
+	LatencyTransmitUs   uint32
+	LatencyExecuteUs    uint32
+	_                   [2]uint32 // padding
+
+	// Validation status (16 bytes)
+	ValidationFlags   uint32
+	AnomalyCount      uint32
+	SlippageBps       float32
+	ConsistencyScore  float32
+
+	// Extended metrics (64 bytes)
+	ExecutionPrice     float64
+	PredictedPrice     float64
+	PriceError         float64
+	PriceErrorStd      float64
+	MarketImpactBps    float64
+	TimingScore        float64
+	QueuePositionError float64
+	FillRate           float64
+
+	// Quality metrics (32 bytes)
+	SignalToNoise       float32
+	PredictionAccuracy  float32
+	ModelDriftScore     float32
+	DataFreshnessMs     float32
+	ConsecutiveErrors   uint32
+	RecoveryCount       uint32
+	_                   [2]float32 // padding
+
+	// Reserved (128 bytes)
+	Reserved [128]byte
+}
+
+// ReversalCheckMagic 检查 Reversal SHM 魔数
+func ReversalCheckMagic(magic uint32) bool {
+	return magic == ReversalSHMMagic
+}
+
+// ReversalCheckVersion 检查 Reversal SHM 版本
+func ReversalCheckVersion(version uint32) bool {
+	return version == ReversalSHMVersion
+}
+
+// VerificationCheckMagic 检查 Verification SHM 魔数
+func VerificationCheckMagic(magic uint32) bool {
+	return magic == VerificationSHMMagic
+}
+
+// VerificationCheckVersion 检查 Verification SHM 版本
+func VerificationCheckVersion(version uint32) bool {
+	return version == VerificationSHMVersion
+}
+
+// CheckVersionMajor 检查主版本号
+func CheckVersionMajor(version uint32) bool {
+	return (version >> 16) == ProtocolVersionMajor
+}
+
+// CheckVersionCompat 检查版本兼容性
+func CheckVersionCompat(version uint32) bool {
+	majorOK := (version >> 16) == ProtocolVersionMajor
+	minorOK := ((version >> 8) & 0xFF) <= ProtocolVersionMinor
+	return majorOK && minorOK
+}
+
+// IsLatencyOK 检查延迟是否正常
+func (v *VerificationMetricsSHM) IsLatencyOK() bool {
+	return (v.ValidationFlags & VerificationFlagLatencyOK) != 0
+}
+
+// IsSlippageOK 检查滑点是否正常
+func (v *VerificationMetricsSHM) IsSlippageOK() bool {
+	return (v.ValidationFlags & VerificationFlagSlippageOK) != 0
+}
+
+// IsConsistencyOK 检查一致性是否正常
+func (v *VerificationMetricsSHM) IsConsistencyOK() bool {
+	return (v.ValidationFlags & VerificationFlagConsistencyOK) != 0
+}
+
+// IsAllOK 检查所有验证是否通过
+func (v *VerificationMetricsSHM) IsAllOK() bool {
+	return (v.ValidationFlags & VerificationFlagAllOK) == VerificationFlagAllOK
+}
+
+// GetReason 获取原因字符串
+func (r *ReversalFeaturesSHM) GetReason() string {
+	n := 0
+	for n < len(r.Reason) && r.Reason[n] != 0 {
+		n++
+	}
+	return string(r.Reason[:n])
+}
+
+// GetReasonDetails 获取信号原因详情
+func (r *ReversalSignalSHM) GetReasonDetails() string {
+	n := 0
+	for n < len(r.ReasonDetails) && r.ReasonDetails[n] != 0 {
+		n++
+	}
+	return string(r.ReasonDetails[:n])
+}
+
+// GetDirection 获取信号方向: -1 (down), 0 (neutral), 1 (up)
+func (r *ReversalSignalSHM) GetDirection() int {
+	if r.SignalStrength > 0.3 {
+		return 1 // Up reversal expected
+	} else if r.SignalStrength < -0.3 {
+		return -1 // Down reversal expected
+	}
+	return 0
+}
+
+// IsValid 检查信号是否有效
+func (r *ReversalSignalSHM) IsValid(minConfidence, minStrength float64) bool {
+	if r.Magic != ReversalSHMMagic {
+		return false
+	}
+	if r.Confidence < minConfidence {
+		return false
+	}
+	if abs(r.SignalStrength) < minStrength {
+		return false
+	}
+	return true
 }

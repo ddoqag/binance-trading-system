@@ -1,0 +1,257 @@
+{
+  "timestamp": "2026-04-09T13:57:03.405276",
+  "symbol": "ETHUSDT",
+  "results": [
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.9310901528493227,
+        "alpha_threshold": 0.0003495084062211967,
+        "max_position": 0.18401855347356774
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.6576662488704705,
+        "alpha_threshold": 0.0005196373288460533,
+        "max_position": 0.06747769369635395
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.844692343754118,
+        "alpha_threshold": 0.0019883829112394696,
+        "max_position": 0.07813073218274863
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.0055256309764884,
+        "alpha_threshold": 0.0006497046627783815,
+        "max_position": 0.15972533971765546
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.9476746569975236,
+        "alpha_threshold": 0.0010367705921187562,
+        "max_position": 0.18242688944016705
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.6949541612918755,
+        "alpha_threshold": 0.0011317303164919527,
+        "max_position": 0.16461373161231455
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.6978969780456845,
+        "alpha_threshold": 0.0008390722302596864,
+        "max_position": 0.06417668236864787
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.3118254604470456,
+        "alpha_threshold": 0.0002855577956641166,
+        "max_position": 0.05030631947215037
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.5195474979094334,
+        "alpha_threshold": 0.00021837916168470045,
+        "max_position": 0.2336498341306313
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.6331345399450583,
+        "alpha_threshold": 0.0005944276225878051,
+        "max_position": 0.059718549501136114
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.1294620804161222,
+        "alpha_threshold": 0.00035681380214140304,
+        "max_position": 0.24351971389936153
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.5120500993923902,
+        "alpha_threshold": 0.0004233141406915348,
+        "max_position": 0.1170877820850128
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.9170370398203898,
+        "alpha_threshold": 0.00046632065182192954,
+        "max_position": 0.11298418424715752
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.047115806864385,
+        "alpha_threshold": 0.0002805970857523116,
+        "max_position": 0.21617158448869767
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.5591292529194203,
+        "alpha_threshold": 0.0005688668911305339,
+        "max_position": 0.19860008307204097
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.173673280052574,
+        "alpha_threshold": 0.0003452137698952536,
+        "max_position": 0.09862864299733115
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.800661429575026,
+        "alpha_threshold": 0.00021318870053106535,
+        "max_position": 0.03145357303346186
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.343992544956196,
+        "alpha_threshold": 0.0007471845651614569,
+        "max_position": 0.14257766153348486
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.3721457682187426,
+        "alpha_threshold": 0.0004226017532753548,
+        "max_position": 0.13098121615643654
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.099226273245769,
+        "alpha_threshold": 0.0016919849438317208,
+        "max_position": 0.09227296105988854
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.2772561009360794,
+        "alpha_threshold": 0.00029760837479862046,
+        "max_position": 0.19503045111892084
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.9930512920740844,
+        "alpha_threshold": 0.00172181463264464,
+        "max_position": 0.0833302560905259
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.7714693931301033,
+        "alpha_threshold": 0.0019733519629660783,
+        "max_position": 0.0770580815048186
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.52167302400567,
+        "alpha_threshold": 0.0012515206101722973,
+        "max_position": 0.04785762831540906
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.847231032864273,
+        "alpha_threshold": 0.0005119374876760758,
+        "max_position": 0.031214927554213096
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 1.7824449264296613,
+        "alpha_threshold": 0.0008609636631717925,
+        "max_position": 0.15484180876862286
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.4504798931864498,
+        "alpha_threshold": 0.0014045001356010544,
+        "max_position": 0.11379868683136751
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.6387956023377694,
+        "alpha_threshold": 0.0006794782014479715,
+        "max_position": 0.17754625839179902
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.260474408923755,
+        "alpha_threshold": 0.00034042425951144573,
+        "max_position": 0.07109829224393104
+      }
+    },
+    {
+      "score": 0.0,
+      "params": {
+        "min_spread": 2.028360894823988,
+        "alpha_threshold": 0.000520105742215837,
+        "max_position": 0.13279241658602287
+      }
+    }
+  ],
+  "best": {
+    "score": 0.0,
+    "ic": 0.0,
+    "trades": 66,
+    "frequency": 0.66,
+    "params": {
+      "min_spread": 2.9310901528493227,
+      "alpha_threshold": 0.0003495084062211967,
+      "max_position": 0.18401855347356774
+    }
+  }
+}

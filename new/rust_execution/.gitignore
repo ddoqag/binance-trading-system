@@ -1,0 +1,35 @@
+# Rust
+target/
+Cargo.lock
+*.rlib
+*.rmeta
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.whl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IPC shared memory files
+/tmp/rust_execution/
+*.shm
+
+# Logs
+*.log
+logs/

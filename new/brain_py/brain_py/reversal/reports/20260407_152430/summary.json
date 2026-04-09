@@ -1,0 +1,20 @@
+{
+  "timestamp": "20260407_152430",
+  "config": {
+    "symbol": "BTCUSDT",
+    "initial_capital": 1000000.0,
+    "max_position_size": 0.2,
+    "slippage_bps": 0.5,
+    "fee_bps": 2.0,
+    "signal_threshold": 0.3,
+    "position_sizing": "signal_based"
+  },
+  "results": {
+    "total_return_pct": 0.0021567571630600143,
+    "sharpe_ratio": 0.030382728135417286,
+    "max_drawdown_pct": -0.013435020638362277,
+    "win_rate": 0.32224532224532226,
+    "total_trades": 481,
+    "profit_factor": 0.7358068993843567
+  }
+}

@@ -1,3 +1,4 @@
+<!-- From: D:\binance\new\AGENTS.md -->
 # HFT Trading System - Agent Specification
 高频交易延迟队列RL系统 - AI Agent开发规范文档
 
@@ -11,17 +12,39 @@ This is a **High-Frequency Trading (HFT) Latency Queue Reinforcement Learning Sy
 - **Binance Integration**: WebSocket real-time data streaming (testnet/mainnet)
 - **Self-Evolving System**: Multi-phase architecture including regime detection, PBT training, and agent civilization
 
+**Core Philosophy**:
+```
+预测 ≠ Alpha
+执行 = Alpha
+```
+
+The system is designed as an **Execution Alpha System** — not predicting prices, but optimizing execution timing and queue position while defending against toxic flow harvesting.
+
 ## 2. Technology Stack
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Execution Engine | Go 1.21+ | WebSocket feeds, order execution, risk management, WAL |
+| Execution Engine | Go 1.26+ | WebSocket feeds, order execution, risk management, WAL |
 | RL Agent | Python 3.9+ | SAC algorithm, decision generation |
 | Communication | mmap | Cross-language shared memory (144 bytes) |
 | ML Framework | PyTorch 2.0+ | Neural networks for RL |
 | Data Source | Binance WebSocket/API | L2 order book, trade streams |
 | Configuration | YAML | Runtime configuration |
 | Metrics | Prometheus | Performance monitoring |
+
+### Go Dependencies (go.mod)
+- `github.com/gorilla/websocket` - WebSocket client
+- `github.com/adshao/go-binance/v2` - Official Binance SDK
+- `github.com/prometheus/client_golang` - Metrics collection
+- `github.com/fsnotify/fsnotify` - File system notifications
+
+### Python Dependencies (requirements.txt)
+- `torch>=2.0.0` - Deep learning framework
+- `numpy>=1.24.0`, `scipy>=1.10.0`, `pandas>=2.0.0` - Numerical computing
+- `scikit-learn>=1.3.0` - Machine learning utilities
+- `hmmlearn>=0.3.0` - Hidden Markov Models for regime detection
+- `python-binance>=1.0.1` - Binance API client
+- `aiohttp>=3.8.0`, `websockets>=12.0` - Async networking
 
 ## 3. Directory Structure
 
@@ -62,24 +85,38 @@ This is a **High-Frequency Trading (HFT) Latency Queue Reinforcement Learning Sy
 │   ├── moe/                   # Mixture of Experts (Phase 6)
 │   ├── world_model.py         # World model (Phase 8)
 │   ├── agent_civilization.py  # Agent civilization (Phase 9)
-│   ├── requirements.txt       # Python dependencies
-│   └── tests/                 # Python test files
+│   ├── local_trading/         # Local offline trading module
+│   ├── mvp/                   # MVP simplified version
+│   ├── tests/                 # Python test files
+│   └── requirements.txt       # Python dependencies
 ├── strategies/                # Trading strategies
 │   ├── base.py                # Strategy base class
 │   ├── dual_ma.py             # Dual moving average
 │   ├── momentum.py            # Momentum strategy
-│   └── rsi.py                 # RSI strategy
+│   ├── rsi.py                 # RSI strategy
+│   └── *_agent.py             # Various agent implementations
 ├── core/                      # Python core components
 │   ├── live_order_manager.py  # Live order management
-│   └── live_risk_manager.py   # Live risk management
-├── leverage/                  # Leverage trading components
-├── retail-micro-trader/       # Retail trading components
-├── shared/                    # Shared protocol definitions
-│   ├── protocol.h             # C header
-│   └── protocol.py            # Python bindings
+│   ├── live_risk_manager.py   # Live risk management
+│   ├── binance_ws_client.py   # Binance WebSocket client
+│   └── paper_exchange.py      # Paper trading exchange
+├── rl/                        # RL training framework
+│   ├── execution_env.py       # Execution environment
+│   ├── sac_execution_agent.py # SAC agent implementation
+│   └── train_*.py             # Training scripts
+├── backtest/                  # Backtesting components
+│   ├── backtest_engine.py     # Backtest engine
+│   └── historical_data_loader.py
+├── execution_core/            # Execution core components
+│   ├── order_state_machine.py # Order FSM
+│   ├── position_manager.py    # Position management
+│   └── queue_tracker.py       # Queue position tracking
+├── monitoring/                # Monitoring and observability
+│   ├── dashboard.py           # Monitoring dashboard
+│   └── metrics_collector.py   # Metrics collection
 ├── config/                    # Configuration files
 │   ├── default.yaml           # Default configuration
-│   └── self_evolving_trader.yaml  # Self-evolving config
+│   └── self_evolving_trader.yaml
 ├── scripts/                   # Startup scripts
 │   ├── start.sh               # Linux/Mac startup
 │   ├── start.bat              # Windows startup
@@ -89,26 +126,34 @@ This is a **High-Frequency Trading (HFT) Latency Queue Reinforcement Learning Sy
 │   ├── ARCHITECTURE_OVERVIEW.md
 │   ├── SELF_EVOLVING_LIVE_DESIGN.md
 │   ├── MONITORING_SETUP.md
-│   └── ...
+│   └── WINDOWS_INTEGRATION_GUIDE.md
 ├── logs/                      # Log files
 ├── data/                      # Data files
 ├── checkpoints/               # Model checkpoints
-└── ab_test_results/           # A/B testing results
+└── tests/                     # Test files
 ```
 
 ## 4. Build and Run Commands
 
 ### Prerequisites
-- Go 1.21+
+- Go 1.26+
 - Python 3.9+
 - PyTorch
 - Binance API credentials (for live trading)
 
 ### Initialization
 ```bash
-# One-time project initialization
+# One-time project initialization (Linux/Mac)
 chmod +x init.sh
 ./init.sh
+
+# On Windows, manually:
+# 1. Install Python dependencies
+pip install -r requirements.txt
+pip install -r brain_py/requirements.txt
+
+# 2. Build Go engine
+cd core_go && go mod tidy
 ```
 
 ### Build Commands
@@ -144,6 +189,7 @@ cd brain_py && python agent.py
 ### Dependency Installation
 ```bash
 # Python dependencies
+pip install -r requirements.txt
 pip install -r brain_py/requirements.txt
 
 # Go dependencies (auto-fetched on build)
@@ -177,6 +223,12 @@ python end_to_end_test.py
 
 # Integration test
 python integration_test.py
+
+# Run specific Python tests
+cd brain_py
+python -m pytest tests/ -v
+python -m pytest tests/test_meta_agent.py -v
+python -m pytest tests/test_execution_sac.py -v
 ```
 
 ### Pre-commit Hooks
@@ -342,7 +394,7 @@ Multi-agent ecosystem with roles and cooperation
 ## 11. Monitoring and Observability
 
 ### Metrics Endpoints
-- Go engine exposes Prometheus metrics
+- Go engine exposes Prometheus metrics on port 2112
 - Grafana dashboard: `core_go/grafana_dashboard.json`
 - Alert rules: `core_go/alert_rules.yml`
 
@@ -359,6 +411,9 @@ python test_system.py
 # View recent logs
 tail -f logs/go_engine.log
 tail -f logs/python_agent.log
+
+# Check Prometheus metrics
+curl http://localhost:2112/metrics
 ```
 
 ## 12. Troubleshooting
@@ -397,11 +452,13 @@ perf:     Performance improvements
 ## 15. Documentation References
 
 - `README.md` - Project overview and quick start
-- `docs/ARCHITECTURE_OVERVIEW.md` - System architecture
+- `CLAUDE.md` - Claude Code specific instructions
+- `docs/ARCHITECTURE_OVERVIEW.md` - System architecture (Chinese)
 - `docs/SELF_EVOLVING_LIVE_DESIGN.md` - Self-evolving system design
 - `docs/MONITORING_SETUP.md` - Monitoring configuration
 - `docs/WINDOWS_INTEGRATION_GUIDE.md` - Windows-specific setup
 - `core_go/AB_TESTING.md` - A/B testing framework
+- `MVP_README.md` - MVP version documentation
 
 ---
-*Last Updated: 2026-04-02*
+*Last Updated: 2026-04-07*

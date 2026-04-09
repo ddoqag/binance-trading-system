@@ -1,0 +1,648 @@
+======================================================================
+Small Live Trading - 小资金实盘交易
+======================================================================
+
+[WARNING] This will use REAL money!
+   Make sure you have configured:
+   1. BINANCE_API_KEY in .env file
+   2. BINANCE_API_SECRET in .env file
+   3. At least $100 USDT in your account
+
+Risk Limits:
+  - Max Capital: $100
+  - Max Position: $10 per trade
+  - Stop Loss: 1%
+  - Take Profit: 2%
+  - Max Daily Loss: $5
+
+[INFO] Auto-confirm enabled for testing
+[INFO] Using proxy: http://127.0.0.1:7897
+[INFO] Time offset: -2320ms (server - local)
+[INFO] Set timestamp_offset = -2320
+[OK] Binance API connected
+[INIT] Small Live Trader initialized
+  Symbol: SOLUSDT
+  Max Capital: $100.0
+  Max Position: $10.0
+  Stop Loss: 1.0%
+  Take Profit: 2.0%
+  Max Daily Loss: $5.0
+[2026-04-08 22:54:41] ======================================================================
+[2026-04-08 22:54:41] SMALL LIVE TRADING STARTED
+[2026-04-08 22:54:41] ======================================================================
+[2026-04-08 22:54:42] [SIGNAL] Alpha=-0.4185, Direction=SELL
+[2026-04-08 22:54:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:55:03] [SIGNAL] Alpha=0.0588, Direction=BUY
+[2026-04-08 22:55:04] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:55:14] [SIGNAL] Alpha=-0.2684, Direction=SELL
+[2026-04-08 22:55:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:55:37] [SIGNAL] Alpha=-0.5044, Direction=SELL
+[2026-04-08 22:55:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:56:01] [SIGNAL] Alpha=-0.4874, Direction=SELL
+[2026-04-08 22:56:02] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:56:12] [SIGNAL] Alpha=-0.4447, Direction=SELL
+[2026-04-08 22:56:13] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:56:23] [SIGNAL] Alpha=-0.5250, Direction=SELL
+[2026-04-08 22:56:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:56:35] [SIGNAL] Alpha=-0.7313, Direction=SELL
+[2026-04-08 22:56:36] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:56:58] [SIGNAL] Alpha=-0.2696, Direction=SELL
+[2026-04-08 22:57:00] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:57:11] [SIGNAL] Alpha=-0.2614, Direction=SELL
+[2026-04-08 22:57:12] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:57:22] [SIGNAL] Alpha=-0.2322, Direction=SELL
+[2026-04-08 22:57:23] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:57:34] [SIGNAL] Alpha=0.3780, Direction=BUY
+[2026-04-08 22:57:36] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:57:46] [SIGNAL] Alpha=0.3511, Direction=BUY
+[2026-04-08 22:57:47] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:58:08] [SIGNAL] Alpha=0.5847, Direction=BUY
+[2026-04-08 22:58:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:58:19] [SIGNAL] Alpha=-0.3396, Direction=SELL
+[2026-04-08 22:58:21] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:58:31] [SIGNAL] Alpha=0.2782, Direction=BUY
+[2026-04-08 22:58:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:58:53] [SIGNAL] Alpha=-0.5706, Direction=SELL
+[2026-04-08 22:58:54] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:59:05] [SIGNAL] Alpha=0.3656, Direction=BUY
+[2026-04-08 22:59:06] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:59:17] [SIGNAL] Alpha=0.2906, Direction=BUY
+[2026-04-08 22:59:18] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:59:30] [SIGNAL] Alpha=0.3905, Direction=BUY
+[2026-04-08 22:59:31] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:59:41] [SIGNAL] Alpha=-0.2915, Direction=SELL
+[2026-04-08 22:59:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 22:59:52] [SIGNAL] Alpha=-0.3946, Direction=SELL
+[2026-04-08 22:59:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:00:04] [SIGNAL] Alpha=0.2765, Direction=BUY
+[2026-04-08 23:00:07] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:00:17] [SIGNAL] Alpha=-0.5356, Direction=SELL
+[2026-04-08 23:00:19] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:00:29] [SIGNAL] Alpha=0.1490, Direction=BUY
+[2026-04-08 23:00:30] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:00:42] [SIGNAL] Alpha=0.3618, Direction=BUY
+[2026-04-08 23:00:44] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:00:55] [SIGNAL] Alpha=-0.1208, Direction=SELL
+[2026-04-08 23:00:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:01:07] [SIGNAL] Alpha=-0.3535, Direction=SELL
+[2026-04-08 23:01:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:01:19] [SIGNAL] Alpha=-0.3520, Direction=SELL
+[2026-04-08 23:01:19] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:01:31] [SIGNAL] Alpha=-0.3022, Direction=SELL
+[2026-04-08 23:01:33] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:02:15] [SIGNAL] Alpha=0.1737, Direction=BUY
+[2026-04-08 23:02:17] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:02:27] [SIGNAL] Alpha=0.2677, Direction=BUY
+[2026-04-08 23:02:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:02:39] [SIGNAL] Alpha=0.2056, Direction=BUY
+[2026-04-08 23:02:40] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:02:50] [SIGNAL] Alpha=-0.5773, Direction=SELL
+[2026-04-08 23:02:52] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:03:03] [SIGNAL] Alpha=-0.3866, Direction=SELL
+[2026-04-08 23:03:04] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:03:15] [SIGNAL] Alpha=0.2385, Direction=BUY
+[2026-04-08 23:03:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:03:27] [SIGNAL] Alpha=-0.1631, Direction=SELL
+[2026-04-08 23:03:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:03:39] [SIGNAL] Alpha=0.3862, Direction=BUY
+[2026-04-08 23:03:40] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:03:50] [SIGNAL] Alpha=-0.2129, Direction=SELL
+[2026-04-08 23:03:51] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:04:02] [SIGNAL] Alpha=-0.3164, Direction=SELL
+[2026-04-08 23:04:03] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:04:14] [SIGNAL] Alpha=-0.4237, Direction=SELL
+[2026-04-08 23:04:15] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:04:26] [SIGNAL] Alpha=0.3926, Direction=BUY
+[2026-04-08 23:04:27] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:04:38] [SIGNAL] Alpha=-0.4903, Direction=SELL
+[2026-04-08 23:04:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:04:49] [SIGNAL] Alpha=-0.0949, Direction=SELL
+[2026-04-08 23:04:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:05:01] [SIGNAL] Alpha=-0.3315, Direction=SELL
+[2026-04-08 23:05:02] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:05:12] [SIGNAL] Alpha=-0.3810, Direction=SELL
+[2026-04-08 23:05:13] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:05:24] [SIGNAL] Alpha=-0.4989, Direction=SELL
+[2026-04-08 23:05:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:05:35] [SIGNAL] Alpha=-0.2658, Direction=SELL
+[2026-04-08 23:05:37] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:05:49] [SIGNAL] Alpha=-0.2821, Direction=SELL
+[2026-04-08 23:05:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:06:00] [SIGNAL] Alpha=-0.2642, Direction=SELL
+[2026-04-08 23:06:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:06:13] [SIGNAL] Alpha=0.1090, Direction=BUY
+[2026-04-08 23:06:15] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:06:15] ======================================================================
+[2026-04-08 23:06:15] STATUS REPORT
+[2026-04-08 23:06:15] ======================================================================
+[2026-04-08 23:06:18] Current Price: $82.95
+[2026-04-08 23:06:18] Position: 0.0000
+[2026-04-08 23:06:18] No position
+[2026-04-08 23:06:18] Daily PnL: $0.00
+[2026-04-08 23:06:18] Daily Trades: 0
+[2026-04-08 23:06:18] Win/Loss: 0/0
+[2026-04-08 23:06:18] Consecutive Losses: 0
+[2026-04-08 23:06:18] Emergency Stop: False
+[2026-04-08 23:06:18] ======================================================================
+[2026-04-08 23:06:28] [SIGNAL] Alpha=-0.2467, Direction=SELL
+[2026-04-08 23:06:31] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:06:41] [SIGNAL] Alpha=0.2496, Direction=BUY
+[2026-04-08 23:06:44] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:06:54] [SIGNAL] Alpha=0.2945, Direction=BUY
+[2026-04-08 23:06:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:07:07] [SIGNAL] Alpha=-0.4000, Direction=SELL
+[2026-04-08 23:07:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:07:29] [SIGNAL] Alpha=-0.1345, Direction=SELL
+[2026-04-08 23:07:30] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:07:41] [SIGNAL] Alpha=0.3535, Direction=BUY
+[2026-04-08 23:07:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:07:53] [SIGNAL] Alpha=0.2046, Direction=BUY
+[2026-04-08 23:07:54] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:08:15] [SIGNAL] Alpha=-0.5136, Direction=SELL
+[2026-04-08 23:08:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:08:26] [SIGNAL] Alpha=-0.3714, Direction=SELL
+[2026-04-08 23:08:27] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:08:38] [SIGNAL] Alpha=0.2282, Direction=BUY
+[2026-04-08 23:08:40] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:08:51] [SIGNAL] Alpha=-0.3645, Direction=SELL
+[2026-04-08 23:08:52] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:09:03] [SIGNAL] Alpha=0.3775, Direction=BUY
+[2026-04-08 23:09:04] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:09:17] [SIGNAL] Alpha=0.2883, Direction=BUY
+[2026-04-08 23:09:19] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:09:30] [SIGNAL] Alpha=0.3458, Direction=BUY
+[2026-04-08 23:09:31] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:09:41] [SIGNAL] Alpha=0.3443, Direction=BUY
+[2026-04-08 23:09:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:09:53] [SIGNAL] Alpha=-0.5129, Direction=SELL
+[2026-04-08 23:09:55] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:10:06] [SIGNAL] Alpha=0.1614, Direction=BUY
+[2026-04-08 23:10:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:10:18] [SIGNAL] Alpha=0.2942, Direction=BUY
+[2026-04-08 23:10:19] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:10:30] [SIGNAL] Alpha=-0.2767, Direction=SELL
+[2026-04-08 23:10:31] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:10:41] [SIGNAL] Alpha=-0.3650, Direction=SELL
+[2026-04-08 23:10:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:11:15] [SIGNAL] Alpha=0.2713, Direction=BUY
+[2026-04-08 23:11:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:11:27] [SIGNAL] Alpha=0.4096, Direction=BUY
+[2026-04-08 23:11:29] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:11:40] [SIGNAL] Alpha=-0.3945, Direction=SELL
+[2026-04-08 23:11:41] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:11:52] [SIGNAL] Alpha=-0.2736, Direction=SELL
+[2026-04-08 23:11:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:12:03] [SIGNAL] Alpha=-0.1816, Direction=SELL
+[2026-04-08 23:12:04] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:12:15] [SIGNAL] Alpha=-0.0770, Direction=SELL
+[2026-04-08 23:12:17] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:12:27] [SIGNAL] Alpha=0.2403, Direction=BUY
+[2026-04-08 23:12:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:12:50] [SIGNAL] Alpha=-0.3898, Direction=SELL
+[2026-04-08 23:12:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:13:01] [SIGNAL] Alpha=-0.0945, Direction=SELL
+[2026-04-08 23:13:02] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:13:13] [SIGNAL] Alpha=0.0838, Direction=BUY
+[2026-04-08 23:13:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:13:24] [SIGNAL] Alpha=0.4562, Direction=BUY
+[2026-04-08 23:13:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:13:36] [SIGNAL] Alpha=-0.1277, Direction=SELL
+[2026-04-08 23:13:37] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:13:47] [SIGNAL] Alpha=0.3011, Direction=BUY
+[2026-04-08 23:13:48] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:13:59] [SIGNAL] Alpha=0.0917, Direction=BUY
+[2026-04-08 23:14:00] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:14:11] [SIGNAL] Alpha=-0.3878, Direction=SELL
+[2026-04-08 23:14:12] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:14:23] [SIGNAL] Alpha=-0.4330, Direction=SELL
+[2026-04-08 23:14:24] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:14:37] [SIGNAL] Alpha=0.3308, Direction=BUY
+[2026-04-08 23:14:38] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:14:49] [SIGNAL] Alpha=0.5682, Direction=BUY
+[2026-04-08 23:14:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:15:02] [SIGNAL] Alpha=0.0768, Direction=BUY
+[2026-04-08 23:15:03] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:15:13] [SIGNAL] Alpha=-0.3156, Direction=SELL
+[2026-04-08 23:15:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:15:25] [SIGNAL] Alpha=-0.0728, Direction=SELL
+[2026-04-08 23:15:27] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:15:38] [SIGNAL] Alpha=0.4357, Direction=BUY
+[2026-04-08 23:15:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:15:49] [SIGNAL] Alpha=0.2131, Direction=BUY
+[2026-04-08 23:15:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:16:01] [SIGNAL] Alpha=0.2088, Direction=BUY
+[2026-04-08 23:16:02] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:16:13] [SIGNAL] Alpha=-0.4265, Direction=SELL
+[2026-04-08 23:16:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:16:25] [SIGNAL] Alpha=0.0649, Direction=BUY
+[2026-04-08 23:16:26] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:16:37] [SIGNAL] Alpha=-0.2869, Direction=SELL
+[2026-04-08 23:16:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:16:50] [SIGNAL] Alpha=-0.3446, Direction=SELL
+[2026-04-08 23:16:51] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:17:01] [SIGNAL] Alpha=0.4246, Direction=BUY
+[2026-04-08 23:17:03] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:17:13] [SIGNAL] Alpha=-0.1046, Direction=SELL
+[2026-04-08 23:17:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:17:25] [SIGNAL] Alpha=-0.0765, Direction=SELL
+[2026-04-08 23:17:26] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:17:36] [SIGNAL] Alpha=-0.4294, Direction=SELL
+[2026-04-08 23:17:38] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:17:48] [SIGNAL] Alpha=-0.0551, Direction=SELL
+[2026-04-08 23:17:49] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:18:00] [SIGNAL] Alpha=-0.0769, Direction=SELL
+[2026-04-08 23:18:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:18:11] [SIGNAL] Alpha=-0.4539, Direction=SELL
+[2026-04-08 23:18:12] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:18:12] ======================================================================
+[2026-04-08 23:18:12] STATUS REPORT
+[2026-04-08 23:18:12] ======================================================================
+[2026-04-08 23:18:13] Current Price: $83.09
+[2026-04-08 23:18:13] Position: 0.0000
+[2026-04-08 23:18:13] No position
+[2026-04-08 23:18:13] Daily PnL: $0.00
+[2026-04-08 23:18:13] Daily Trades: 0
+[2026-04-08 23:18:13] Win/Loss: 0/0
+[2026-04-08 23:18:13] Consecutive Losses: 0
+[2026-04-08 23:18:13] Emergency Stop: False
+[2026-04-08 23:18:13] ======================================================================
+[2026-04-08 23:18:24] [SIGNAL] Alpha=-0.5656, Direction=SELL
+[2026-04-08 23:18:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:18:36] [SIGNAL] Alpha=-0.0883, Direction=SELL
+[2026-04-08 23:18:38] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:18:59] [SIGNAL] Alpha=-0.2239, Direction=SELL
+[2026-04-08 23:19:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:19:11] [SIGNAL] Alpha=-0.4153, Direction=SELL
+[2026-04-08 23:19:13] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:19:23] [SIGNAL] Alpha=0.4538, Direction=BUY
+[2026-04-08 23:19:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:19:36] [SIGNAL] Alpha=-0.2495, Direction=SELL
+[2026-04-08 23:19:37] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:19:48] [SIGNAL] Alpha=0.3326, Direction=BUY
+[2026-04-08 23:19:49] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:20:00] [SIGNAL] Alpha=0.1990, Direction=BUY
+[2026-04-08 23:20:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:20:12] [SIGNAL] Alpha=0.3349, Direction=BUY
+[2026-04-08 23:20:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:20:24] [SIGNAL] Alpha=0.3008, Direction=BUY
+[2026-04-08 23:20:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:20:37] [SIGNAL] Alpha=-0.2577, Direction=SELL
+[2026-04-08 23:20:38] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:20:48] [SIGNAL] Alpha=0.1151, Direction=BUY
+[2026-04-08 23:20:49] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:21:00] [SIGNAL] Alpha=0.3949, Direction=BUY
+[2026-04-08 23:21:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:21:11] [SIGNAL] Alpha=-0.1491, Direction=SELL
+[2026-04-08 23:21:12] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:21:23] [SIGNAL] Alpha=-0.1564, Direction=SELL
+[2026-04-08 23:21:24] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:21:34] [SIGNAL] Alpha=-0.2466, Direction=SELL
+[2026-04-08 23:21:35] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:21:46] [SIGNAL] Alpha=-0.4559, Direction=SELL
+[2026-04-08 23:21:47] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:21:57] [SIGNAL] Alpha=0.0841, Direction=BUY
+[2026-04-08 23:21:58] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:22:19] [SIGNAL] Alpha=0.4447, Direction=BUY
+[2026-04-08 23:22:20] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:22:31] [SIGNAL] Alpha=-0.1262, Direction=SELL
+[2026-04-08 23:22:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:22:42] [SIGNAL] Alpha=-0.1031, Direction=SELL
+[2026-04-08 23:22:43] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:22:54] [SIGNAL] Alpha=0.1197, Direction=BUY
+[2026-04-08 23:22:55] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:23:05] [SIGNAL] Alpha=0.3731, Direction=BUY
+[2026-04-08 23:23:06] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:23:17] [SIGNAL] Alpha=-0.3623, Direction=SELL
+[2026-04-08 23:23:20] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:23:31] [SIGNAL] Alpha=0.3546, Direction=BUY
+[2026-04-08 23:23:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:23:43] [SIGNAL] Alpha=0.3490, Direction=BUY
+[2026-04-08 23:23:44] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:23:55] [SIGNAL] Alpha=0.3051, Direction=BUY
+[2026-04-08 23:23:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:24:07] [SIGNAL] Alpha=0.4198, Direction=BUY
+[2026-04-08 23:24:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:24:19] [SIGNAL] Alpha=-0.1620, Direction=SELL
+[2026-04-08 23:24:20] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:24:41] [SIGNAL] Alpha=0.1852, Direction=BUY
+[2026-04-08 23:24:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:24:54] [SIGNAL] Alpha=0.2615, Direction=BUY
+[2026-04-08 23:24:57] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:25:08] [SIGNAL] Alpha=-0.1961, Direction=SELL
+[2026-04-08 23:25:09] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:25:20] [SIGNAL] Alpha=-0.5899, Direction=SELL
+[2026-04-08 23:25:21] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:25:31] [SIGNAL] Alpha=0.0959, Direction=BUY
+[2026-04-08 23:25:33] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:25:54] [SIGNAL] Alpha=-0.3689, Direction=SELL
+[2026-04-08 23:25:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:26:06] [SIGNAL] Alpha=-0.6955, Direction=SELL
+[2026-04-08 23:26:07] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:26:18] [SIGNAL] Alpha=0.5243, Direction=BUY
+[2026-04-08 23:26:19] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:26:29] [SIGNAL] Alpha=0.4849, Direction=BUY
+[2026-04-08 23:26:30] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:26:41] [SIGNAL] Alpha=0.2191, Direction=BUY
+[2026-04-08 23:26:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:27:03] [SIGNAL] Alpha=0.4913, Direction=BUY
+[2026-04-08 23:27:04] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:27:14] [SIGNAL] Alpha=-0.1314, Direction=SELL
+[2026-04-08 23:27:15] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:27:26] [SIGNAL] Alpha=-0.1247, Direction=SELL
+[2026-04-08 23:27:30] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:27:41] [SIGNAL] Alpha=-0.3843, Direction=SELL
+[2026-04-08 23:27:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:27:52] [SIGNAL] Alpha=-0.5554, Direction=SELL
+[2026-04-08 23:27:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:28:04] [SIGNAL] Alpha=0.4161, Direction=BUY
+[2026-04-08 23:28:05] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:28:15] [SIGNAL] Alpha=-0.1058, Direction=SELL
+[2026-04-08 23:28:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:28:27] [SIGNAL] Alpha=0.2225, Direction=BUY
+[2026-04-08 23:28:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:28:38] [SIGNAL] Alpha=0.2039, Direction=BUY
+[2026-04-08 23:28:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:28:50] [SIGNAL] Alpha=0.4856, Direction=BUY
+[2026-04-08 23:28:51] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:29:02] [SIGNAL] Alpha=-0.2706, Direction=SELL
+[2026-04-08 23:29:03] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:29:25] [SIGNAL] Alpha=0.4120, Direction=BUY
+[2026-04-08 23:29:26] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:29:37] [SIGNAL] Alpha=0.5289, Direction=BUY
+[2026-04-08 23:29:38] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:29:49] [SIGNAL] Alpha=-0.4391, Direction=SELL
+[2026-04-08 23:29:49] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:30:01] [SIGNAL] Alpha=-0.3670, Direction=SELL
+[2026-04-08 23:30:02] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:30:02] ======================================================================
+[2026-04-08 23:30:02] STATUS REPORT
+[2026-04-08 23:30:02] ======================================================================
+[2026-04-08 23:30:03] Current Price: $83.16
+[2026-04-08 23:30:03] Position: 0.0000
+[2026-04-08 23:30:03] No position
+[2026-04-08 23:30:03] Daily PnL: $0.00
+[2026-04-08 23:30:03] Daily Trades: 0
+[2026-04-08 23:30:03] Win/Loss: 0/0
+[2026-04-08 23:30:03] Consecutive Losses: 0
+[2026-04-08 23:30:03] Emergency Stop: False
+[2026-04-08 23:30:03] ======================================================================
+[2026-04-08 23:30:13] [SIGNAL] Alpha=0.3496, Direction=BUY
+[2026-04-08 23:30:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:30:26] [SIGNAL] Alpha=-0.3650, Direction=SELL
+[2026-04-08 23:30:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:30:40] [SIGNAL] Alpha=0.2545, Direction=BUY
+[2026-04-08 23:30:41] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:30:51] [SIGNAL] Alpha=0.2715, Direction=BUY
+[2026-04-08 23:30:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:31:14] [SIGNAL] Alpha=-0.4117, Direction=SELL
+[2026-04-08 23:31:15] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:31:25] [SIGNAL] Alpha=0.3672, Direction=BUY
+[2026-04-08 23:31:26] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:31:37] [SIGNAL] Alpha=0.5648, Direction=BUY
+[2026-04-08 23:31:38] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:31:49] [SIGNAL] Alpha=0.2356, Direction=BUY
+[2026-04-08 23:31:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:32:11] [SIGNAL] Alpha=0.2343, Direction=BUY
+[2026-04-08 23:32:12] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:32:23] [SIGNAL] Alpha=-0.3084, Direction=SELL
+[2026-04-08 23:32:24] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:32:45] [SIGNAL] Alpha=0.2378, Direction=BUY
+[2026-04-08 23:32:46] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:32:57] [SIGNAL] Alpha=0.5139, Direction=BUY
+[2026-04-08 23:32:59] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:33:09] [SIGNAL] Alpha=0.2400, Direction=BUY
+[2026-04-08 23:33:10] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:33:21] [SIGNAL] Alpha=-0.5505, Direction=SELL
+[2026-04-08 23:33:22] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:33:33] [SIGNAL] Alpha=0.3228, Direction=BUY
+[2026-04-08 23:33:34] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:33:45] [SIGNAL] Alpha=-0.3722, Direction=SELL
+[2026-04-08 23:33:46] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:33:55] [SIGNAL] Alpha=-0.3313, Direction=SELL
+[2026-04-08 23:33:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:34:07] [SIGNAL] Alpha=0.0968, Direction=BUY
+[2026-04-08 23:34:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:34:19] [SIGNAL] Alpha=-0.1961, Direction=SELL
+[2026-04-08 23:34:19] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:34:30] [SIGNAL] Alpha=0.1093, Direction=BUY
+[2026-04-08 23:34:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:34:42] [SIGNAL] Alpha=0.2292, Direction=BUY
+[2026-04-08 23:34:43] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:34:55] [SIGNAL] Alpha=-0.0654, Direction=SELL
+[2026-04-08 23:34:57] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:35:08] [SIGNAL] Alpha=0.4423, Direction=BUY
+[2026-04-08 23:35:09] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:35:19] [SIGNAL] Alpha=0.1521, Direction=BUY
+[2026-04-08 23:35:20] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:35:31] [SIGNAL] Alpha=-0.0630, Direction=SELL
+[2026-04-08 23:35:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:35:42] [SIGNAL] Alpha=-0.4348, Direction=SELL
+[2026-04-08 23:35:44] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:35:55] [SIGNAL] Alpha=-0.3835, Direction=SELL
+[2026-04-08 23:35:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:36:07] [SIGNAL] Alpha=0.2658, Direction=BUY
+[2026-04-08 23:36:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:36:19] [SIGNAL] Alpha=-0.1833, Direction=SELL
+[2026-04-08 23:36:20] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:36:30] [SIGNAL] Alpha=-0.1283, Direction=SELL
+[2026-04-08 23:36:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:36:43] [SIGNAL] Alpha=0.5138, Direction=BUY
+[2026-04-08 23:36:44] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:36:56] [SIGNAL] Alpha=0.3293, Direction=BUY
+[2026-04-08 23:36:58] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:37:09] [SIGNAL] Alpha=0.3167, Direction=BUY
+[2026-04-08 23:37:10] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:37:20] [SIGNAL] Alpha=-0.3923, Direction=SELL
+[2026-04-08 23:37:21] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:37:32] [SIGNAL] Alpha=0.1015, Direction=BUY
+[2026-04-08 23:37:33] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:37:45] [SIGNAL] Alpha=-0.5869, Direction=SELL
+[2026-04-08 23:37:46] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:37:56] [SIGNAL] Alpha=-0.4541, Direction=SELL
+[2026-04-08 23:37:57] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:38:08] [SIGNAL] Alpha=-0.6351, Direction=SELL
+[2026-04-08 23:38:09] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:38:20] [SIGNAL] Alpha=-0.2472, Direction=SELL
+[2026-04-08 23:38:21] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:38:31] [SIGNAL] Alpha=-0.2445, Direction=SELL
+[2026-04-08 23:38:32] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:38:44] [SIGNAL] Alpha=-0.3990, Direction=SELL
+[2026-04-08 23:38:45] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:38:55] [SIGNAL] Alpha=-0.5410, Direction=SELL
+[2026-04-08 23:38:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:39:07] [SIGNAL] Alpha=-0.4933, Direction=SELL
+[2026-04-08 23:39:08] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:39:30] [SIGNAL] Alpha=-0.3486, Direction=SELL
+[2026-04-08 23:39:30] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:39:41] [SIGNAL] Alpha=0.2651, Direction=BUY
+[2026-04-08 23:39:43] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:39:53] [SIGNAL] Alpha=-0.3256, Direction=SELL
+[2026-04-08 23:39:55] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:40:16] [SIGNAL] Alpha=0.1455, Direction=BUY
+[2026-04-08 23:40:17] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:40:28] [SIGNAL] Alpha=0.1529, Direction=BUY
+[2026-04-08 23:40:29] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:40:39] [SIGNAL] Alpha=0.1740, Direction=BUY
+[2026-04-08 23:40:41] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:40:52] [SIGNAL] Alpha=-0.3741, Direction=SELL
+[2026-04-08 23:40:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:41:03] [SIGNAL] Alpha=-0.6874, Direction=SELL
+[2026-04-08 23:41:04] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:41:15] [SIGNAL] Alpha=-0.5296, Direction=SELL
+[2026-04-08 23:41:17] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:41:27] [SIGNAL] Alpha=-0.5634, Direction=SELL
+[2026-04-08 23:41:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:41:40] [SIGNAL] Alpha=-0.1236, Direction=SELL
+[2026-04-08 23:41:41] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:41:52] [SIGNAL] Alpha=-0.1860, Direction=SELL
+[2026-04-08 23:41:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:41:53] ======================================================================
+[2026-04-08 23:41:53] STATUS REPORT
+[2026-04-08 23:41:53] ======================================================================
+[2026-04-08 23:41:54] Current Price: $83.25
+[2026-04-08 23:41:54] Position: 0.0000
+[2026-04-08 23:41:54] No position
+[2026-04-08 23:41:54] Daily PnL: $0.00
+[2026-04-08 23:41:54] Daily Trades: 0
+[2026-04-08 23:41:54] Win/Loss: 0/0
+[2026-04-08 23:41:54] Consecutive Losses: 0
+[2026-04-08 23:41:54] Emergency Stop: False
+[2026-04-08 23:41:54] ======================================================================
+[2026-04-08 23:42:05] [SIGNAL] Alpha=-0.1123, Direction=SELL
+[2026-04-08 23:42:06] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:42:16] [SIGNAL] Alpha=-0.4748, Direction=SELL
+[2026-04-08 23:42:17] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:42:28] [SIGNAL] Alpha=-0.4752, Direction=SELL
+[2026-04-08 23:42:29] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:42:39] [SIGNAL] Alpha=-0.4449, Direction=SELL
+[2026-04-08 23:42:41] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:42:52] [SIGNAL] Alpha=-0.5834, Direction=SELL
+[2026-04-08 23:42:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:43:04] [SIGNAL] Alpha=-0.4861, Direction=SELL
+[2026-04-08 23:43:05] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:43:15] [SIGNAL] Alpha=-0.5391, Direction=SELL
+[2026-04-08 23:43:17] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:43:28] [SIGNAL] Alpha=-0.1115, Direction=SELL
+[2026-04-08 23:43:30] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:43:41] [SIGNAL] Alpha=0.0790, Direction=BUY
+[2026-04-08 23:43:42] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:43:52] [SIGNAL] Alpha=-0.5175, Direction=SELL
+[2026-04-08 23:43:53] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:44:04] [SIGNAL] Alpha=-0.2269, Direction=SELL
+[2026-04-08 23:44:05] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:44:26] [SIGNAL] Alpha=-0.2936, Direction=SELL
+[2026-04-08 23:44:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:44:38] [SIGNAL] Alpha=-0.3052, Direction=SELL
+[2026-04-08 23:44:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:44:50] [SIGNAL] Alpha=0.1245, Direction=BUY
+[2026-04-08 23:44:51] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:45:01] [SIGNAL] Alpha=0.5689, Direction=BUY
+[2026-04-08 23:45:02] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:45:13] [SIGNAL] Alpha=0.5375, Direction=BUY
+[2026-04-08 23:45:14] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:45:26] [SIGNAL] Alpha=-0.5816, Direction=SELL
+[2026-04-08 23:45:27] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:45:37] [SIGNAL] Alpha=-0.1038, Direction=SELL
+[2026-04-08 23:45:43] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:45:53] [SIGNAL] Alpha=-0.2273, Direction=SELL
+[2026-04-08 23:45:55] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:46:05] [SIGNAL] Alpha=-0.4897, Direction=SELL
+[2026-04-08 23:46:06] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:46:17] [SIGNAL] Alpha=-0.1102, Direction=SELL
+[2026-04-08 23:46:18] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:46:28] [SIGNAL] Alpha=-0.2939, Direction=SELL
+[2026-04-08 23:46:29] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:46:40] [SIGNAL] Alpha=-0.2569, Direction=SELL
+[2026-04-08 23:46:41] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:46:51] [SIGNAL] Alpha=0.3387, Direction=BUY
+[2026-04-08 23:46:52] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:47:04] [SIGNAL] Alpha=-0.3524, Direction=SELL
+[2026-04-08 23:47:05] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:47:15] [SIGNAL] Alpha=-0.2052, Direction=SELL
+[2026-04-08 23:47:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:47:27] [SIGNAL] Alpha=-0.1415, Direction=SELL
+[2026-04-08 23:47:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:47:38] [SIGNAL] Alpha=-0.1352, Direction=SELL
+[2026-04-08 23:47:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:47:50] [SIGNAL] Alpha=0.1749, Direction=BUY
+[2026-04-08 23:47:51] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:48:02] [SIGNAL] Alpha=-0.2273, Direction=SELL
+[2026-04-08 23:48:03] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:48:14] [SIGNAL] Alpha=0.2933, Direction=BUY
+[2026-04-08 23:48:15] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:48:36] [SIGNAL] Alpha=-0.6230, Direction=SELL
+[2026-04-08 23:48:37] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:48:47] [SIGNAL] Alpha=-0.6501, Direction=SELL
+[2026-04-08 23:48:50] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:49:00] [SIGNAL] Alpha=-0.3069, Direction=SELL
+[2026-04-08 23:49:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:49:12] [SIGNAL] Alpha=-0.5983, Direction=SELL
+[2026-04-08 23:49:13] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:49:24] [SIGNAL] Alpha=-0.3293, Direction=SELL
+[2026-04-08 23:49:25] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:49:35] [SIGNAL] Alpha=-0.5337, Direction=SELL
+[2026-04-08 23:49:36] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:49:47] [SIGNAL] Alpha=-0.4709, Direction=SELL
+[2026-04-08 23:49:48] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:50:00] [SIGNAL] Alpha=-0.2097, Direction=SELL
+[2026-04-08 23:50:01] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:50:33] [SIGNAL] Alpha=-0.2435, Direction=SELL
+[2026-04-08 23:50:34] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:50:44] [SIGNAL] Alpha=-0.0661, Direction=SELL
+[2026-04-08 23:50:45] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:50:57] [SIGNAL] Alpha=-0.5339, Direction=SELL
+[2026-04-08 23:50:59] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:51:10] [SIGNAL] Alpha=-0.2635, Direction=SELL
+[2026-04-08 23:51:10] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:51:21] [SIGNAL] Alpha=-0.5856, Direction=SELL
+[2026-04-08 23:51:22] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:51:33] [SIGNAL] Alpha=-0.0967, Direction=SELL
+[2026-04-08 23:51:33] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:51:44] [SIGNAL] Alpha=-0.5311, Direction=SELL
+[2026-04-08 23:51:45] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:51:56] [SIGNAL] Alpha=-0.5473, Direction=SELL
+[2026-04-08 23:51:56] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:52:08] [SIGNAL] Alpha=-0.6146, Direction=SELL
+[2026-04-08 23:52:09] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:52:30] [SIGNAL] Alpha=0.1272, Direction=BUY
+[2026-04-08 23:52:31] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:52:42] [SIGNAL] Alpha=-0.1998, Direction=SELL
+[2026-04-08 23:52:43] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:53:04] [SIGNAL] Alpha=-0.2127, Direction=SELL
+[2026-04-08 23:53:05] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:53:15] [SIGNAL] Alpha=-0.1513, Direction=SELL
+[2026-04-08 23:53:16] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:53:27] [SIGNAL] Alpha=-0.5005, Direction=SELL
+[2026-04-08 23:53:28] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:53:38] [SIGNAL] Alpha=-0.6225, Direction=SELL
+[2026-04-08 23:53:39] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:53:39] ======================================================================
+[2026-04-08 23:53:39] STATUS REPORT
+[2026-04-08 23:53:39] ======================================================================
+[2026-04-08 23:53:41] Current Price: $83.32
+[2026-04-08 23:53:41] Position: 0.0000
+[2026-04-08 23:53:41] No position
+[2026-04-08 23:53:41] Daily PnL: $0.00
+[2026-04-08 23:53:41] Daily Trades: 0
+[2026-04-08 23:53:41] Win/Loss: 0/0
+[2026-04-08 23:53:41] Consecutive Losses: 0
+[2026-04-08 23:53:41] Emergency Stop: False
+[2026-04-08 23:53:41] ======================================================================
+[2026-04-08 23:54:02] [SIGNAL] Alpha=0.2129, Direction=BUY
+[2026-04-08 23:54:03] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:54:25] [SIGNAL] Alpha=-0.2718, Direction=SELL
+[2026-04-08 23:54:26] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:54:37] [SIGNAL] Alpha=-0.5045, Direction=SELL
+[2026-04-08 23:54:37] [SKIP] Insufficient balance: $0.00
+[2026-04-08 23:54:47] 
+======================================================================
+[2026-04-08 23:54:47] FINAL REPORT
+[2026-04-08 23:54:47] ======================================================================
+[2026-04-08 23:54:48] Total Trades: 0
+[2026-04-08 23:54:48] Win/Loss: 0/0
+[2026-04-08 23:54:48] N/A
+[2026-04-08 23:54:48] Daily PnL: $0.00
+[2026-04-08 23:54:48] Final USDT Balance: $0.00
+[2026-04-08 23:54:48] Emergency Stop Triggered: False
+[2026-04-08 23:54:48] [LOSS] Trading session ended with loss
+[2026-04-08 23:54:48] ======================================================================

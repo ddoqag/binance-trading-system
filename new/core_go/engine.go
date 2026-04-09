@@ -39,6 +39,8 @@ type HFTEngine struct {
 	wal            *WAL // Write-ahead logging
 	degradeMgr     *EnhancedDegradeManager // System degradation and circuit breaker
 	metrics        *MetricsCollector // Prometheus metrics collector
+	defenseMgr     *DefenseManager // Defense FSM for toxic flow protection
+	execOptimizer  *ExecutionOptimizer // Execution Alpha optimizer
 
 	// WebSocket handlers
 	depthHandler   func(bestBid, bestAsk float64, ofi float64)
@@ -164,6 +166,11 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 	engine.degradeMgr.Start()
 
 	log.Printf("[ENGINE] Degradation manager started with default config")
+
+	// Initialize execution optimizer (execution alpha)
+	// Note: reversalDetector will be initialized and passed later if needed
+	engine.execOptimizer = NewExecutionOptimizer(nil, engine.defenseMgr, nil)
+	log.Printf("[ENGINE] Execution optimizer initialized")
 
 	return engine, nil
 }
@@ -325,14 +332,59 @@ func (e *HFTEngine) processDecision() {
 		return
 	}
 
-	// Execute decision
-	var err error
+	// === Execution Optimizer Integration ===
+	// Convert action to OrderSide for optimizer
+	var side OrderSide
+	var urgency float64 = float64(confidence) // Use AI confidence as base urgency
+
+	switch action {
+	case ActionCrossBuy, ActionJoinBid:
+		side = SideBuy
+	case ActionCrossSell, ActionJoinAsk:
+		side = SideSell
+	default:
+		// For cancel/partial exit, use inventory direction
+		if e.inventory > 0 {
+			side = SideSell
+		} else {
+			side = SideBuy
+		}
+	}
+
+	// Create AI command for optimizer
+	cmd := AICommand{
+		Side:       side,
+		Size:       targetSize,
+		Price:      limitPrice,
+		Confidence: float64(confidence),
+		Urgency:    urgency,
+	}
+
+	// Get optimized order parameters
+	optimizedParams, err := e.execOptimizer.Optimize(cmd, e.inventory)
+	if err != nil {
+		log.Printf("[OPTIMIZER] Failed to optimize order: %v", err)
+		return
+	}
+
+	// Check if optimizer cancelled the order (quantity = 0)
+	if optimizedParams.Quantity <= 0 {
+		log.Printf("[OPTIMIZER] Order cancelled by optimizer: mode=%s reason=%s",
+			optimizedParams.Metadata.DefenseMode, optimizedParams.Metadata.OptimizationReason)
+		return
+	}
+
+	log.Printf("[OPTIMIZER] Optimized: side=%v type=%v price=%.2f qty=%.4f urgency=%.2f mode=%s",
+		optimizedParams.Side, optimizedParams.Type, optimizedParams.Price,
+		optimizedParams.Quantity, optimizedParams.Urgency, optimizedParams.Metadata.DefenseMode)
+
+	// Execute decision with optimized parameters
 	if e.config.UseMargin && e.marginExecutor != nil {
-		// Use margin trading executor
-		err = e.executeMarginDecision(action, targetSize, limitPrice)
+		// Use margin trading executor with optimized params
+		err = e.executeMarginDecisionOptimized(optimizedParams)
 	} else {
-		// Use regular spot executor
-		err = e.executeSpotDecision(action, targetSize, limitPrice)
+		// Use regular spot executor with optimized params
+		err = e.executeSpotDecisionOptimized(optimizedParams)
 	}
 
 	if err != nil {
@@ -471,20 +523,71 @@ func (e *HFTEngine) monitorLoop() {
 }
 
 // executeSpotDecision 执行现货交易决策
+// 强制使用LIMIT+POST_ONLY订单，确保maker费率(0-2bps)甚至返佣
 func (e *HFTEngine) executeSpotDecision(action int32, targetSize float64, limitPrice float64) error {
+	// 强制maker订单，使用POST_ONLY获取maker费率或返佣
+	forceMaker := true
+
+	// 获取当前订单簿数据用于价格优化
+	book := e.wsManager.GetBook()
+	var bestBid, bestAsk float64
+	var tickSize float64 = 0.01 // 默认tick size，实际应从symbol配置获取
+
+	if book != nil {
+		bestBid, bestAsk, _, _ = book.GetSnapshot()
+	}
+
 	switch action {
 	case ActionJoinBid:
-		return e.executor.PlaceLimitBuy(limitPrice, targetSize)
+		// 买单：挂最优买价减1tick，争取maker返佣
+		price := limitPrice
+		if bestBid > 0 {
+			price = bestBid - tickSize // 比最优买价更优1tick
+		}
+		return e.executor.PlaceLimitBuy(price, targetSize, forceMaker)
 	case ActionJoinAsk:
-		return e.executor.PlaceLimitSell(limitPrice, targetSize)
+		// 卖单：挂最优卖价加1tick，争取maker返佣
+		price := limitPrice
+		if bestAsk > 0 {
+			price = bestAsk + tickSize // 比最优卖价更优1tick
+		}
+		return e.executor.PlaceLimitSell(price, targetSize, forceMaker)
 	case ActionCrossBuy:
-		return e.executor.PlaceMarketBuy(targetSize)
+		// 即使是cross动作，也使用限价单+POST_ONLY，价格挂买一
+		// 如果无法立即成交，订单会被拒绝（POST_ONLY特性），不会产生taker费用
+		price := limitPrice
+		if bestBid > 0 {
+			price = bestBid // 挂最优买价
+		}
+		return e.executor.PlaceLimitBuy(price, targetSize, forceMaker)
 	case ActionCrossSell:
-		return e.executor.PlaceMarketSell(targetSize)
+		// 即使是cross动作，也使用限价单+POST_ONLY，价格挂卖一
+		price := limitPrice
+		if bestAsk > 0 {
+			price = bestAsk // 挂最优卖价
+		}
+		return e.executor.PlaceLimitSell(price, targetSize, forceMaker)
 	case ActionCancel:
 		return e.executor.CancelAll()
 	case ActionPartialExit:
-		return e.executor.PartialExit(e.inventory * 0.5)
+		// 部分平仓也使用限价单
+		exitSize := e.inventory * 0.5
+		if exitSize > 0 {
+			// 多头平仓：卖出
+			price := limitPrice
+			if bestAsk > 0 {
+				price = bestAsk + tickSize
+			}
+			return e.executor.PlaceLimitSell(price, exitSize, forceMaker)
+		} else if exitSize < 0 {
+			// 空头平仓：买入
+			price := limitPrice
+			if bestBid > 0 {
+				price = bestBid - tickSize
+			}
+			return e.executor.PlaceLimitBuy(price, -exitSize, forceMaker)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown action: %d", action)
 	}
@@ -507,6 +610,71 @@ func (e *HFTEngine) executeMarginDecision(action int32, targetSize float64, limi
 		return e.marginExecutor.ClosePosition(true)
 	default:
 		return fmt.Errorf("unknown action: %d", action)
+	}
+}
+
+// executeSpotDecisionOptimized 使用优化后的参数执行现货交易决策
+// 强制使用LIMIT+POST_ONLY订单，确保maker费率(0-2bps)甚至返佣
+func (e *HFTEngine) executeSpotDecisionOptimized(params *OptimizedOrderParams) error {
+	// 强制maker订单，使用POST_ONLY获取maker费率或返佣
+	forceMaker := true
+
+	// 获取当前订单簿数据用于价格优化
+	book := e.wsManager.GetBook()
+	var bestBid, bestAsk float64
+	var tickSize float64 = 0.01 // 默认tick size
+
+	if book != nil {
+		bestBid, bestAsk, _, _ = book.GetSnapshot()
+	}
+
+	switch params.Type {
+	case TypeMarket:
+		// 即使是市价单类型，也转换为限价单+POST_ONLY
+		// 价格挂最优价，如果无法立即作为maker成交，订单会被拒绝
+		if params.Side == SideBuy {
+			price := params.Price
+			if bestBid > 0 {
+				price = bestBid // 挂最优买价
+			}
+			return e.executor.PlaceLimitBuy(price, params.Quantity, forceMaker)
+		}
+		price := params.Price
+		if bestAsk > 0 {
+			price = bestAsk // 挂最优卖价
+		}
+		return e.executor.PlaceLimitSell(price, params.Quantity, forceMaker)
+	case TypeLimit:
+		// 优化价格：买单减1tick，卖单加1tick
+		optimizedPrice := params.Price
+		if params.Side == SideBuy {
+			if bestBid > 0 {
+				optimizedPrice = bestBid - tickSize // 比最优买价更优
+			}
+			return e.executor.PlaceLimitBuy(optimizedPrice, params.Quantity, forceMaker)
+		}
+		if bestAsk > 0 {
+			optimizedPrice = bestAsk + tickSize // 比最优卖价更优
+		}
+		return e.executor.PlaceLimitSell(optimizedPrice, params.Quantity, forceMaker)
+	default:
+		return fmt.Errorf("unknown order type: %v", params.Type)
+	}
+}
+
+// executeMarginDecisionOptimized 使用优化后的参数执行杠杆交易决策
+func (e *HFTEngine) executeMarginDecisionOptimized(params *OptimizedOrderParams) error {
+	isMarket := params.Type == TypeMarket
+
+	switch params.Side {
+	case SideBuy:
+		// 做多：买入基础资产
+		return e.marginExecutor.PlaceLongOrder(params.Quantity, isMarket, params.Price)
+	case SideSell:
+		// 做空：卖出基础资产（自动借贷）
+		return e.marginExecutor.PlaceShortOrder(params.Quantity, isMarket, params.Price)
+	default:
+		return fmt.Errorf("unknown side: %v", params.Side)
 	}
 }
 
@@ -602,6 +770,85 @@ func (e *HFTEngine) StartHTTPServer(port int) {
 		status := e.GetStatus()
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(status)
+	})
+
+	// Market data endpoint - order book
+	mux.HandleFunc("/api/v1/market/book", func(w http.ResponseWriter, r *http.Request) {
+		book := e.wsManager.GetBook()
+		if book == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{"error": "order book not available"})
+			return
+		}
+
+		bids, asks, _, _ := book.GetSnapshot()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"bids":      bids,
+			"asks":      asks,
+			"timestamp": time.Now().UnixMilli(),
+		})
+	})
+
+	// Position endpoint
+	mux.HandleFunc("/api/v1/position", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if e.config.UseMargin && e.marginExecutor != nil {
+			pos := e.marginExecutor.GetPosition()
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"symbol":      pos.Symbol,
+				"size":        pos.Position,
+				"entry_price": pos.EntryPrice,
+				"leverage":    pos.Leverage,
+				"unrealized":  pos.UnrealizedPnL,
+				"liquidation": pos.LiquidationPrice,
+			})
+		} else {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"symbol":      e.symbol,
+				"size":        e.inventory,
+				"entry_price": 0,
+				"leverage":    1.0,
+				"unrealized":  e.unrealizedPnL,
+				"liquidation": 0,
+			})
+		}
+	})
+
+	// Orders endpoint (POST to create order)
+	mux.HandleFunc("/api/v1/orders", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "only POST allowed"})
+			return
+		}
+
+		var req struct {
+			Side  string  `json:"side"`
+			Qty   float64 `json:"qty"`
+			Price float64 `json:"price,omitempty"`
+			Type  string  `json:"type"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		// Create order response
+		orderID := fmt.Sprintf("order_%d", time.Now().UnixMilli())
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":     orderID,
+			"status": "pending",
+			"side":   req.Side,
+			"qty":    req.Qty,
+			"price":  req.Price,
+		})
 	})
 
 	addr := fmt.Sprintf(":%d", port)

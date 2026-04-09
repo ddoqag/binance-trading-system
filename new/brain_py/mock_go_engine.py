@@ -190,6 +190,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.engine.get_position())
         elif self.path.startswith("/api/v1/orders/open"):
             self._send_json({"orders": self.engine.get_open_orders()})
+        elif self.path.startswith("/api/v1/orders/filled"):
+            self._send_json({"fills": self.engine.fills})
         elif self.path.startswith("/api/v1/status"):
             self._send_json(self.engine.get_status())
         else:

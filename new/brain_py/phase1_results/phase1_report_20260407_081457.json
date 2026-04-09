@@ -1,0 +1,88 @@
+{
+  "timestamp": "2026-04-07T08:14:57.950274",
+  "data_source": "synthetic",
+  "n_ticks": 2000,
+  "mvp_result": {
+    "total_pnl": -0.3985208654589427,
+    "total_pnl_pct": -0.0003985208654589427,
+    "sharpe_ratio": -3.07392954934936,
+    "max_drawdown_pct": -0.0016022179127959922,
+    "win_rate": 0.1111111111111111,
+    "profit_factor": 0.007175156313213206,
+    "total_orders": 36,
+    "total_fills": 36,
+    "fill_rate": 1.0,
+    "avg_latency_ms": 0.3380444314744737,
+    "toxic_blocks": 88,
+    "spread_captures": 1912,
+    "pnl_components": {
+      "spread_capture": 0.7447193323693502,
+      "adverse_selection": -1.0454663789969711,
+      "queue_slippage": -0.1529502873791353,
+      "fee_rebate": 0.596203079533605,
+      "funding_rate": 0.0,
+      "market_movement": -0.5410266109857911
+    }
+  },
+  "comparison": {
+    "mvp_score": 6,
+    "full_score": 1,
+    "overall_winner": "mvp",
+    "metrics": [
+      {
+        "name": "latency_ms",
+        "mvp": 0.3898237880907561,
+        "full": 15.0,
+        "winner": "mvp"
+      },
+      {
+        "name": "total_pnl",
+        "mvp": -0.15381556818898834,
+        "full": 604.9822574092378,
+        "winner": "full"
+      },
+      {
+        "name": "sharpe_ratio",
+        "mvp": 2.619474600541272,
+        "full": 0.9983492129214481,
+        "winner": "mvp"
+      },
+      {
+        "name": "max_drawdown_pct",
+        "mvp": 0.0015831871999803392,
+        "full": 0.3024911287046189,
+        "winner": "mvp"
+      },
+      {
+        "name": "win_rate",
+        "mvp": 0.5945945945945946,
+        "full": 0.5,
+        "winner": "mvp"
+      },
+      {
+        "name": "fill_rate",
+        "mvp": 0.986842105263158,
+        "full": 0.5,
+        "winner": "mvp"
+      },
+      {
+        "name": "toxic_blocks",
+        "mvp": 88,
+        "full": 0,
+        "winner": "mvp"
+      }
+    ]
+  },
+  "optimal_params": {
+    "queue_target_ratio": 0.2,
+    "toxic_threshold": 0.35,
+    "min_spread_ticks": 3
+  },
+  "toxic_optimal": {
+    "threshold": 0.35,
+    "pnl": 1.4201063963105052,
+    "sharpe": 24.388664097847474,
+    "blocks": 12,
+    "block_rate": 0.012
+  }
+}

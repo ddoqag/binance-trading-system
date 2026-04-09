@@ -1,0 +1,118 @@
+{
+  "forcefill": {
+    "alpha_only": {
+      "trades": [],
+      "total_pnl": 0.0,
+      "sharpe": 0.0,
+      "win_rate": 0.0,
+      "n_trades": 0
+    },
+    "execution_only": {
+      "trades": [
+        {
+          "timestamp": "2026-03-05 03:04:12.209690",
+          "side": "sell",
+          "price": 50100.86775389674,
+          "quantity": 0.03887995089067299,
+          "slippage": 26.138910356157105,
+          "fill_probability": 0.015186743426386928,
+          "mode": "execution_only",
+          "pnl": -2.8345572754683457
+        },
+        {
+          "timestamp": "2026-03-05 03:16:12.209690",
+          "side": "buy",
+          "price": 49920.38372348466,
+          "quantity": 0.03721230154351119,
+          "slippage": 33.27082015102697,
+          "fill_probability": 0.03980259945860687,
+          "mode": "execution_only",
+          "pnl": -0.8441938787401015
+        },
+        {
+          "timestamp": "2026-03-05 03:38:12.209690",
+          "side": "buy",
+          "price": 50146.9144915816,
+          "quantity": 0.040889790771866295,
+          "slippage": 37.88640113671075,
+          "fill_probability": 0.06499593939584758,
+          "mode": "execution_only",
+          "pnl": -0.4626304813616064
+        },
+        {
+          "timestamp": "2026-03-05 04:44:12.209690",
+          "side": "buy",
+          "price": 49907.62267675946,
+          "quantity": 0.04906459823330612,
+          "slippage": 37.36544899619106,
+          "fill_probability": 0.04300002477233311,
+          "mode": "execution_only",
+          "pnl": -4.703513993878002
+        },
+        {
+          "timestamp": "2026-03-05 07:23:12.209690",
+          "side": "sell",
+          "price": 50127.726982605476,
+          "quantity": 0.024238907146050464,
+          "slippage": 47.45550191846427,
+          "fill_probability": 0.021726120895697476,
+          "mode": "execution_only",
+          "pnl": -2.3758628101512955
+        },
+        {
+          "timestamp": "2026-03-05 11:01:12.209690",
+          "side": "buy",
+          "price": 49847.74614259972,
+          "quantity": 0.02380330511289547,
+          "slippage": 43.083928277882066,
+          "fill_probability": 0.0486712113873744,
+          "mode": "execution_only",
+          "pnl": -1.9279255986303077
+        }
+      ],
+      "total_pnl": -13.148684038229659,
+      "sharpe": -24.985643249257265,
+      "win_rate": 0.0,
+      "n_trades": 6
+    },
+    "full_system": {
+      "trades": [],
+      "total_pnl": 0.0,
+      "sharpe": 0.0,
+      "win_rate": 0.0,
+      "n_trades": 0
+    }
+  },
+  "event_driven": {
+    "n_trades": 0,
+    "total_pnl": 0.0,
+    "sharpe": 0.0,
+    "win_rate": 0.0,
+    "trades": []
+  },
+  "impact": {
+    "impact_score": 0.0,
+    "avg_price_impact": 0.0,
+    "avg_queue_jump_prob": 0.0,
+    "status": "No trades to analyze"
+  },
+  "report": {
+    "timestamp": "2026-04-07T10:54:12.450363",
+    "forcefill": {
+      "alpha_only_sharpe": 0.0,
+      "execution_only_sharpe": -24.985643249257265,
+      "full_system_sharpe": 0.0,
+      "execution_decay": 0
+    },
+    "event_driven": {
+      "sharpe": 0.0,
+      "n_trades": 0,
+      "total_pnl": 0.0
+    },
+    "self_impact": {
+      "impact_score": 0.0,
+      "avg_price_impact": 0.0
+    },
+    "final_verdict": "[BORDERLINE] Unclear results -> Need more data"
+  }
+}

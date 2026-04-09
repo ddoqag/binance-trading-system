@@ -65,7 +65,10 @@ class MarketMakerV1:
             "orders_filled": 0,
             "orders_cancelled": 0,
             "total_fill_value": 0.0,
+            "total_fees": 0.0,
         }
+        # 成交回调处理
+        self.fill_callbacks = []
 
     def update_state(self, market: MarketState, position_info: Dict[str, Any]):
         """更新内部状态（市场数据和仓位）。应在每个tick调用。"""
@@ -211,14 +214,54 @@ class MarketMakerV1:
             }
             self.metrics["orders_placed"] += 1
 
+    def on_fill(self, fill_info: Dict[str, Any]):
+        """
+        成交回调函数 - 当订单成交时调用。
+        :param fill_info: 包含 order_id, side, size, price, fee 等字段
+        """
+        order_id = fill_info.get("order_id")
+        side = fill_info.get("side")
+        size = fill_info.get("size", 0)
+        price = fill_info.get("price", 0)
+        fee = fill_info.get("fee", 0)
+        is_maker = fill_info.get("is_maker", True)
+
+        # 更新持仓 (由Go引擎回调提供，此处仅用于追踪)
+        if side == "BUY":
+            self.current_position += size
+        else:
+            self.current_position -= size
+
+        # 更新统计
+        self.metrics["orders_filled"] += 1
+        self.metrics["total_fill_value"] += price * size
+        self.metrics["total_fees"] += fee
+
+        # 从活跃订单中移除
+        if order_id in self.active_orders:
+            del self.active_orders[order_id]
+
+        # 执行回调
+        for callback in self.fill_callbacks:
+            try:
+                callback(fill_info)
+            except Exception as e:
+                print(f"[on_fill] Callback error: {e}")
+
+        # 打印成交信息
+        maker_str = "MAKER" if is_maker else "TAKER"
+        print(f"  [FILL] {side} {size} @ {price} ({maker_str}) Fee: {fee:.4f}")
+
+    def register_fill_callback(self, callback):
+        """注册成交回调函数。"""
+        self.fill_callbacks.append(callback)
+
     def _cleanup_old_orders(self):
         """清理已成交或已取消的订单记录。"""
         current_open_ids = {o["order_id"] for o in self.executor.get_open_orders(self.symbol)}
         to_remove = [oid for oid in self.active_orders if oid not in current_open_ids]
         for oid in to_remove:
             if oid in self.active_orders:
-                # 如果是卖单成交，仓位应减少；买单成交，仓位应增加。此处应由Go引擎的持仓回调准确更新。
-                # 此处仅做记录清理
                 del self.active_orders[oid]
 
     def get_performance_report(self) -> Dict[str, Any]:

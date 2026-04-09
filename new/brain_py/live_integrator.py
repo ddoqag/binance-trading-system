@@ -440,6 +440,14 @@ class LiveAIIntegrator:
             self.stats['total_cycles'] += 1
             return False
 
+        # 交易过滤器：期望价值计算
+        if not self.should_execute_trade(meta_position, result, snapshot):
+            self.stats['filtered_signals'] = self.stats.get('filtered_signals', 0) + 1
+            if self.config.log_level >= 1:
+                print(f"[FILTER] Trade filtered by expected value check")
+            self.stats['total_cycles'] += 1
+            return False
+
         # SAC 执行优化
         execution_state = self._convert_to_execution_state(snapshot, meta_position)
         try:
@@ -494,6 +502,46 @@ class LiveAIIntegrator:
 
         self.stats['total_cycles'] += 1
         return True
+
+    def should_execute_trade(self, meta_position: float, result, snapshot) -> bool:
+        """交易过滤器：基于期望价值计算决定是否执行交易
+
+        计算期望价值 = Alpha强度 - 手续费成本 - 逆向选择风险
+        只有当期望价值超过阈值时才执行交易
+
+        Args:
+            meta_position: MoE融合后的目标仓位 (-1 to +1)
+            result: MetaAgent执行结果，包含confidence等信息
+            snapshot: 市场快照，包含toxic_probability等信息
+
+        Returns:
+            True if 期望价值 > 阈值 (2bps)，应该执行交易
+        """
+        # 手续费成本: 4bps (0.0004) - 包含买卖双边
+        fee_cost = 0.0004
+
+        # 逆向选择风险: 毒流概率 * 假设损失(1bps)
+        toxic_prob = getattr(snapshot, 'toxic_probability', 0.0)
+        adverse_risk = toxic_prob * 0.0001  # 假设毒流造成1bps损失
+
+        # Alpha强度: 仓位大小 * 置信度 * 信号幅度
+        # 使用result中的confidence作为信号强度指标
+        signal_magnitude = abs(meta_position)
+        confidence = getattr(result, 'confidence', 0.5)
+        alpha_strength = signal_magnitude * confidence
+
+        # 期望价值计算
+        expected_value = alpha_strength - fee_cost - adverse_risk
+
+        # 阈值: 2bps (0.0002) - 要求至少覆盖成本并有一定盈利空间
+        threshold = 0.0002
+
+        if self.config.log_level >= 2:
+            print(f"[DEBUG] Expected value: {expected_value:.6f} "
+                  f"(alpha={alpha_strength:.6f}, fee={fee_cost:.6f}, "
+                  f"adverse={adverse_risk:.6f}, toxic_prob={toxic_prob:.4f})")
+
+        return expected_value > threshold
 
     def _convert_to_observation(self, snapshot: MarketSnapshot) -> np.ndarray:
         """转换市场快照为观察向量

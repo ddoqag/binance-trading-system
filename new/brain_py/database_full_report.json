@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-04-07T11:07:30.988192",
+  "data_info": {
+    "symbol": "BTCUSDT",
+    "interval": "1h",
+    "rows": 721,
+    "date_range": [
+      "2026-02-19 16:00:00+00:00",
+      "2026-03-21 16:00:00+00:00"
+    ],
+    "price_range": [
+      62510.28,
+      76000.0
+    ]
+  },
+  "three_mode_results": {
+    "alpha_only": {
+      "sharpe": -6.84870128362834,
+      "total_pnl": -2.9862999999999733,
+      "trades": 3,
+      "win_rate": 0.3333333333333333
+    },
+    "execution_only": {
+      "sharpe": 2.3408570347669375,
+      "total_pnl": 5.125367422535785,
+      "trades": 6,
+      "win_rate": 0.3333333333333333
+    },
+    "full_system": {
+      "sharpe": -4.293731828308297,
+      "total_pnl": -16.11422998799375,
+      "trades": 23,
+      "win_rate": 0.43478260869565216
+    }
+  },
+  "analysis": {
+    "execution_decay": 0.6269410287425388,
+    "signal_rate": 0.0319001386962552,
+    "verdict": "FAIL - No alpha detected",
+    "recommendation": "Strategy needs fundamental redesign"
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "timestamp": "2026-04-07T10:20:41.097625",
+  "final_verdict": {
+    "verdict": "ILLUSION",
+    "confidence": "None",
+    "total_score": 0.0,
+    "max_possible": 10.0,
+    "recommendation": [
+      "Strategy failed all tests, likely a backtest illusion.",
+      "Recommendation: Abandon this strategy and analyze failure reasons."
+    ],
+    "failed_tests": [
+      "1. \u65f6\u95f4\u5206\u5c42\u9a8c\u8bc1 (Walk-Forward)",
+      "2. \u4fe1\u53f7\u6253\u4e71\u6d4b\u8bd5 (Permutation)",
+      "3. \u8fb9\u9645\u8d21\u732e\u5206\u6790 (Marginal)",
+      "4. \u53c2\u6570\u7a33\u5b9a\u6027 (Stability)",
+      "5. \u5fae\u7ed3\u6784\u566a\u58f0 (Robustness)"
+    ],
+    "warnings": []
+  },
+  "individual_tests": [
+    {
+      "test_name": "1. \u65f6\u95f4\u5206\u5c42\u9a8c\u8bc1 (Walk-Forward)",
+      "verdict": "fail",
+      "score": 0.0,
+      "details": {
+        "decay_rate": 0.0,
+        "is_sharpe": 0.0,
+        "oos_sharpe": 0.0,
+        "n_folds": 4
+      }
+    },
+    {
+      "test_name": "2. \u4fe1\u53f7\u6253\u4e71\u6d4b\u8bd5 (Permutation)",
+      "verdict": "fail",
+      "score": 0.0,
+      "details": {
+        "p_value": 1.0,
+        "effect_size": 0.0,
+        "original_sharpe": 0.0,
+        "permuted_mean": 0.0,
+        "permuted_std": 0.0
+      }
+    },
+    {
+      "test_name": "3. \u8fb9\u9645\u8d21\u732e\u5206\u6790 (Marginal)",
+      "verdict": "fail",
+      "score": 0.0,
+      "details": {
+        "positive_components": 0,
+        "total_components": 3,
+        "negative_components": 0,
+        "contributions": {
+          "queue_optimizer": 0.0,
+          "toxic_detector": 0.0,
+          "spread_capture": 0.0
+        },
+        "full_sharpe": 0.0
+      }
+    },
+    {
+      "test_name": "4. \u53c2\u6570\u7a33\u5b9a\u6027 (Stability)",
+      "verdict": "fail",
+      "score": 0.0,
+      "details": {
+        "stable_area_pct": 0.0,
+        "max_sharpe": 0.0,
+        "min_sharpe": 0.0,
+        "cv": 0.0,
+        "n_params_tested": 35
+      }
+    },
+    {
+      "test_name": "5. \u5fae\u7ed3\u6784\u566a\u58f0 (Robustness)",
+      "verdict": "fail",
+      "score": 0.0,
+      "details": {
+        "robustness_score": 0.0,
+        "base_sharpe": 0.0,
+        "noise_results": [
+          {
+            "noise_level": 0.0,
+            "sharpe": 0.0,
+            "total_return": 0.0
+          },
+          {
+            "noise_level": 0.001,
+            "sharpe": 0.0,
+            "total_return": 0.0
+          },
+          {
+            "noise_level": 0.005,
+            "sharpe": 0.0,
+            "total_return": 0.0
+          },
+          {
+            "noise_level": 0.01,
+            "sharpe": 0.0,
+            "total_return": 0.0
+          }
+        ]
+      }
+    }
+  ]
+}
