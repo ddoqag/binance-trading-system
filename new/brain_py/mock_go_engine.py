@@ -74,18 +74,21 @@ class MockGoEngine:
         }
         self.orders[order_id] = order
 
-        # 模拟成交概率：Maker单有30%概率成交，Taker单立即成交
+        # 模拟成交概率：Maker单有更高概率成交以便测试
         if order_type == "market":
             # 市价单立即成交
             self._fill_order(order_id, is_maker=False)
         elif order_type == "limit":
-            # 限价单根据价格判断是否可能成交
-            if side == "BUY" and price >= self.ask * 0.999:  # 价格接近或超过卖一
-                if random.random() < 0.3:
-                    self._fill_order(order_id, is_maker=True)
-            elif side == "SELL" and price <= self.bid * 1.001:  # 价格接近或低于买一
-                if random.random() < 0.3:
-                    self._fill_order(order_id, is_maker=True)
+            # 限价单：如果价格在合理范围内，高概率成交
+            # 放宽条件以便测试策略
+            is_near_market = False
+            if side == "BUY" and price >= self.bid * 0.995:  # 接近买价或更好
+                is_near_market = True
+            elif side == "SELL" and price <= self.ask * 1.005:  # 接近卖价或更好
+                is_near_market = True
+
+            if is_near_market and random.random() < 0.6:  # 60%成交概率
+                self._fill_order(order_id, is_maker=True)
 
         return order
 

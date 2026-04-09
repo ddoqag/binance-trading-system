@@ -82,6 +82,7 @@ def run_test(duration_seconds: int = 60):
     max_position = 0.0
     min_position = 0.0
     total_orders_placed = 0
+    processed_fill_ids = set()  # 跟踪已处理的成交，避免重复计数
 
     try:
         while time.time() < end_time:
@@ -130,7 +131,10 @@ def run_test(duration_seconds: int = 60):
                                             params={"symbol": "BTCUSDT"}, timeout=0.5)
                 if filled_orders.status_code == 200:
                     for fill in filled_orders.json().get("fills", []):
-                        strategy.on_fill(fill)
+                        fill_id = fill.get("order_id", "")
+                        if fill_id and fill_id not in processed_fill_ids:
+                            strategy.on_fill(fill)
+                            processed_fill_ids.add(fill_id)
             except:
                 pass  # 端点可能不存在，忽略
 
