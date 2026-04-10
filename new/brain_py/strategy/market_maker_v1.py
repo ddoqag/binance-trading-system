@@ -37,10 +37,10 @@ class MarketMakerV1:
         symbol: str = "BTCUSDT",
         max_position: float = 0.02,  # 最大允许净头寸
         base_order_size: float = 0.001,
-        min_spread_ticks: int = 2,
+        min_spread_ticks: int = 3  # Optimized,
         tick_size: float = 0.01,  # BTC 1 tick = $0.01
         toxic_threshold: float = 0.6,
-        inventory_skew_factor: float = 1.0
+        inventory_skew_factor: float = 2.0  # Optimized
     ):
         self.executor = executor
         self.symbol = symbol

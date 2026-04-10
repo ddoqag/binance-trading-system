@@ -901,14 +901,29 @@ class SpotMarginOrderManager:
             # 更新基础 AccountInfo
             usdt_free = 0.0
             usdt_net = 0.0
+            total_balance_usdt = 0.0
             for asset in self.margin_account.user_assets:
-                if asset.get('asset') == 'USDT':
+                asset_name = asset.get('asset')
+                net_asset = float(asset.get('netAsset', 0) or 0)
+                if asset_name == 'USDT':
                     usdt_free = float(asset.get('free', 0))
-                    usdt_net = float(asset.get('netAsset', 0))
-                    break
+                    usdt_net = net_asset
+
+                if abs(net_asset) <= 1e-12:
+                    continue
+
+                if asset_name in ('USDT', 'USDC', 'BUSD'):
+                    total_balance_usdt += net_asset
+                    continue
+
+                try:
+                    total_balance_usdt += net_asset * await self._get_current_price(f"{asset_name}USDT")
+                except Exception:
+                    # Ignore assets without a direct USDT quote instead of blocking account sync.
+                    pass
 
             self.account.available_balance = usdt_free
-            self.account.total_balance = usdt_net
+            self.account.total_balance = total_balance_usdt if total_balance_usdt > 0 else usdt_net
             self.account.leverage = self.max_leverage
             self.account.updated_at = time.time()
 
