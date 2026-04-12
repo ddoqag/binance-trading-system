@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional
 try:
-    from .base import StrategyBase, Signal, SignalType
+    from .base import StrategyBase, Signal, SignalType, safe_divide
 except ImportError:
-    from strategies.base import StrategyBase, Signal, SignalType
+    from strategies.base import StrategyBase, Signal, SignalType, safe_divide
 
 
 class BollingerBandsStrategy(StrategyBase):
@@ -58,8 +58,8 @@ class BollingerBandsStrategy(StrategyBase):
         upper = middle + std * self.std_dev
         lower = middle - std * self.std_dev
 
-        # 带宽 = (上轨 - 下轨) / 中轨
-        bandwidth = (upper - lower) / middle
+        # 带宽 = (上轨 - 下轨) / 中轨 (使用安全除法)
+        bandwidth = safe_divide(upper - lower, middle, default=0.0)
 
         return (
             upper.iloc[-1],
@@ -74,7 +74,7 @@ class BollingerBandsStrategy(StrategyBase):
         if self._upper is None or self._lower is None:
             return 0.5
 
-        return (price - self._lower) / (self._upper - self._lower)
+        return safe_divide(price - self._lower, self._upper - self._lower, default=0.5)
 
     def _detect_squeeze(self, current_bw: float, avg_bw: float) -> bool:
         """检测布林带收缩（Squeeze）"""

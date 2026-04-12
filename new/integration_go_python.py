@@ -182,7 +182,7 @@ def test_e2e_latency():
         try:
             requests.get(f"{GO_API_URL}/api/v1/risk/stats", timeout=2.0)
             latencies.append((time.time() - start) * 1000)
-        except:
+        except Exception:
             latencies.append(None)
         time.sleep(0.1)
     

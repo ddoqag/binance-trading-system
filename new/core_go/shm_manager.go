@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"sync/atomic"
 	"time"
@@ -261,17 +262,21 @@ func (m *SHMManager) DumpState() string {
 
 // Helper functions for atomic float operations
 func atomicLoadFloat64(ptr *float64) float64 {
-	return *(*float64)(unsafe.Pointer(ptr))
+	bits := atomic.LoadUint64((*uint64)(unsafe.Pointer(ptr)))
+	return math.Float64frombits(bits)
 }
 
 func atomicStoreFloat64(ptr *float64, val float64) {
-	*(*float64)(unsafe.Pointer(ptr)) = val
+	bits := math.Float64bits(val)
+	atomic.StoreUint64((*uint64)(unsafe.Pointer(ptr)), bits)
 }
 
 func atomicLoadFloat32(ptr *float32) float32 {
-	return *(*float32)(unsafe.Pointer(ptr))
+	bits := atomic.LoadUint32((*uint32)(unsafe.Pointer(ptr)))
+	return math.Float32frombits(bits)
 }
 
 func atomicStoreFloat32(ptr *float32, val float32) {
-	*(*float32)(unsafe.Pointer(ptr)) = val
+	bits := math.Float32bits(val)
+	atomic.StoreUint32((*uint32)(unsafe.Pointer(ptr)), bits)
 }

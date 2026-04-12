@@ -113,7 +113,7 @@ class ForceFillThreeMode:
             # 获取策略信号
             try:
                 signal = self._get_signal(tick)
-            except:
+            except Exception:
                 signal = {'direction': 0, 'strength': 0}
 
             if abs(signal.get('direction', 0)) > 0.3:  # 有交易信号
@@ -223,7 +223,7 @@ class ForceFillThreeMode:
             # 获取策略信号
             try:
                 signal = self._get_signal(tick)
-            except:
+            except Exception:
                 signal = {'direction': 0, 'strength': 0}
 
             if abs(signal.get('direction', 0)) > 0.3:  # 有交易信号

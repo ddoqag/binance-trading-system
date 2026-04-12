@@ -126,7 +126,7 @@ class WorldModel(nn.Module):
             'observations': []
         }
 
-        state = torch.FloatTensor(initial_state).unsqueeze(0)
+        state = torch.tensor(initial_state, dtype=torch.float32).unsqueeze(0)
 
         with torch.no_grad():
             for _ in range(horizon):
@@ -137,7 +137,7 @@ class WorldModel(nn.Module):
                 action_probs = policy(obs.squeeze().numpy())
                 action_idx = np.random.choice(len(action_probs), p=action_probs)
                 action = np.eye(self.action_dim)[action_idx]
-                action_tensor = torch.FloatTensor(action).unsqueeze(0)
+                action_tensor = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
 
                 # 预测奖励
                 reward = self.reward(state, action_tensor)
@@ -163,11 +163,11 @@ class WorldModel(nn.Module):
             states, actions, next_states, rewards, observations = zip(*batch)
 
             # 转换为tensor
-            s = torch.FloatTensor(np.array(states))
-            a = torch.FloatTensor(np.array(actions))
-            ns = torch.FloatTensor(np.array(next_states))
-            r = torch.FloatTensor(np.array(rewards)).unsqueeze(-1)
-            o = torch.FloatTensor(np.array(observations))
+            s = torch.tensor(np.array(states), dtype=torch.float32)
+            a = torch.tensor(np.array(actions), dtype=torch.float32)
+            ns = torch.tensor(np.array(next_states), dtype=torch.float32)
+            r = torch.tensor(np.array(rewards), dtype=torch.float32).unsqueeze(-1)
+            o = torch.tensor(np.array(observations), dtype=torch.float32)
 
             # 预测
             pred_ns = self.transition(s, a)
@@ -234,11 +234,11 @@ class ModelBasedPlanner:
         """使用世界模型模拟"""
         trajectory = {'rewards': []}
 
-        state = torch.FloatTensor(initial_state).unsqueeze(0)
+        state = torch.tensor(initial_state, dtype=torch.float32).unsqueeze(0)
 
         with torch.no_grad():
             for action in actions:
-                action_t = torch.FloatTensor(action).unsqueeze(0)
+                action_t = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
                 reward = self.world_model.reward(state, action_t)
                 trajectory['rewards'].append(reward.item())
                 state = self.world_model.transition(state, action_t)

@@ -398,7 +398,7 @@ def get_token_bytes(device="cpu", dataset=None):
     dataset_name = _resolve_dataset_name(dataset)
     path = os.path.join(_tokenizer_dir(dataset_name), "token_bytes.pt")
     with open(path, "rb") as f:
-        return torch.load(f, map_location=device)
+        return torch.load(f, map_location=device, weights_only=True)
 
 
 def _document_batches(split, dataset=None, tokenizer_batch_size=128):

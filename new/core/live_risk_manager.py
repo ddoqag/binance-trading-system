@@ -28,7 +28,7 @@ from collections import deque
 import numpy as np
 
 # Import LiveOrderManager
-from .live_order_manager import LiveOrderManager, Order, OrderSide, Position, AccountInfo
+from .live_order_manager import LiveOrderManager, Order, OrderSide, OrderType, Position, AccountInfo
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -503,6 +503,12 @@ class LiveRiskManager:
         Returns:
             (can_place, reason)
         """
+        if quantity <= 0:
+            return False, "Quantity must be greater than 0"
+
+        if price <= 0:
+            return False, "Price must be greater than 0"
+
         # 检查 Kill Switch
         if self._kill_switch_triggered:
             return False, "Kill switch triggered"
@@ -525,6 +531,14 @@ class LiveRiskManager:
 
         # 检查总敞口
         account = self.order_manager.get_account_info()
+        if account.available_balance <= 0:
+            return False, "No available balance"
+
+        if hasattr(self.order_manager, "_validate_order"):
+            validation_error = self.order_manager._validate_order(symbol, OrderSide.BUY, OrderType.MARKET, quantity, price)
+            if validation_error:
+                return False, validation_error
+
         total_exposure = sum(p.notional_value for p in self.order_manager.get_all_positions())
         new_exposure = (total_exposure + notional) / self.current_capital if self.current_capital > 0 else 1.0
 
@@ -576,7 +590,7 @@ class LiveRiskManager:
                         pass
                     else:
                         current_price = self.order_manager._get_current_price(symbol)
-                except:
+                except Exception:
                     pass
 
         if current_price > 0:

@@ -79,11 +79,11 @@ class ReplayBuffer:
         indices = np.random.randint(0, self.size, size=batch_size)
 
         return (
-            torch.FloatTensor(self.states[indices]),
-            torch.FloatTensor(self.actions[indices]),
-            torch.FloatTensor(self.rewards[indices]),
-            torch.FloatTensor(self.next_states[indices]),
-            torch.FloatTensor(self.dones[indices]),
+            torch.tensor(self.states[indices], dtype=torch.float32),
+            torch.tensor(self.actions[indices], dtype=torch.float32),
+            torch.tensor(self.rewards[indices], dtype=torch.float32),
+            torch.tensor(self.next_states[indices], dtype=torch.float32),
+            torch.tensor(self.dones[indices], dtype=torch.float32),
         )
 
     def __len__(self):
@@ -234,7 +234,7 @@ class SACAgent:
             Action in range [-1, 1]
         """
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
 
             if deterministic:
                 mean, _ = self.actor(state_tensor)
@@ -350,7 +350,7 @@ class SACAgent:
             print(f"[AGENT] Checkpoint not found: {path}")
             return False
 
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
 
         self.actor.load_state_dict(checkpoint["actor"])
         self.critic1.load_state_dict(checkpoint["critic1"])

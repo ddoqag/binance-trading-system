@@ -13,9 +13,10 @@ import psutil
 import atexit
 import asyncio
 import argparse
+import hashlib
+import hmac
 import logging
 from pathlib import Path
-from decimal import Decimal
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
@@ -23,9 +24,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 from dotenv import load_dotenv
 from config.mode import TradingMode
 from self_evolving_trader import (
-    SelfEvolvingTrader, TraderConfig,
     create_trader, run_trader
 )
+from core.live_risk_manager import RiskLimits
 from utils.telegram_notify import notify_start, notify_stop, notify_crash
 from scheduler.daily_report_scheduler import daily_report_loop
 
@@ -207,7 +208,7 @@ async def main():
         logger.error("Set BINANCE_API_KEY and BINANCE_API_SECRET in .env file")
         sys.exit(1)
 
-    logger.info(f"API Key: {api_key[:15]}...")
+    logger.info(f"API Key: {'*' * 10} (已隐藏)")
 
     # 验证连接
     logger.info("\n[1/3] Verifying API connection...")
@@ -238,19 +239,11 @@ async def main():
         # PAPER 模式自动确认
         logger.info("[Paper Mode] Simulation mode, no confirmation needed.")
 
-    # 创建配置
     logger.info("\n[2/3] Initializing trader...")
 
-    config = TraderConfig(
-        api_key=api_key,
-        api_secret=api_secret,
-        symbol=args.symbol,
-        trading_mode=trading_mode,
-        use_testnet=False,
-        initial_capital=args.capital,
-        check_interval_seconds=args.check_interval,
-        enable_spot_margin=args.spot_margin,
-        margin_mode=args.margin_mode,
+    risk_limits = RiskLimits(
+        max_single_position_pct=args.max_position,
+        max_total_position_pct=max(args.max_position, 0.8),
         max_leverage=args.max_leverage,
     )
 
@@ -261,7 +254,11 @@ async def main():
             api_secret=api_secret,
             symbol=args.symbol,
             use_testnet=False,
+            trading_mode=trading_mode.value,
             initial_capital=args.capital,
+            risk_limits=risk_limits,
+            check_interval_seconds=args.check_interval,
+            auto_resume=False,
             enable_spot_margin=args.spot_margin,
             margin_mode=args.margin_mode,
             max_leverage=args.max_leverage,
@@ -309,8 +306,4 @@ async def main():
 
 
 if __name__ == '__main__':
-    import time
-    import hmac
-    import hashlib
-
     asyncio.run(main())

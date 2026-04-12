@@ -43,6 +43,24 @@ class TradingAutoResearch:
             'exploration_noise': (0.03, 0.08),
         }
 
+    def _safe_git_reset(self) -> bool:
+        """安全地执行 git reset，添加确认和检查"""
+        # 检查是否有未提交的变更
+        result = subprocess.run(['git', 'status', '--porcelain'],
+                              capture_output=True, text=True)
+        if result.stdout.strip():
+            print("⚠️  有未提交的变更，跳过 reset")
+            return False
+        
+        # 确认提示
+        confirm = input("确认要执行 git reset --hard HEAD~1? [y/N]: ")
+        if confirm.lower() != 'y':
+            print("已取消")
+            return False
+        
+        subprocess.run(['git', 'reset', '--hard', 'HEAD~1'])
+        return True
+
     def load_config(self) -> Dict:
         """加载当前配置"""
         with open(self.config_file, 'r') as f:
@@ -299,10 +317,10 @@ class TradingAutoResearch:
                 history = self.load_results()  # 刷新历史
             elif status == 'discard':
                 print("❌ Discarding, reverting...")
-                subprocess.run(['git', 'reset', '--hard', 'HEAD~1'])
+                self._safe_git_reset()
             else:  # crash
                 print("💥 Crash recorded, continuing...")
-                subprocess.run(['git', 'reset', '--hard', 'HEAD~1'])
+                self._safe_git_reset()
 
             print(f"\nCompleted experiment #{experiment_count}")
             print(f"Next experiment in 10 seconds... (Ctrl+C to stop)")

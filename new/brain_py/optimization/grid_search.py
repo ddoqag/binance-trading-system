@@ -81,7 +81,7 @@ class GridSearchOptimizer:
         try:
             resp = requests.get(f"{self.base_url}/api/v1/status", timeout=2.0)
             return resp.status_code == 200
-        except:
+        except Exception:
             return False
 
     def reset_engine(self):
@@ -90,7 +90,7 @@ class GridSearchOptimizer:
             # 取消所有订单
             requests.post(f"{self.base_url}/api/v1/cancel_all", timeout=2.0)
             time.sleep(0.5)
-        except:
+        except Exception:
             pass
 
     def run_single_backtest(self, params: ParameterSet) -> BacktestResult:
@@ -106,7 +106,7 @@ class GridSearchOptimizer:
             status = status_resp.json()
             initial_value = status.get('total_value', 10000.0)
             initial_position = status.get('position', 0.0)
-        except:
+        except Exception:
             initial_value = 10000.0
             initial_position = 0.0
 
@@ -186,7 +186,7 @@ class GridSearchOptimizer:
                             if fill_id and fill_id not in processed_fill_ids:
                                 strategy.on_fill(fill)
                                 processed_fill_ids.add(fill_id)
-                    except:
+                    except Exception:
                         pass
 
                 except Exception as e:

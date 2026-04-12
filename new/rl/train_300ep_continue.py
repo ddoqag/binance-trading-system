@@ -32,7 +32,7 @@ env = ExecutionEnvV3(
 agent = DualHeadSAC(state_dim=10, action_dim=3, lr=1e-4, device="cpu")
 
 try:
-    checkpoint = torch.load("checkpoints/sac_v3_improved.pt", map_location="cpu")
+    checkpoint = torch.load("checkpoints/sac_v3_improved.pt", map_location="cpu", weights_only=True)
     agent.actor.load_state_dict(checkpoint['actor'])
     agent.critic1.load_state_dict(checkpoint['critic1'])
     agent.critic2.load_state_dict(checkpoint['critic2'])
@@ -62,8 +62,8 @@ for ep in range(300):
 
         # 监控Q值
         with torch.no_grad():
-            state_t = torch.FloatTensor(state).unsqueeze(0)
-            action_t = torch.FloatTensor(action).unsqueeze(0)
+            state_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            action_t = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
             dir_onehot = torch.zeros(1, 3)
             dir_onehot[0, direction + 1] = 1.0
             q1 = agent.critic1(state_t, action_t, dir_onehot).item()

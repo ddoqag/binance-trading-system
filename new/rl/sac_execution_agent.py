@@ -133,7 +133,7 @@ class SACExecutionAgent:
     def load(self, path: str):
         if not self._available:
             return
-        ckpt = torch.load(path, map_location=self.device)
+        ckpt = torch.load(path, map_location=self.device, weights_only=True)
         self.actor.load_state_dict(ckpt["actor"])
         logger.info(f"[SACExecutionAgent] Loaded model from {path}")
 
@@ -155,7 +155,7 @@ class SACExecutionAgent:
             return np.zeros(self.action_dim, dtype=np.float32)
 
         with torch.no_grad():
-            s = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            s = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
             action, _ = self.actor.sample(s, deterministic=deterministic)
             action = action.cpu().numpy()[0]
 

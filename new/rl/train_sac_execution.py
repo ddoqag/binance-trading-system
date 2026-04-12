@@ -81,7 +81,7 @@ class SAC:
         self.replay = ReplayBuffer()
 
     def select_action(self, state, deterministic=False):
-        s = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        s = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
         with torch.no_grad():
             action, _ = self.actor.sample(s, deterministic=deterministic)
         return action.cpu().numpy()[0]
@@ -93,11 +93,11 @@ class SAC:
         batch = self.replay.sample(batch_size)
         s, a, r, s_next, d = zip(*batch)
 
-        s = torch.FloatTensor(np.array(s)).to(self.device)
-        a = torch.FloatTensor(np.array(a)).to(self.device)
-        r = torch.FloatTensor(np.array(r)).unsqueeze(1).to(self.device)
-        s_next = torch.FloatTensor(np.array(s_next)).to(self.device)
-        d = torch.FloatTensor(np.array(d)).unsqueeze(1).to(self.device)
+        s = torch.tensor(np.array(s), dtype=torch.float32).to(self.device)
+        a = torch.tensor(np.array(a), dtype=torch.float32).to(self.device)
+        r = torch.tensor(np.array(r), dtype=torch.float32).unsqueeze(1).to(self.device)
+        s_next = torch.tensor(np.array(s_next), dtype=torch.float32).to(self.device)
+        d = torch.tensor(np.array(d), dtype=torch.float32).unsqueeze(1).to(self.device)
 
         # Critic update
         with torch.no_grad():
@@ -162,8 +162,8 @@ class SAC:
 
         print(f"[BC] Starting behavior cloning on {len(shadow_states)} shadow samples, epochs={epochs}")
 
-        s = torch.FloatTensor(np.array(shadow_states)).to(self.device)
-        a = torch.FloatTensor(np.array(shadow_actions)).to(self.device)
+        s = torch.tensor(np.array(shadow_states), dtype=torch.float32).to(self.device)
+        a = torch.tensor(np.array(shadow_actions), dtype=torch.float32).to(self.device)
 
         bc_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
 

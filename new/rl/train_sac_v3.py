@@ -153,7 +153,7 @@ class DualHeadSAC:
 
     def select_action(self, state, deterministic=False):
         """选择动作: 先预测方向，再决定执行"""
-        s = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        s = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
 
         # 1. 预测方向
         direction, confidence = self.direction_head.predict_direction(s)
@@ -319,7 +319,7 @@ class DualHeadSAC:
     def load(self, path):
         if not os.path.exists(path):
             return False
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         self.direction_head.load_state_dict(checkpoint["direction_head"])
         self.actor.load_state_dict(checkpoint["actor"])
         self.critic1.load_state_dict(checkpoint["critic1"])

@@ -196,7 +196,7 @@ print(f"Best validation accuracy: {best_val_acc:.2%}")
 print("=" * 70)
 
 # 加载最佳模型
-agent.direction_head.load_state_dict(torch.load("checkpoints/direction_head_best.pt", map_location="cpu"))
+agent.direction_head.load_state_dict(torch.load("checkpoints/direction_head_best.pt", map_location="cpu", weights_only=True))
 
 # 保存完整检查点
 agent.save("checkpoints/sac_v3_pretrained.pt")

@@ -52,7 +52,7 @@ class EndToEndTest:
                         self.stats["decisions_made"] += 1
                     elif prefix == "AGENT" and "Ack received" in line:
                         self.stats["acks_received"] += 1
-            except:
+            except Exception:
                 break
 
     def setup_shm(self):
@@ -226,7 +226,7 @@ except KeyboardInterrupt:
                 self.agent_process.send_signal(signal.SIGTERM)
                 try:
                     self.agent_process.wait(timeout=3)
-                except:
+                except Exception:
                     self.agent_process.kill()
             print("[TEST] Python Agent stopped")
 
@@ -240,7 +240,7 @@ except KeyboardInterrupt:
                 self.go_process.send_signal(signal.SIGTERM)
                 try:
                     self.go_process.wait(timeout=3)
-                except:
+                except Exception:
                     self.go_process.kill()
             print("[TEST] Go Engine stopped")
 
@@ -299,7 +299,7 @@ except KeyboardInterrupt:
         if os.path.exists(SHM_PATH):
             try:
                 os.remove(SHM_PATH)
-            except:
+            except Exception:
                 pass
 
 

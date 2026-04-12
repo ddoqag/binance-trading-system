@@ -279,7 +279,7 @@ class ConstrainedSACAgent:
 
         # 原始SAC输出
         with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
             output = self.actor(state_tensor)
 
             mean = output[:, :self.action_dim]

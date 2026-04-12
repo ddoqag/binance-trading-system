@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 from typing import Dict, Any, Optional
 try:
-    from .base import StrategyBase, Signal, SignalType
+    from .base import StrategyBase, Signal, SignalType, safe_divide
 except ImportError:
-    from strategies.base import StrategyBase, Signal, SignalType
+    from strategies.base import StrategyBase, Signal, SignalType, safe_divide
 
 
 class VolatilityBreakoutStrategy(StrategyBase):
@@ -122,20 +122,20 @@ class VolatilityBreakoutStrategy(StrategyBase):
         if current_price > upper:
             direction = 1
             breakout_type = 'upper'
-            # 强度 = 突破幅度 / ATR
-            strength = min(1.0, (current_price - upper) / atr)
+            # 强度 = 突破幅度 / ATR (使用安全除法)
+            strength = min(1.0, safe_divide(current_price - upper, atr, default=0.0))
 
         # 下轨突破（做空）
         elif current_price < lower:
             direction = -1
             breakout_type = 'lower'
-            # 强度 = 突破幅度 / ATR
-            strength = min(1.0, (lower - current_price) / atr)
+            # 强度 = 突破幅度 / ATR (使用安全除法)
+            strength = min(1.0, safe_divide(lower - current_price, atr, default=0.0))
 
         # 如果没有突破，计算接近程度（用于弱信号）
         if direction == 0:
-            upper_distance = (upper - current_price) / atr
-            lower_distance = (current_price - lower) / atr
+            upper_distance = safe_divide(upper - current_price, atr, default=float('inf'))
+            lower_distance = safe_divide(current_price - lower, atr, default=float('inf'))
 
             # 接近上轨（0.3 ATR以内）
             if 0 < upper_distance < 0.3:
@@ -179,7 +179,7 @@ class VolatilityBreakoutStrategy(StrategyBase):
                 'current_price': float(current_price),
                 'volume_confirmed': volume_confirmed,
                 'breakout_type': breakout_type,
-                'channel_width': float((upper - lower) / middle)  # 通道宽度百分比
+                'channel_width': float(safe_divide(upper - lower, middle, default=0.0))  # 通道宽度百分比
             }
         )
 
