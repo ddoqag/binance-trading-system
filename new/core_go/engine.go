@@ -7,7 +7,6 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -182,18 +181,31 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 }
 
 func (e *HFTEngine) Start() error {
-	// 配置 WebSocket 代理
-	if proxyURL := os.Getenv("HTTPS_PROXY"); proxyURL != "" {
-		if _, err := url.Parse(proxyURL); err == nil {
-			binance.SetWsProxyUrl(proxyURL)
-			log.Printf("[ENGINE] WebSocket proxy configured: %s", proxyURL)
-		} else {
-			log.Printf("[ENGINE] Invalid WebSocket proxy URL: %v", err)
-		}
+	// Check for testnet mode
+	useTestnet := os.Getenv("USE_TESTNET") == "true"
+	if useTestnet {
+		binance.UseTestnet = true
+		log.Printf("[ENGINE] Using Binance Testnet")
 	}
-	// 配置 WebSocket 端口（有些网络封禁 9443/8443，改用标准 443 端口）
-	binance.BaseWsMainURL = "wss://stream.binance.com:443/ws"
-	log.Printf("[ENGINE] WebSocket base URL set to: %s", binance.BaseWsMainURL)
+
+	// 配置 WebSocket 代理 - 使用环境变量方式，让 SDK 自动处理
+	// go-binance SDK 使用 http.ProxyFromEnvironment，会自动读取 HTTP_PROXY/HTTPS_PROXY
+	if proxyURL := os.Getenv("HTTPS_PROXY"); proxyURL != "" {
+		log.Printf("[ENGINE] WebSocket will use HTTPS_PROXY: %s", proxyURL)
+	} else if proxyURL := os.Getenv("HTTP_PROXY"); proxyURL != "" {
+		log.Printf("[ENGINE] WebSocket will use HTTP_PROXY: %s", proxyURL)
+	} else {
+		log.Printf("[ENGINE] No WebSocket proxy configured (set HTTPS_PROXY env var if needed)")
+	}
+
+	// 配置 WebSocket端口（有些网络封禁 9443/8443，改用标准 443 端口）
+	if useTestnet {
+		binance.BaseWsTestnetURL = "wss://testnet.binance.vision/ws"
+		log.Printf("[ENGINE] WebSocket testnet URL set to: %s", binance.BaseWsTestnetURL)
+	} else {
+		binance.BaseWsMainURL = "wss://stream.binance.com:443/ws"
+		log.Printf("[ENGINE] WebSocket main URL set to: %s", binance.BaseWsMainURL)
+	}
 
 	log.Printf("[ENGINE] Starting HFT Engine for %s", e.symbol)
 
@@ -227,6 +239,9 @@ func (e *HFTEngine) Start() error {
 		return fmt.Errorf("failed to connect WebSocket: %w", err)
 	}
 	log.Println("[ENGINE] WebSocket connected successfully")
+	if e.metrics != nil {
+		e.metrics.SetWebSocketConnected(true)
+	}
 
 	// Start main loops
 	e.wg.Add(3)
@@ -240,6 +255,9 @@ func (e *HFTEngine) Start() error {
 
 func (e *HFTEngine) Stop() {
 	log.Println("[ENGINE] Stopping HFT Engine...")
+	if e.metrics != nil {
+		e.metrics.SetWebSocketConnected(false)
+	}
 
 	// Create final checkpoint before shutdown
 	if e.wal != nil {
@@ -492,6 +510,11 @@ func (e *HFTEngine) monitorLoop() {
 			}
 			if stale {
 				log.Println("[MONITOR] WARNING: Market data stale")
+			}
+
+			// Update WebSocket connection metric
+			if e.metrics != nil {
+				e.metrics.SetWebSocketConnected(connected)
 			}
 
 			// Collect system metrics for degradation manager
@@ -818,7 +841,7 @@ func (e *HFTEngine) StartHTTPServer(port int) {
 			return
 		}
 
-		bids, asks, _, _ := book.GetSnapshot()
+		bids, asks := book.GetDepth(10)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"bids":      bids,
@@ -876,16 +899,49 @@ func (e *HFTEngine) StartHTTPServer(port int) {
 			return
 		}
 
+		// Validate minimum order size
+		if req.Qty <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "qty must be positive"})
+			return
+		}
+
+		var orderErr error
+		if !e.config.PaperTrading && e.marginExecutor != nil {
+			// Live margin trading
+			isMarket := req.Type == "market"
+			switch req.Side {
+			case "buy", "BUY":
+				orderErr = e.marginExecutor.PlaceLongOrder(req.Qty, isMarket, req.Price)
+			case "sell", "SELL":
+				orderErr = e.marginExecutor.PlaceShortOrder(req.Qty, isMarket, req.Price)
+			default:
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"error": "invalid side: " + req.Side})
+				return
+			}
+		}
+
 		// Create order response
 		orderID := fmt.Sprintf("order_%d", time.Now().UnixMilli())
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		status := "pending"
+		resp := map[string]interface{}{
 			"id":     orderID,
-			"status": "pending",
+			"status": status,
 			"side":   req.Side,
 			"qty":    req.Qty,
 			"price":  req.Price,
-		})
+		}
+		if orderErr != nil {
+			log.Printf("[HTTP] Order execution failed: %v", orderErr)
+			status = "failed"
+			resp["error"] = orderErr.Error()
+		} else if !e.config.PaperTrading && e.marginExecutor != nil {
+			status = "submitted"
+		}
+		resp["status"] = status
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(resp)
 	})
 
 	addr := fmt.Sprintf(":%d", port)

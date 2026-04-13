@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -161,8 +162,9 @@ func (e *MarginExecutor) placeLiveMarginOrder(side MarginSide, size float64, isM
 	// 检查保证金安全
 	safe, level, err := e.marginClient.IsMarginSafe(context.Background(), e.minMarginLevel)
 	if err != nil {
-		log.Printf("[MARGIN] Warning: failed to check margin level: %v", err)
-	} else if !safe {
+		return fmt.Errorf("failed to check margin level: %w", err)
+	}
+	if !safe {
 		return fmt.Errorf("margin level too low: %.2f (min: %.2f)", level, e.minMarginLevel)
 	}
 
@@ -189,10 +191,11 @@ func (e *MarginExecutor) placeLiveMarginOrder(side MarginSide, size float64, isM
 	}
 
 	var resp *MarginOrderResponse
+	symbolUpper := strings.ToUpper(e.symbol)
 	if isMarket {
-		resp, err = e.marginClient.PlaceMarginMarketOrder(ctx, e.symbol, sideStr, size, autoRepay)
+		resp, err = e.marginClient.PlaceMarginMarketOrder(ctx, symbolUpper, sideStr, size, autoRepay)
 	} else {
-		resp, err = e.marginClient.PlaceMarginLimitOrder(ctx, e.symbol, sideStr, price, size, "GTC", autoRepay)
+		resp, err = e.marginClient.PlaceMarginLimitOrder(ctx, symbolUpper, sideStr, price, size, "GTC", autoRepay)
 	}
 
 	if err != nil {
@@ -373,53 +376,74 @@ func (e *MarginExecutor) calculateLiquidationPrice() {
 // 同步循环
 
 func (e *MarginExecutor) syncLoop() {
-	ticker := time.NewTicker(5 * time.Second)
+	interval := 5 * time.Second
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	consecutiveErrors := 0
 
 	for {
 		select {
 		case <-ticker.C:
-			e.syncPositionFromExchange()
-			e.checkLiquidationRisk()
+			posErr := e.syncPositionFromExchange()
+			riskErr := e.checkLiquidationRisk()
+			if posErr != nil || riskErr != nil {
+				consecutiveErrors++
+				// Backoff: 5s -> 10s -> 20s -> max 30s
+				newInterval := time.Duration(min(30, 5*(1<<consecutiveErrors))) * time.Second
+				if newInterval > interval {
+					ticker.Reset(newInterval)
+					interval = newInterval
+					log.Printf("[MARGIN] Sync errors increased, backoff to %v", interval)
+				}
+			} else {
+				if consecutiveErrors > 0 {
+					consecutiveErrors = 0
+					interval = 5 * time.Second
+					ticker.Reset(interval)
+					log.Printf("[MARGIN] Sync recovered, interval reset to %v", interval)
+				}
+			}
 		case <-e.stopSync:
 			return
 		}
 	}
 }
 
-func (e *MarginExecutor) syncPositionFromExchange() {
+func (e *MarginExecutor) syncPositionFromExchange() error {
 	if e.marginClient == nil {
-		return
+		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// 同步持仓
 	pos, err := e.marginClient.GetMarginPosition(ctx, e.symbol)
 	if err != nil {
 		log.Printf("[MARGIN] Failed to sync position: %v", err)
-		return
+		return err
 	}
 
 	e.positionMu.Lock()
 	e.position.Position = pos.Position
 	e.position.LastUpdated = time.Now()
 	e.positionMu.Unlock()
+	return nil
 }
 
-func (e *MarginExecutor) checkLiquidationRisk() {
+func (e *MarginExecutor) checkLiquidationRisk() error {
 	if e.marginClient == nil {
-		return
+		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	safe, level, err := e.marginClient.IsMarginSafe(ctx, e.minMarginLevel)
 	if err != nil {
 		log.Printf("[MARGIN] Failed to check margin level: %v", err)
-		return
+		return err
 	}
 
 	if !safe {
@@ -428,6 +452,7 @@ func (e *MarginExecutor) checkLiquidationRisk() {
 	} else {
 		e.liquidationRisk = false
 	}
+	return nil
 }
 
 // 查询接口

@@ -27,6 +27,7 @@ import logging
 
 # MVP核心模块
 from mvp import SimpleQueueOptimizer, ToxicFlowDetector, SpreadCapture
+from mvp.trend_signal import TrendSignal
 from performance.pnl_attribution import PnLAttribution, Trade, TradeSide, OrderType
 from queue_dynamics.calibration import LiveFillCalibrator
 from agents.constrained_sac import ActionConstraintLayer, ConstraintConfig
@@ -80,12 +81,14 @@ class MVPTrader:
                  symbol: str = "BTCUSDT",
                  initial_capital: float = 1000.0,
                  max_position: float = 0.5,
-                 tick_size: float = 0.01):
+                 tick_size: float = 0.01,
+                 step_size: float = 1.0):
 
         self.symbol = symbol
         self.initial_capital = initial_capital
         self.max_position = max_position
         self.tick_size = tick_size
+        self.step_size = step_size
 
         # MVP核心三模块
         self.queue_optimizer = SimpleQueueOptimizer(
@@ -96,10 +99,24 @@ class MVPTrader:
             threshold=0.5,
             mahalanobis_threshold=5.0
         )
+        # DOGE: ~1.1bps per tick, need ~4 ticks to break even on maker fees
+        # BTC: ~0.0014bps per tick, spread capture almost never profitable with $10
+        # Use 4 ticks for DOGE-like coins, 2 for BTC-like (though BTC needs much more capital)
+        if tick_size <= 0.0001:
+            min_spread_ticks = 4
+        else:
+            min_spread_ticks = 2
         self.spread_capture = SpreadCapture(
-            min_spread_ticks=2,
+            min_spread_ticks=min_spread_ticks,
             tick_size=tick_size,
             maker_rebate=0.0002
+        )
+        self.trend_signal = TrendSignal(
+            short_period=3,
+            long_period=8,
+            min_confidence=0.01,
+            breakout_threshold=0.00005,
+            breakout_lookback=10
         )
 
         # 支持模块
@@ -110,13 +127,13 @@ class MVPTrader:
         self.calibrator = LiveFillCalibrator(window_size=500)
         self.constraints = ActionConstraintLayer(
             ConstraintConfig(
-                max_order_rate=10.0,         # 每秒最多10单（测试用）
+                max_order_rate=2.0,          # 每秒最多2单（降低频率）
                 max_cancel_ratio=0.5,        # 撤单率不超过50%
-                min_rest_time_ms=50.0,       # 最小间隔50ms（测试用）
-                max_position_change=0.1,     # 单笔不超过10%
-                max_daily_trades=200,        # 每日最多200笔
-                max_drawdown_pct=0.05,       # 最大回撤5%
-                kill_switch_loss=-50.0       # 累计亏损达到$50停止
+                min_rest_time_ms=500.0,      # 最小间隔500ms
+                max_position_change=0.2,     # 单笔不超过20%
+                max_daily_trades=50,         # 每日最多50笔（严格控制）
+                max_drawdown_pct=0.10,       # 最大回撤10%
+                kill_switch_loss=-5.0        # 累计亏损达到$5停止（小本金）
             ),
             max_position=max_position
         )
@@ -130,6 +147,7 @@ class MVPTrader:
         # 性能监控
         self.latency_history = deque(maxlen=100)
         self.decision_history = deque(maxlen=100)
+        self.internal_tick_count = 0
 
         logger.info(f"MVP Trader initialized: {symbol}, capital=${initial_capital}")
 
@@ -144,6 +162,7 @@ class MVPTrader:
             Optional[Dict]: 交易指令或None
         """
         start_time = time.time()
+        self.internal_tick_count += 1
 
         # 0. 检查熔断
         if self.state.kill_switched:
@@ -154,42 +173,104 @@ class MVPTrader:
             logger.critical(f"Kill switch triggered! PnL: {self.state.total_pnl:.2f}")
             return None
 
-        # 1. 毒流检测
+        # 1. 更新趋势信号
+        mid_price = orderbook.get('mid_price', 0)
+        if mid_price > 0:
+            self.trend_signal.update(mid_price)
+        trend = self.trend_signal.generate()
+
+        # 2. 毒流检测（分级响应）
         recent_fills = list(self.trade_history)[-20:] if len(self.trade_history) > 0 else None
         toxic_alert = self.toxic_detector.detect(orderbook, recent_fills)
 
-        if toxic_alert.is_toxic:
+        # 提取毒性级别（从 reason 中解析或从 detector 直接获取）
+        toxic_level = getattr(self.toxic_detector, 'consecutive_alerts', 0)
+
+        # 每30秒或毒性变化时记录一次
+        if toxic_level > 0 and self.internal_tick_count % 10 == 0:
+            logger.info(f"Tick {self.internal_tick_count}: toxic_level={toxic_level}, prob={toxic_alert.toxic_probability:.2f}, "
+                       f"distance={toxic_alert.mahalanobis_distance:.2f}, trend_strength={trend['strength']:.3f}")
+
+        if toxic_level >= 8:
             self.decision_history.append({
                 'timestamp': time.time(),
                 'action': 'blocked',
-                'reason': f"toxic_flow: {toxic_alert.reason}"
+                'reason': f"toxic_flow_high: {toxic_alert.reason}"
             })
-            logger.warning(f"Toxic flow detected: {toxic_alert.reason}, blocking trade")
+            logger.warning(f"Toxic flow HIGH (level={toxic_level}), blocking trade")
             return None
 
-        # 2. 点差捕获分析
+        # 3. 点差捕获分析
         spread_opp = self.spread_capture.analyze(orderbook, self.state.current_position)
 
-        if not spread_opp.is_profitable:
+        # 4. 决策：点差交易 或 趋势交易
+        use_spread = spread_opp.is_profitable and toxic_level < 5
+        use_trend = (trend['direction'] != 0.0 and
+                     toxic_level < 5 and
+                     abs(trend['strength']) > 0.03)
+        use_trend_weak = (trend['direction'] != 0.0 and
+                          toxic_level < 3 and
+                          abs(trend['strength']) > 0.015)
+
+        if use_spread:
+            trade_side = spread_opp.side
+            entry_price = spread_opp.entry_price
+            target_price = spread_opp.target_price
+            size_scale = 1.0
+            aggression = 0.3
+            trade_reason = f"spread_capture: {spread_opp.reason}"
+        elif use_trend:
+            trade_side = 'buy' if trend['direction'] > 0 else 'sell'
+            # 趋势交易：挂稍有利的价格提高成交概率
+            best_bid = orderbook.get('best_bid', 0)
+            best_ask = orderbook.get('best_ask', 0)
+            tick_size = self.tick_size
+            if trade_side == 'buy':
+                entry_price = best_bid + tick_size * 0.5  # 比买一稍高
+                target_price = best_ask
+            else:
+                entry_price = best_ask - tick_size * 0.5  # 比卖一稍低
+                target_price = best_bid
+            size_scale = min(1.0, trend['confidence'] * 1.5)  # 根据信心调整仓位
+            aggression = 0.5
+            trade_reason = f"trend_trade: {trend['reason']}"
+        elif use_trend_weak:
+            trade_side = 'buy' if trend['direction'] > 0 else 'sell'
+            best_bid = orderbook.get('best_bid', 0)
+            best_ask = orderbook.get('best_ask', 0)
+            tick_size = self.tick_size
+            if trade_side == 'buy':
+                entry_price = best_bid
+                target_price = best_ask
+            else:
+                entry_price = best_ask
+                target_price = best_bid
+            size_scale = min(0.5, trend['confidence'])  # 小仓位
+            aggression = 0.3
+            trade_reason = f"trend_weak: {trend['reason']}"
+        else:
+            skip_reason = spread_opp.reason if not spread_opp.is_profitable else trend['reason']
             self.decision_history.append({
                 'timestamp': time.time(),
                 'action': 'skip',
-                'reason': spread_opp.reason
+                'reason': f"no_opportunity | toxic={toxic_level} | {skip_reason}"
             })
+            if self.internal_tick_count % 10 == 0:
+                logger.info(f"Tick {self.internal_tick_count}: SKIP | toxic={toxic_level} | spread_profitable={spread_opp.is_profitable} | "
+                           f"trend_dir={trend['direction']:.1f}, strength={trend['strength']:.3f} | {skip_reason}")
             return None
 
-        # 3. 队列位置优化
+        # 5. 队列位置优化
         current_orders = {
             f"order_{k}": v for k, v in enumerate(self.pending_orders.values())
         }
         queue_action = self.queue_optimizer.decide(orderbook, current_orders)
 
-        # 4. 构建原始动作
-        # size_scale=1.0 表示使用 max_position 的全部仓位
+        # 6. 构建原始动作
         raw_action = np.array([
-            1.0 if spread_opp.side == 'buy' else -1.0,  # direction
-            0.3,  # aggression (被动挂单)
-            1.0  # size_scale (使用全部max_position)
+            1.0 if trade_side == 'buy' else -1.0,  # direction
+            aggression,  # aggression
+            size_scale   # size_scale
         ])
 
         # 5. 应用约束
@@ -206,32 +287,69 @@ class MVPTrader:
             logger.info(f"Action blocked by constraints: {constraint_info['constraints_applied']}")
             return None
 
+        # 防止重复下单：如果已有同方向 pending order，跳过
+        for pending in self.pending_orders.values():
+            if pending.get('side') == trade_side:
+                self.decision_history.append({
+                    'timestamp': time.time(),
+                    'action': 'skip',
+                    'reason': f"duplicate_{trade_side}_order_exists"
+                })
+                if self.internal_tick_count % 10 == 0:
+                    logger.info(f"Tick {self.internal_tick_count}: SKIP | duplicate {trade_side} order exists")
+                return None
+
         # 6. 创建订单
         self.order_id_counter += 1
         order_id = f"mvp_{self.order_id_counter}"
 
+        # 获取 spread/price 信息（兼容 spread capture 和 trend trade）
+        spread_bps = getattr(spread_opp, 'spread_bps', 0.0) if use_spread else (abs(target_price - entry_price) / mid_price * 10000 if mid_price > 0 else 0.0)
+        net_profit_bps = getattr(spread_opp, 'net_profit_bps', 0.0) if use_spread else (abs(trend['strength']) * 100)
+
+        # 根据 step_size 对 qty 取整，并确保满足最小名义金额
+        raw_qty = abs(constrained_action[2]) * self.max_position
+        adjusted_qty = max(self.step_size, (raw_qty // self.step_size) * self.step_size)
+        # 确保最小名义金额 >= $1.0（Binance DOGEUSDT 要求）
+        min_qty_for_notional = 1.0 / max(entry_price, 1e-9)
+        if adjusted_qty < min_qty_for_notional:
+            adjusted_qty = max(self.step_size, (min_qty_for_notional // self.step_size) * self.step_size + self.step_size)
+        if adjusted_qty < self.step_size * 1.5:
+            adjusted_qty = self.step_size
+
+        # 最终检查最小名义金额
+        if adjusted_qty * entry_price < 1.0:
+            self.decision_history.append({
+                'timestamp': time.time(),
+                'action': 'skip',
+                'reason': 'order_value_too_small'
+            })
+            logger.info(f"Tick {self.internal_tick_count}: SKIP | order value ${adjusted_qty * entry_price:.4f} < $1.0")
+            return None
+
         order = {
             'id': order_id,
             'symbol': self.symbol,
-            'side': spread_opp.side,
+            'side': trade_side,
             'type': 'limit',
-            'qty': abs(constrained_action[2]) * self.max_position,
-            'price': spread_opp.entry_price,
+            'qty': adjusted_qty,
+            'price': entry_price,
             'timestamp': time.time(),
-            'target_price': spread_opp.target_price,
-            'spread_bps': spread_opp.spread_bps,
-            'expected_profit': spread_opp.net_profit_bps
+            'target_price': target_price,
+            'spread_bps': spread_bps,
+            'expected_profit': net_profit_bps,
+            'reason': trade_reason
         }
 
         # 记录预测用于校准
         self.calibrator.record_prediction(
             order_id=order_id,
             symbol=self.symbol,
-            side=spread_opp.side,
+            side=trade_side,
             queue_ratio=0.3,  # MVP简化
             predicted_rate=1.0,  # 简化预测
             ofi=0.0,
-            spread_bps=spread_opp.spread_bps
+            spread_bps=spread_bps
         )
 
         self.pending_orders[order_id] = order
@@ -243,13 +361,14 @@ class MVPTrader:
         self.decision_history.append({
             'timestamp': time.time(),
             'action': 'order',
-            'side': spread_opp.side,
-            'spread_bps': spread_opp.spread_bps,
+            'side': trade_side,
+            'spread_bps': spread_bps,
             'latency_ms': latency_ms
         })
 
-        logger.info(f"Order created: {order_id}, side={spread_opp.side}, "
-                   f"spread={spread_opp.spread_bps:.2f}bps, latency={latency_ms:.2f}ms")
+        logger.info(f"Order created: {order_id}, side={trade_side}, "
+                   f"reason={trade_reason}, price={entry_price:.2f}, "
+                   f"spread={spread_bps:.4f}bps, latency={latency_ms:.2f}ms")
 
         return order
 
@@ -395,7 +514,15 @@ class MVPTrader:
             self.constraints.max_position = max_position
             logger.info(f"Max position updated: {max_position:.4f}")
         if current_position is not None:
+            prev_position = self.state.current_position
             self.state.current_position = current_position
+            # 每次持仓同步后，强制清空所有 pending_orders
+            # 因为 Go 引擎是真实持仓的唯一来源，本地 pending 状态在 sync 后已过时
+            if len(self.pending_orders) > 0:
+                cleared_count = len(self.pending_orders)
+                self.pending_orders.clear()
+                logger.info(f"Cleared {cleared_count} pending orders on sync "
+                           f"({prev_position:.4f} -> {current_position:.4f})")
             logger.info(f"Current position synced: {current_position:.4f}")
 
     def reset_daily(self):

@@ -109,9 +109,9 @@ class SpreadCapture:
 
         self.spread_history.append(spread_bps)
 
-        # 检查最小点差要求
+        # 检查最小点差要求（允许微小浮点误差）
         min_spread_value = self.min_spread_ticks * self.tick_size
-        if spread < min_spread_value:
+        if spread < min_spread_value - 1e-12:
             return SpreadOpportunity(
                 is_profitable=False,
                 side='',
@@ -123,17 +123,17 @@ class SpreadCapture:
                 reason=f"spread {spread_bps:.2f}bps < min {self.min_spread_ticks * self.tick_size / mid_price * 10000:.2f}bps"
             )
 
-        # 计算净收益（考虑maker返佣）
-        # 策略：挂买单在best_bid，或挂卖单在best_ask
-        # 如果被成交，我们立即获得点差 + maker返佣
+        # 计算净收益（考虑真实手续费，不是返佣）
+        # 假设 maker 双边手续费约 0.04%（4bps），taker 约 0.10%（10bps）
+        maker_fee_cost = 0.0004  # 双边 maker 手续费
 
-        # 买单场景：以best_bid买入，市场价值是mid_price
-        buy_immediate_profit = (mid_price - best_bid) / mid_price
-        buy_net_profit = buy_immediate_profit + self.maker_rebate
+        # 买单场景：以best_bid买入，理想平仓在best_ask
+        buy_immediate_profit = (best_ask - best_bid) / mid_price
+        buy_net_profit = buy_immediate_profit - maker_fee_cost
 
-        # 卖单场景：以best_ask卖出，市场价值是mid_price
-        sell_immediate_profit = (best_ask - mid_price) / mid_price
-        sell_net_profit = sell_immediate_profit + self.maker_rebate
+        # 卖单场景：以best_ask卖出，理想平仓在best_bid
+        sell_immediate_profit = (best_ask - best_bid) / mid_price
+        sell_net_profit = sell_immediate_profit - maker_fee_cost
 
         # 选择更优的方向
         if buy_net_profit > sell_net_profit:
@@ -147,35 +147,26 @@ class SpreadCapture:
             entry_price = best_ask
             target_price = best_bid  # 理想退出价格
 
-        # 检查持仓限制
-        if chosen_side == 'buy' and self.current_position >= 0.5:
-            return SpreadOpportunity(
-                is_profitable=False,
-                side='',
-                entry_price=0,
-                target_price=0,
-                spread_bps=spread_bps,
-                net_profit_bps=0,
-                confidence=0,
-                reason="long_position_limit"
-            )
-
-        if chosen_side == 'sell' and self.current_position <= -0.5:
-            return SpreadOpportunity(
-                is_profitable=False,
-                side='',
-                entry_price=0,
-                target_price=0,
-                spread_bps=spread_bps,
-                net_profit_bps=0,
-                confidence=0,
-                reason="short_position_limit"
-            )
+        # 持仓限制由上层约束层处理，此处不再硬编码限制
+        pass
 
         # 计算置信度
         confidence = self._calculate_confidence(
             spread_bps, bid_qty, ask_qty, chosen_side
         )
+
+        # 检查净收益必须为正（否则每笔都稳定亏损手续费）
+        if chosen_profit <= 0:
+            return SpreadOpportunity(
+                is_profitable=False,
+                side='',
+                entry_price=0,
+                target_price=0,
+                spread_bps=spread_bps,
+                net_profit_bps=chosen_profit * 10000,
+                confidence=confidence,
+                reason=f"net_profit_negative {chosen_profit*10000:.2f}bps"
+            )
 
         # 检查置信度
         if confidence < self.min_confidence:
