@@ -393,13 +393,14 @@ func TestReconnectableWebSocket_UserDataStream(t *testing.T) {
 
 	rw := NewReconnectableWebSocket("userData", StreamUserData, "", client)
 
-	// Without listen key, should fail
-	err := rw.connect()
-	if err == nil {
-		t.Error("Should fail without listen key")
+	// With signature-based auth, we no longer need listen key
+	// But connection will fail with invalid credentials
+	// Just verify the stream type is set correctly
+	if rw.streamType != StreamUserData {
+		t.Error("Stream type should be StreamUserData")
 	}
 
-	// Set listen key
+	// SetListenKey is now deprecated but should still work for backward compatibility
 	rw.SetListenKey("test-listen-key")
 	if rw.listenKey != "test-listen-key" {
 		t.Error("Listen key not set correctly")

@@ -419,12 +419,9 @@ func (rw *ReconnectableWebSocket) connectBookTicker() error {
 	return nil
 }
 
-// connectUserData establishes user data stream connection
+// connectUserData establishes user data stream connection (signature-based)
 func (rw *ReconnectableWebSocket) connectUserData() error {
-	if rw.listenKey == "" {
-		return fmt.Errorf("listen key required for user data stream")
-	}
-
+	// Use signature-based WebSocket API (Binance deprecated listen key management)
 	wsHandler := func(event *binance.WsUserDataEvent) {
 		rw.updateLastMessageTime()
 		if rw.userDataHandler != nil {
@@ -440,7 +437,22 @@ func (rw *ReconnectableWebSocket) connectUserData() error {
 		rw.triggerReconnect()
 	}
 
-	doneCh, _, err := binance.WsUserDataServe(rw.listenKey, wsHandler, errHandler)
+	// Get API credentials from client
+	apiKey := rw.client.GetAPIKey()
+	apiSecret := rw.client.GetAPISecret()
+
+	// Sync time and get offset
+	var timeOffset int64 = 0
+	if rw.client != nil {
+		serverTime, _ := rw.client.GetServerTime()
+		if serverTime > 0 {
+			timeOffset = serverTime - time.Now().UnixMilli()
+		}
+	}
+
+	// Use signature-based subscription (recommended method)
+	// Note: Use "HMAC" for standard API keys, "ED25519" only for ED25519 key pairs
+	doneCh, _, err := binance.WsUserDataServeSignature(apiKey, apiSecret, "HMAC", timeOffset, wsHandler, errHandler)
 	if err != nil {
 		return err
 	}

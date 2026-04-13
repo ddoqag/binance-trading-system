@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/net/proxy"
 	"github.com/adshao/go-binance/v2"
 )
 
@@ -98,18 +100,40 @@ func NewLiveAPIClient(apiKey, apiSecret string, testnet bool) *LiveAPIClient {
 
 	client := binance.NewClient(apiKey, apiSecret)
 
-	// Configure proxy if HTTPS_PROXY is set
+	// Configure proxy if HTTPS_PROXY or ALL_PROXY is set
 	if proxyURL := os.Getenv("HTTPS_PROXY"); proxyURL != "" {
 		parsedURL, err := url.Parse(proxyURL)
 		if err == nil {
-			transport := &http.Transport{
-				Proxy: http.ProxyURL(parsedURL),
+			var transport *http.Transport
+			switch parsedURL.Scheme {
+			case "http", "https":
+				// HTTP/HTTPS proxy
+				transport = &http.Transport{
+					Proxy: http.ProxyURL(parsedURL),
+				}
+				log.Printf("[LIVE_API] Using HTTP/HTTPS proxy: %s", proxyURL)
+			case "socks5", "socks5h":
+				// SOCKS5 proxy (used by SSH dynamic port forwarding, Clash, V2Ray)
+				dialer, err := proxy.FromURL(parsedURL, proxy.Direct)
+				if err == nil {
+					transport = &http.Transport{
+						DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+							return dialer.Dial(network, addr)
+						},
+					}
+					log.Printf("[LIVE_API] Using SOCKS5 proxy: %s", proxyURL)
+				} else {
+					log.Printf("[LIVE_API] Failed to create SOCKS5 dialer: %v", err)
+				}
+			default:
+				log.Printf("[LIVE_API] Unsupported proxy scheme: %s", parsedURL.Scheme)
 			}
-			client.HTTPClient = &http.Client{
-				Transport: transport,
-				Timeout:   30 * time.Second,
+			if transport != nil {
+				client.HTTPClient = &http.Client{
+					Transport: transport,
+					Timeout:   30 * time.Second,
+				}
 			}
-			log.Printf("[LIVE_API] Using proxy: %s", proxyURL)
 		} else {
 			log.Printf("[LIVE_API] Failed to parse proxy URL: %v", err)
 		}
@@ -167,6 +191,16 @@ func (c *LiveAPIClient) SetOrderHandler(handler func(*OrderUpdate)) {
 // SetBalanceHandler sets balance update handler
 func (c *LiveAPIClient) SetBalanceHandler(handler func(*BalanceUpdate)) {
 	c.balanceHandler = handler
+}
+
+// GetAPIKey returns the API key
+func (c *LiveAPIClient) GetAPIKey() string {
+	return c.apiKey
+}
+
+// GetAPISecret returns the API secret
+func (c *LiveAPIClient) GetAPISecret() string {
+	return c.apiSecret
 }
 
 // ==================== REST API Methods ====================
@@ -385,18 +419,9 @@ func (c *LiveAPIClient) SubscribeBookTicker(symbol string) (chan struct{}, error
 }
 
 // StartUserDataStream starts user data stream for order updates
+// Uses signature-based WebSocket API (recommended, as listen key management is deprecated)
 func (c *LiveAPIClient) StartUserDataStream() error {
-	// Get listen key
-	listenKey, err := c.client.NewStartUserStreamService().Do(context.Background())
-	if err != nil {
-		return fmt.Errorf("failed to start user stream: %w", err)
-	}
-
-	c.listenKeyMu.Lock()
-	c.listenKey = listenKey
-	c.listenKeyMu.Unlock()
-
-	// Start WebSocket connection
+	// Use new signature-based WebSocket API (Binance deprecated listen key management)
 	wsHandler := func(event *binance.WsUserDataEvent) {
 		c.handleUserDataEvent(event)
 	}
@@ -405,22 +430,27 @@ func (c *LiveAPIClient) StartUserDataStream() error {
 		log.Printf("[LIVE_API] User data stream error: %v", err)
 	}
 
-	doneCh, stopCh, err := binance.WsUserDataServe(listenKey, wsHandler, errHandler)
+	// Get time offset for signature
+	c.SyncTime()
+	timeOffset := c.client.TimeOffset
+
+	// Use signature-based subscription (recommended method)
+	// Note: Use "HMAC" for standard API keys, "ED25519" only for ED25519 key pairs
+	doneCh, stopCh, err := binance.WsUserDataServeSignature(
+		c.apiKey, c.apiSecret, "HMAC", timeOffset, wsHandler, errHandler,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to start user data websocket: %w", err)
 	}
 
 	c.addWsConn("userData", stopCh)
 
-	// Start listen key renewal goroutine
-	go c.renewListenKey()
-
 	go func() {
 		<-doneCh
 		log.Println("[LIVE_API] User data stream closed")
 	}()
 
-	log.Println("[LIVE_API] User data stream started")
+	log.Println("[LIVE_API] User data stream started (signature-based)")
 	return nil
 }
 
@@ -567,6 +597,16 @@ func (c *LiveAPIClient) SyncTime() error {
 	log.Printf("[LIVE_API] Time synchronized: server=%d, local=%d, offset=%dms",
 		serverTime, localTime, offset)
 	return nil
+}
+
+// GetServerTime returns the current server time
+func (c *LiveAPIClient) GetServerTime() (int64, error) {
+	return c.client.NewServerTimeService().Do(context.Background())
+}
+
+// GetTimeOffset returns the current time offset
+func (c *LiveAPIClient) GetTimeOffset() int64 {
+	return c.client.TimeOffset
 }
 
 // GetExchangeInfo gets exchange trading rules and symbol info

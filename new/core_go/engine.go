@@ -7,11 +7,15 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/adshao/go-binance/v2"
 )
 
 /*
@@ -28,6 +32,7 @@ type HFTEngine struct {
 	// Configuration
 	symbol string
 	config *EngineConfig
+	tickSize float64 // Price tick size for this symbol (from exchange info)
 
 	// Subsystems
 	shm            *SHMManager
@@ -101,6 +106,7 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 	engine := &HFTEngine{
 		symbol:   config.Symbol,
 		config:   config,
+		tickSize: 0.01, // Default tick size for BTCUSDT, will be updated from exchange info
 		shm:      shm,
 		ctx:      ctx,
 		cancel:   cancel,
@@ -176,7 +182,41 @@ func NewHFTEngine(config *EngineConfig) (*HFTEngine, error) {
 }
 
 func (e *HFTEngine) Start() error {
+	// 配置 WebSocket 代理
+	if proxyURL := os.Getenv("HTTPS_PROXY"); proxyURL != "" {
+		if _, err := url.Parse(proxyURL); err == nil {
+			binance.SetWsProxyUrl(proxyURL)
+			log.Printf("[ENGINE] WebSocket proxy configured: %s", proxyURL)
+		} else {
+			log.Printf("[ENGINE] Invalid WebSocket proxy URL: %v", err)
+		}
+	}
+	// 配置 WebSocket 端口（有些网络封禁 9443/8443，改用标准 443 端口）
+	binance.BaseWsMainURL = "wss://stream.binance.com:443/ws"
+	log.Printf("[ENGINE] WebSocket base URL set to: %s", binance.BaseWsMainURL)
+
 	log.Printf("[ENGINE] Starting HFT Engine for %s", e.symbol)
+
+	// Get tick size from exchange info (only once at startup)
+	if e.apiClient != nil {
+		ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
+		defer cancel()
+		filters, err := e.apiClient.GetSymbolFilters(ctx, e.symbol)
+		if err == nil {
+			if priceFilter, ok := filters["PRICE_FILTER"]; ok {
+				if pf, ok := priceFilter.(map[string]interface{}); ok {
+					if tickSizeStr, ok := pf["tickSize"].(string); ok {
+						if tickSizeParsed, err := strconv.ParseFloat(tickSizeStr, 64); err == nil {
+							e.tickSize = tickSizeParsed
+							log.Printf("[ENGINE] Got tick size from exchange info: %.6f", e.tickSize)
+						}
+					}
+				}
+			}
+		} else {
+			log.Printf("[ENGINE] Failed to get tick size from exchange info, using default %.4f: %v", e.tickSize, err)
+		}
+	}
 
 	// Set up WebSocket handlers
 	e.wsManager.SetDepthHandler(e.onDepthUpdate)
@@ -367,10 +407,9 @@ func (e *HFTEngine) processDecision() {
 		return
 	}
 
-	// Check if optimizer cancelled the order (quantity = 0)
-	if optimizedParams.Quantity <= 0 {
-		log.Printf("[OPTIMIZER] Order cancelled by optimizer: mode=%s reason=%s",
-			optimizedParams.Metadata.DefenseMode, optimizedParams.Metadata.OptimizationReason)
+	// Check if optimizer cancelled the order (nil return or quantity = 0)
+	if optimizedParams == nil || optimizedParams.Quantity <= 0 {
+		log.Printf("[OPTIMIZER] Order cancelled by optimizer (size too small or risk limits)")
 		return
 	}
 
@@ -531,7 +570,6 @@ func (e *HFTEngine) executeSpotDecision(action int32, targetSize float64, limitP
 	// 获取当前订单簿数据用于价格优化
 	book := e.wsManager.GetBook()
 	var bestBid, bestAsk float64
-	var tickSize float64 = 0.01 // 默认tick size，实际应从symbol配置获取
 
 	if book != nil {
 		bestBid, bestAsk, _, _ = book.GetSnapshot()
@@ -542,14 +580,14 @@ func (e *HFTEngine) executeSpotDecision(action int32, targetSize float64, limitP
 		// 买单：挂最优买价减1tick，争取maker返佣
 		price := limitPrice
 		if bestBid > 0 {
-			price = bestBid - tickSize // 比最优买价更优1tick
+			price = bestBid - e.tickSize // 比最优买价更优1tick
 		}
 		return e.executor.PlaceLimitBuy(price, targetSize, forceMaker)
 	case ActionJoinAsk:
 		// 卖单：挂最优卖价加1tick，争取maker返佣
 		price := limitPrice
 		if bestAsk > 0 {
-			price = bestAsk + tickSize // 比最优卖价更优1tick
+			price = bestAsk + e.tickSize // 比最优卖价更优1tick
 		}
 		return e.executor.PlaceLimitSell(price, targetSize, forceMaker)
 	case ActionCrossBuy:
@@ -576,14 +614,14 @@ func (e *HFTEngine) executeSpotDecision(action int32, targetSize float64, limitP
 			// 多头平仓：卖出
 			price := limitPrice
 			if bestAsk > 0 {
-				price = bestAsk + tickSize
+				price = bestAsk + e.tickSize
 			}
 			return e.executor.PlaceLimitSell(price, exitSize, forceMaker)
 		} else if exitSize < 0 {
 			// 空头平仓：买入
 			price := limitPrice
 			if bestBid > 0 {
-				price = bestBid - tickSize
+				price = bestBid - e.tickSize
 			}
 			return e.executor.PlaceLimitBuy(price, -exitSize, forceMaker)
 		}
@@ -622,7 +660,6 @@ func (e *HFTEngine) executeSpotDecisionOptimized(params *OptimizedOrderParams) e
 	// 获取当前订单簿数据用于价格优化
 	book := e.wsManager.GetBook()
 	var bestBid, bestAsk float64
-	var tickSize float64 = 0.01 // 默认tick size
 
 	if book != nil {
 		bestBid, bestAsk, _, _ = book.GetSnapshot()
@@ -649,12 +686,12 @@ func (e *HFTEngine) executeSpotDecisionOptimized(params *OptimizedOrderParams) e
 		optimizedPrice := params.Price
 		if params.Side == SideBuy {
 			if bestBid > 0 {
-				optimizedPrice = bestBid - tickSize // 比最优买价更优
+				optimizedPrice = bestBid - e.tickSize // 比最优买价更优
 			}
 			return e.executor.PlaceLimitBuy(optimizedPrice, params.Quantity, forceMaker)
 		}
 		if bestAsk > 0 {
-			optimizedPrice = bestAsk + tickSize // 比最优卖价更优
+			optimizedPrice = bestAsk + e.tickSize // 比最优卖价更优
 		}
 		return e.executor.PlaceLimitSell(optimizedPrice, params.Quantity, forceMaker)
 	default:

@@ -252,90 +252,48 @@ func (wsc *WebSocketClient) runUserDataStream() {
 	}
 }
 
-// connectUserDataStream 连接用户数据流
+// connectUserDataStream 连接用户数据流 (使用签名认证，Binance已废弃listen key)
 func (wsc *WebSocketClient) connectUserDataStream() error {
-	// 获取listen key using existing client that already has proxy configured
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// 使用签名认证的WebSocket API (推荐方式，listen key管理已被废弃)
+	errHandler := func(err error) {
+		log.Printf("[WebSocket] User data stream error: %v", err)
+	}
 
-	listenKey, err := wsc.client.NewStartUserStreamService().Do(ctx)
+	// 获取服务器时间并同步
+	serverTime, err := wsc.client.NewServerTimeService().Do(context.Background())
 	if err != nil {
-		return fmt.Errorf("failed to get listen key: %w", err)
+		return fmt.Errorf("failed to get server time: %w", err)
 	}
-	
-	// 构建WebSocket URL
-	wsURL := fmt.Sprintf("wss://stream.binance.com:9443/ws/%s", listenKey)
-	if wsc.testnet {
-		wsURL = fmt.Sprintf("wss://testnet.binance.vision/ws/%s", listenKey)
-	}
-	
-	// 使用代理
-	dialer := websocket.DefaultDialer
-	if proxyURL := os.Getenv("HTTPS_PROXY"); proxyURL != "" {
-		parsedURL, err := url.Parse(proxyURL)
-		if err == nil {
-			dialer.Proxy = http.ProxyURL(parsedURL)
-		}
-	}
-	
-	conn, _, err := dialer.Dial(wsURL, nil)
+	localTime := time.Now().UnixMilli()
+	timeOffset := serverTime - localTime
+
+	// 使用签名方式订阅用户数据流 (HMAC用于标准API密钥)
+	doneCh, _, err := binance.WsUserDataServeSignature(
+		wsc.apiKey, wsc.apiSecret, "HMAC", timeOffset,
+		func(event *binance.WsUserDataEvent) {
+			// 处理订单更新
+			if event.OrderUpdate.Symbol != "" && wsc.orderHandler != nil {
+				wsc.orderHandler(event)
+			}
+			// 处理账户更新
+			if len(event.AccountUpdate.WsAccountUpdates) > 0 {
+				log.Printf("[WebSocket] Account position updated")
+			}
+		},
+		errHandler,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to dial user stream: %w", err)
+		return fmt.Errorf("failed to start user data stream: %w", err)
 	}
-	defer conn.Close()
-	
-	log.Printf("[WebSocket] UserDataStream connected")
-	
-	// 启动keepalive
-	keepaliveTicker := time.NewTicker(30 * time.Minute)
-	defer keepaliveTicker.Stop()
-	
-	// 读取消息
-	for {
-		select {
-		case <-wsc.stopCh:
-			return nil
-		case <-keepaliveTicker.C:
-			// 续约listen key
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			wsc.client.NewKeepaliveUserStreamService().Do(ctx)
-			cancel()
-		default:
-		}
-		
-		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		
-		messageType, data, err := conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("[WebSocket] User stream read error: %v", err)
-			}
-			return err
-		}
-		
-		if messageType != websocket.TextMessage {
-			continue
-		}
-		
-		// 解析用户数据
-		var event struct {
-			EventType string `json:"e"`
-		}
-		
-		if err := json.Unmarshal(data, &event); err != nil {
-			continue
-		}
-		
-		switch event.EventType {
-		case "executionReport":
-			var event binance.WsUserDataEvent
-			if err := json.Unmarshal(data, &event); err == nil && wsc.orderHandler != nil {
-				wsc.orderHandler(&event)
-			}
-		case "outboundAccountPosition":
-			// 账户余额更新
-			log.Printf("[WebSocket] Account position updated")
-		}
+
+	log.Printf("[WebSocket] UserDataStream connected (signature-based)")
+
+	// 等待连接关闭或停止信号
+	select {
+	case <-wsc.stopCh:
+		return nil
+	case <-doneCh:
+		return fmt.Errorf("user data stream closed")
 	}
 }
 

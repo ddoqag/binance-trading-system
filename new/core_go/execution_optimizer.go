@@ -229,10 +229,10 @@ func (eo *ExecutionOptimizer) Optimize(cmd AICommand, inventory float64) (*Optim
 	params.Metadata.ToxicScore = market.ToxicProbability
 	params.Metadata.OptimizationReason = eo.buildOptimizationReason(params)
 
-	// 验证
-	if params.Quantity < eo.config.MinOrderSizeLimit {
-		return nil, fmt.Errorf("order size too small: %.4f < %.4f",
-			params.Quantity, eo.config.MinOrderSizeLimit)
+	// 验证：如果数量被调整为0，表示订单被取消，返回nil但不报错
+	// 调用方应该检查 params.Quantity > 0
+	if params.Quantity <= 0 {
+		return nil, nil // 订单被取消，不是错误
 	}
 
 	return params, nil
