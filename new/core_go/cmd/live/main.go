@@ -63,6 +63,8 @@ type LiveTradingEngine struct {
 	riskGuard       *LiveRiskGuard
 	alertMgr        *AlertManager
 	stopLossMgr     *AutoStopLossManager
+	profitMonitor   *ProfitMonitor         // 盈利监控器
+	verification    *VerificationIntegration // 验证系统集成
 
 	symbol          string
 	capital         float64
@@ -330,31 +332,39 @@ func NewLiveTradingEngine(apiKey, apiSecret, symbol string) (*LiveTradingEngine,
 		capital: capital,
 		stopCh:  make(chan struct{}),
 	}
-	
+
+	// 8. 创建WebSocket客户端 - reuse already proxy-configured client
+	engine.wsClient = NewWebSocketClient(
+		client,
+		os.Getenv("BINANCE_API_KEY"),
+		os.Getenv("BINANCE_API_SECRET"),
+		engine.symbol, false,
+	)
+
 	// 初始化组件
 	engine.initComponents()
-	
+
 	return engine, nil
 }
 
 // initComponents 初始化组件
 func (e *LiveTradingEngine) initComponents() {
-	// 1. 风控配置
+	// 1. 风控配置（优化参数）
 	riskConfig := &RiskConfig{
-		MaxDailyLoss:     100.0,
-		MaxDrawdown:      0.05,
-		MaxPositionSize:  e.capital * 0.05,
-		MaxTotalExposure: e.capital * 0.20,
+		MaxDailyLoss:     50.0,   // 降低日亏损限制
+		MaxDrawdown:      0.03,   // 降低最大回撤
+		MaxPositionSize:  e.capital * 0.03,  // 降低单仓位限制到3%
+		MaxTotalExposure: e.capital * 0.10,  // 降低总敞口到10%
 		MinOrderSize:     10.0,
-		MaxOrdersPerMin:  10,
+		MaxOrdersPerMin:  5,      // 降低交易频率
 	}
 	
-	// 2. 止损配置
+	// 2. 止损配置（优化参数）
 	stopLossConfig := &StopLossConfig{
-		FixedStopLoss:   0.02,
-		TrailingStop:    0.015,
-		TakeProfit:      0.05,
-		TimeStopMinutes: 60,
+		FixedStopLoss:   0.008,  // 降低固定止损到0.8%
+		TrailingStop:    0.005,  // 降低移动止损到0.5%
+		TakeProfit:      0.016,  // 降低止盈到1.6% (2:1盈亏比)
+		TimeStopMinutes: 30,     // 缩短时间止损
 	}
 	
 	// 3. 创建组件
@@ -375,17 +385,24 @@ func (e *LiveTradingEngine) initComponents() {
 	// 4. 创建策略管理器
 	e.strategyManager = NewStrategyManager(e.tradeExecutor)
 	
-	// 添加策略
-	positionSize := 0.001 // BTC数量
-	e.strategyManager.AddStrategy(NewSimpleTrendStrategy(e.symbol, positionSize))
-	e.strategyManager.AddStrategy(NewMeanReversionStrategy(e.symbol, positionSize))
+	// 添加优化后的趋势策略（不再使用冲突的均值回归策略）
+	strategyConfig := DefaultStrategyConfig()
+	strategyConfig.PositionSizeBase = 0.001
+	strategyConfig.PositionSizeMax = 0.003
+	e.strategyManager.AddStrategy(NewOptimizedTrendStrategy(e.symbol, strategyConfig))
 	
-	// 5. 创建WebSocket客户端
-	e.wsClient = NewWebSocketClient(
-		os.Getenv("BINANCE_API_KEY"),
-		os.Getenv("BINANCE_API_SECRET"),
-		e.symbol, false,
-	)
+	// 添加突破策略作为辅助
+	e.strategyManager.AddStrategy(NewBreakoutStrategy(e.symbol, 0.001))
+	
+	// 6. 创建盈利监控器
+	e.profitMonitor = NewProfitMonitor(DefaultProfitMonitorConfig())
+	e.profitMonitor.Start()
+	
+	// 7. 创建验证系统集成（从环境变量读取是否启用）
+	verificationEnabled := os.Getenv("ENABLE_VERIFICATION") == "true"
+	e.verification = NewVerificationIntegration(verificationEnabled)
+	e.verification.SetComponents(e.orderManager, e.positionManager, e.tradeExecutor)
+	
 	
 	// 设置WebSocket处理器
 	e.wsClient.SetPriceHandler(func(bid, ask float64) {
@@ -410,6 +427,9 @@ func (e *LiveTradingEngine) initComponents() {
 		
 		// 更新订单管理器
 		e.orderManager.UpdateOrderFromExecution(event)
+		
+		// 更新验证系统
+		e.verification.ProcessUserDataEvent(event)
 		
 		// 更新仓位
 		if exec.Status == "FILLED" || exec.Status == "PARTIALLY_FILLED" {
@@ -443,6 +463,11 @@ func (e *LiveTradingEngine) Start() error {
 	e.positionManager.Start()
 	e.tradeExecutor.Start()
 	e.strategyManager.Start()
+	
+	// 启动验证系统
+	if err := e.verification.Start(); err != nil {
+		log.Printf("[Warning] Failed to start verification: %v", err)
+	}
 	
 	// 启动WebSocket
 	if err := e.wsClient.Start(); err != nil {
@@ -502,6 +527,19 @@ func (e *LiveTradingEngine) Stop() {
 	e.positionManager.Stop()
 	e.orderManager.Stop()
 	
+	// 停止盈利监控器并生成最终报告
+	if e.profitMonitor != nil {
+		e.profitMonitor.generateReport()
+		e.profitMonitor.Stop()
+	}
+	
+	// 停止验证系统
+	if e.verification != nil {
+		if err := e.verification.Stop(); err != nil {
+			log.Printf("[Warning] Error stopping verification: %v", err)
+		}
+	}
+	
 	log.Printf("✅ Engine stopped")
 }
 
@@ -510,13 +548,50 @@ func (e *LiveTradingEngine) mainLoop() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	
+	// 盈利检查ticker
+	profitCheckTicker := time.NewTicker(1 * time.Minute)
+	defer profitCheckTicker.Stop()
+	
 	for {
 		select {
 		case <-e.stopCh:
 			return
 		case <-ticker.C:
 			e.reportStatus()
+		case <-profitCheckTicker.C:
+			e.checkProfitStatus()
 		}
+	}
+}
+
+// checkProfitStatus 检查盈利状态
+func (e *LiveTradingEngine) checkProfitStatus() {
+	if e.profitMonitor == nil {
+		return
+	}
+	
+	// 检查是否应该停止交易
+	if e.profitMonitor.ShouldStopTrading() {
+		log.Printf("🛑 PROFIT GUARD: Trading stopped due to loss limits")
+		
+		// 发送告警
+		if e.alertMgr != nil {
+			e.alertMgr.SendAlert(ALERT_CRITICAL, ALERT_EMERGENCY,
+				"Trading Halted",
+				"Daily loss limit or consecutive loss limit reached",
+				nil)
+		}
+		
+		// 平仓所有持仓
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		e.tradeExecutor.ClosePosition(ctx)
+	}
+	
+	// 检查日盈利目标
+	stats := e.profitMonitor.GetDailyStats()
+	if stats.TotalPnL >= e.profitMonitor.config.DailyProfitTarget {
+		log.Printf("🎯 PROFIT TARGET REACHED: $%.2f", stats.TotalPnL)
 	}
 }
 
@@ -609,6 +684,63 @@ func (e *LiveTradingEngine) startHTTPServer() {
 		json.NewEncoder(w).Encode(e.strategyManager.GetStates())
 	})
 	
+	// 盈利监控API
+	mux.HandleFunc("/api/profit/daily", func(w http.ResponseWriter, r *http.Request) {
+		if e.profitMonitor != nil {
+			json.NewEncoder(w).Encode(e.profitMonitor.GetDailyStats())
+		} else {
+			json.NewEncoder(w).Encode(map[string]string{"error": "profit monitor not initialized"})
+		}
+	})
+	
+	mux.HandleFunc("/api/profit/report", func(w http.ResponseWriter, r *http.Request) {
+		if e.profitMonitor != nil {
+			json.NewEncoder(w).Encode(e.profitMonitor.GetFullReport())
+		} else {
+			json.NewEncoder(w).Encode(map[string]string{"error": "profit monitor not initialized"})
+		}
+	})
+	
+	// 验证系统API
+	mux.HandleFunc("/api/verification/status", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled":     e.verification.IsEnabled(),
+			"health":      e.verification.GetHealthStatus(),
+			"timestamp":   time.Now().Unix(),
+		})
+	})
+	
+	mux.HandleFunc("/api/verification/stats", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(e.verification.GetStats())
+	})
+	
+	mux.HandleFunc("/api/verification/report", func(w http.ResponseWriter, r *http.Request) {
+		report := e.verification.GetReport()
+		if report != nil {
+			json.NewEncoder(w).Encode(report)
+		} else {
+			json.NewEncoder(w).Encode(map[string]string{"error": "verification disabled or report not available"})
+		}
+	})
+	
+	mux.HandleFunc("/api/verification/check", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		report, err := e.verification.TriggerManualCheck(ctx)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		
+		json.NewEncoder(w).Encode(report)
+	})
+	
 	// 手动交易API
 	mux.HandleFunc("/api/trade", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -650,77 +782,9 @@ func (e *LiveTradingEngine) startHTTPServer() {
 		json.NewEncoder(w).Encode(result)
 	})
 	
-	// 首页
+	// 首页 - 使用dashboard.go中的renderDashboard
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		position := e.positionManager.GetPosition(e.symbol)
-		price := e.tradeExecutor.GetCurrentPrice()
-		
-		positionInfo := "No position"
-		if position != nil {
-			positionInfo = fmt.Sprintf("%s %.6f BTC @ %.2f (PnL: %.2f)",
-				position.Side.String(), position.Size, position.EntryPrice, position.UnrealizedPnL)
-		}
-		
-		fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>HFT Live Trading</title>
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #1a1a2e; color: #eee; }
-        h1 { color: #00ff88; }
-        .status { padding: 20px; background: #16213e; border-radius: 8px; margin: 20px 0; }
-        .warning { color: #ff6b6b; font-weight: bold; }
-        .ok { color: #00ff88; }
-        .info { color: #4da6ff; }
-        button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #0f3460; color: white; border: none; border-radius: 4px; }
-        button:hover { background: #1a4a7a; }
-    </style>
-</head>
-<body>
-    <h1>🚀 HFT Live Trading Dashboard</h1>
-    <div class="status">
-        <p class="warning">⚠️ LIVE TRADING MODE</p>
-        <p>Symbol: <strong>%s</strong></p>
-        <p>Status: <span class="ok">● Running</span></p>
-        <p>Current Price: <span class="info">%.2f</span></p>
-        <p>Position: <span class="info">%s</span></p>
-    </div>
-    <div class="status">
-        <h3>Manual Trading</h3>
-        <button onclick="trade('buy')">Buy 0.001 BTC</button>
-        <button onclick="trade('sell')">Sell 0.001 BTC</button>
-        <button onclick="trade('close')">Close Position</button>
-        <p id="result"></p>
-    </div>
-    <div class="status">
-        <h3>Risk Controls</h3>
-        <p>Max Daily Loss: $100</p>
-        <p>Max Drawdown: 5%%</p>
-        <p>Position Limit: 5%%</p>
-        <p>Stop Loss: 2%% / Take Profit: 5%%</p>
-    </div>
-    <script>
-        async function trade(action) {
-            const result = document.getElementById('result');
-            result.textContent = 'Executing...';
-            try {
-                const resp = await fetch('/api/trade', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({action: action, size: 0.001})
-                });
-                const data = await resp.json();
-                result.textContent = resp.ok ? 'Success: ' + JSON.stringify(data) : 'Error: ' + data;
-            } catch(e) {
-                result.textContent = 'Error: ' + e.message;
-            }
-        }
-        setInterval(() => location.reload(), 5000);
-    </script>
-</body>
-</html>`, e.symbol, price, positionInfo)
+		e.renderDashboard(w)
 	})
 	
 	port := ":8080"

@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"sync"
 	"time"
 
-	"golang.org/x/net/proxy"
 	"github.com/adshao/go-binance/v2"
 	"github.com/gorilla/websocket"
 )
@@ -23,21 +21,22 @@ type WebSocketClient struct {
 	apiSecret  string
 	symbol     string
 	testnet    bool
-	
+	client     *binance.Client  // 重用已配置代理的client
+
 	// 连接
 	wsConn     *websocket.Conn
 	mu         sync.RWMutex
-	
+
 	// 状态
 	isRunning  bool
 	stopCh     chan struct{}
 	reconnectCh chan struct{}
-	
+
 	// 处理器
 	priceHandler    func(bid, ask float64)
 	tradeHandler    func(trade *WsTrade)
 	orderHandler    func(exec *binance.WsUserDataEvent)
-	
+
 	// 统计
 	lastPingTime    time.Time
 	reconnectCount  int
@@ -53,17 +52,19 @@ type WsTrade struct {
 }
 
 // NewWebSocketClient 创建WebSocket客户端
-func NewWebSocketClient(apiKey, apiSecret, symbol string, testnet bool) *WebSocketClient {
+// client: 已配置代理的binance client（从live_api_client重用）
+func NewWebSocketClient(client *binance.Client, apiKey, apiSecret, symbol string, testnet bool) *WebSocketClient {
 	// 检查环境变量
 	if os.Getenv("USE_TESTNET") == "true" {
 		testnet = true
 	}
-	
+
 	return &WebSocketClient{
 		apiKey:      apiKey,
 		apiSecret:   apiSecret,
 		symbol:      symbol,
 		testnet:     testnet,
+		client:      client,  // 重用已配置代理的client
 		stopCh:      make(chan struct{}),
 		reconnectCh: make(chan struct{}, 1),
 	}
@@ -253,54 +254,11 @@ func (wsc *WebSocketClient) runUserDataStream() {
 
 // connectUserDataStream 连接用户数据流
 func (wsc *WebSocketClient) connectUserDataStream() error {
-	// 使用Binance SDK创建用户数据流
-	binance.UseTestnet = wsc.testnet
-	client := binance.NewClient(wsc.apiKey, wsc.apiSecret)
-
-	// Configure proxy for REST API request (same as in live_api_client.go)
-	if proxyURL := os.Getenv("HTTPS_PROXY"); proxyURL != "" {
-		parsedURL, err := url.Parse(proxyURL)
-		if err == nil {
-			var transport *http.Transport
-			switch parsedURL.Scheme {
-			case "http", "https":
-				// HTTP/HTTPS proxy
-				transport = &http.Transport{
-					Proxy: http.ProxyURL(parsedURL),
-				}
-				log.Printf("[WebSocket] Using HTTP/HTTPS proxy for listenKey: %s", proxyURL)
-			case "socks5", "socks5h":
-				// SOCKS5 proxy
-				dialer, err := proxy.FromURL(parsedURL, proxy.Direct)
-				if err == nil {
-					transport = &http.Transport{
-						DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-							return dialer.Dial(network, addr)
-						},
-					}
-					log.Printf("[WebSocket] Using SOCKS5 proxy for listenKey: %s", proxyURL)
-				} else {
-					log.Printf("[WebSocket] Failed to create SOCKS5 dialer: %v", err)
-				}
-			default:
-				log.Printf("[WebSocket] Unsupported proxy scheme: %s", parsedURL.Scheme)
-			}
-			if transport != nil {
-				client.HTTPClient = &http.Client{
-					Transport: transport,
-					Timeout:   30 * time.Second,
-				}
-			}
-		} else {
-			log.Printf("[WebSocket] Failed to parse proxy URL: %v", err)
-		}
-	}
-
-	// 获取listen key
+	// 获取listen key using existing client that already has proxy configured
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	listenKey, err := client.NewStartUserStreamService().Do(ctx)
+	listenKey, err := wsc.client.NewStartUserStreamService().Do(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get listen key: %w", err)
 	}
@@ -340,7 +298,7 @@ func (wsc *WebSocketClient) connectUserDataStream() error {
 		case <-keepaliveTicker.C:
 			// 续约listen key
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			client.NewKeepaliveUserStreamService().Do(ctx)
+			wsc.client.NewKeepaliveUserStreamService().Do(ctx)
 			cancel()
 		default:
 		}
