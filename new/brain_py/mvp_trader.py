@@ -93,7 +93,7 @@ class MVPTrader:
             calibration_factor=3.14  # 从测试发现的校准系数
         )
         self.toxic_detector = ToxicFlowDetector(
-            threshold=0.3,
+            threshold=0.5,
             mahalanobis_threshold=5.0
         )
         self.spread_capture = SpreadCapture(
@@ -117,7 +117,8 @@ class MVPTrader:
                 max_daily_trades=200,        # 每日最多200笔
                 max_drawdown_pct=0.05,       # 最大回撤5%
                 kill_switch_loss=-50.0       # 累计亏损达到$50停止
-            )
+            ),
+            max_position=max_position
         )
 
         # 状态
@@ -381,6 +382,21 @@ class MVPTrader:
         summary = "; ".join([f"{name}={'OK' if ok else 'FAIL'}({reason})" for name, ok, reason in checks])
 
         return all_passed, summary
+
+    def update_account_info(self, initial_capital: float = None,
+                            max_position: float = None,
+                            current_position: float = None):
+        """动态更新账户信息（基于真实账户余额）"""
+        if initial_capital is not None:
+            self.initial_capital = initial_capital
+            logger.info(f"Account capital updated: ${initial_capital:.2f}")
+        if max_position is not None:
+            self.max_position = max_position
+            self.constraints.max_position = max_position
+            logger.info(f"Max position updated: {max_position:.4f}")
+        if current_position is not None:
+            self.state.current_position = current_position
+            logger.info(f"Current position synced: {current_position:.4f}")
 
     def reset_daily(self):
         """重置每日统计"""

@@ -35,8 +35,9 @@ class ActionConstraintLayer:
     对原始RL输出进行后处理，确保满足风控约束
     """
 
-    def __init__(self, config: ConstraintConfig = None):
+    def __init__(self, config: ConstraintConfig = None, max_position: float = 1.0):
         self.config = config or ConstraintConfig()
+        self.max_position = max_position
 
         # 状态跟踪
         self.recent_actions: Deque[Dict] = deque(maxlen=1000)
@@ -173,9 +174,9 @@ class ActionConstraintLayer:
 
         # 7. 持仓边界检查
         new_position = current_position + constrained_action[0] * constrained_action[2]
-        if abs(new_position) > 1.0:  # 假设最大持仓为1.0
+        if abs(new_position) > self.max_position:
             # 限制仓位不超过边界
-            max_add = 1.0 - abs(current_position)
+            max_add = self.max_position - abs(current_position)
             if max_add <= 0:
                 constrained_action[2] = 0.0
             else:

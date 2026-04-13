@@ -2,7 +2,7 @@
 毒流检测器 (MVP版本)
 
 使用马氏距离检测异常订单流
-阈值：toxic_prob > 0.3 → 停止交易
+阈值：toxic_prob > 0.5 → 停止交易
 """
 
 import numpy as np
@@ -31,7 +31,7 @@ class ToxicFlowDetector:
     """
 
     def __init__(self,
-                 threshold: float = 0.3,  # 毒流概率阈值
+                 threshold: float = 0.5,  # 毒流概率阈值（放宽以减少误报）
                  mahalanobis_threshold: float = 5.0,  # 马氏距离阈值
                  window_size: int = 100,  # 特征窗口大小
                  min_samples: int = 20):  # 最小样本数
@@ -45,6 +45,10 @@ class ToxicFlowDetector:
         self.feature_history = deque(maxlen=window_size)
         self.fill_history = deque(maxlen=window_size)
 
+        # 原始市场数据历史（用于正确计算 price_velocity 和 spread_change）
+        self.mid_price_history = deque(maxlen=window_size)
+        self.spread_history = deque(maxlen=window_size)
+
         # 统计参数（用于马氏距离）
         self.mean_vector = None
         self.cov_matrix = None
@@ -57,7 +61,7 @@ class ToxicFlowDetector:
 
         # 连续告警计数（防止抖动）
         self.consecutive_alerts = 0
-        self.consecutive_threshold = 3  # 连续3次才确认
+        self.consecutive_threshold = 5  # 连续5次才确认（降低灵敏度）
 
     def detect(self, orderbook: Dict, recent_fills: Optional[List] = None) -> ToxicFlowAlert:
         """
@@ -102,7 +106,8 @@ class ToxicFlowDetector:
         if is_toxic:
             self.consecutive_alerts += 1
         else:
-            self.consecutive_alerts = max(0, self.consecutive_alerts - 1)
+            # 平滑衰减：减半而不是减1，避免在边界抖动
+            self.consecutive_alerts = max(0, self.consecutive_alerts // 2)
 
         # 只有连续多次才确认
         confirmed_toxic = self.consecutive_alerts >= self.consecutive_threshold
@@ -133,6 +138,17 @@ class ToxicFlowDetector:
                                  spread_change, price_velocity, vpin, queue_imbalance]
         """
         features = []
+
+        # 记录原始市场数据用于后续计算
+        bids = orderbook.get('bids', [])
+        asks = orderbook.get('asks', [])
+        if bids and asks:
+            best_bid = bids[0].get('price', 0)
+            best_ask = asks[0].get('price', 0)
+            mid_price = (best_bid + best_ask) / 2
+            spread = best_ask - best_bid
+            self.mid_price_history.append(mid_price)
+            self.spread_history.append(spread)
 
         # 1. OFI (Order Flow Imbalance)
         ofi = self._calculate_ofi(orderbook)
@@ -246,10 +262,9 @@ class ToxicFlowDetector:
 
         current_spread = asks[0].get('price', 0) - bids[0].get('price', 0)
 
-        # 与历史平均比较
-        if len(self.feature_history) > 10:
-            # 从历史特征中提取点差信息（简化）
-            avg_spread = np.mean([h[4] for h in list(self.feature_history)[-10:]])
+        # 与历史平均比较（使用原始 spread 历史，而非特征中的 spread_change）
+        if len(self.spread_history) > 10:
+            avg_spread = np.mean(list(self.spread_history)[-10:])
             if avg_spread > 0:
                 return (current_spread - avg_spread) / avg_spread
 
@@ -266,9 +281,9 @@ class ToxicFlowDetector:
 
         mid_price = (bids[0].get('price', 0) + asks[0].get('price', 0)) / 2
 
-        # 如果有历史数据，计算变化率
-        if len(self.feature_history) > 1:
-            prev_mid = list(self.feature_history)[-1][5]  # 简化：从特征中提取
+        # 使用原始 mid_price 历史计算变化率（修复：之前错误地从特征中提取）
+        if len(self.mid_price_history) > 1:
+            prev_mid = list(self.mid_price_history)[-1]
             if prev_mid > 0:
                 return (mid_price - prev_mid) / prev_mid
 
@@ -361,6 +376,8 @@ class ToxicFlowDetector:
         """重置检测器"""
         self.feature_history.clear()
         self.fill_history.clear()
+        self.mid_price_history.clear()
+        self.spread_history.clear()
         self.mean_vector = None
         self.cov_matrix = None
         self.inv_cov_matrix = None

@@ -294,10 +294,7 @@ class SpreadCapture:
         self.profit_history.clear()
         self.current_position = 0.0
         for key in self.stats:
-            if key == 'total_profit_bps':
-                self.stats[key] = 0.0
-            else:
-                self.stats[key] = 0
+            self.stats[key] = 0 if isinstance(self.stats[key], int) else 0.0
 
 
 class SpreadCaptureMonitor:

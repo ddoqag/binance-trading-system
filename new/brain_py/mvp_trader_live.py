@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 # 加载环境变量
 load_dotenv('../.env')
 
+# Binance API
+from binance.client import Client
+
 # MVP核心模块
 from mvp_trader import MVPTrader, MVPState
 from mvp.fill_quality_analyzer import FillQualityAnalyzer
@@ -112,6 +115,53 @@ class GoEngineClient:
             return {}
 
 
+def get_margin_account_balance(symbol: str) -> Optional[Dict]:
+    """
+    查询Binance现货杠杆账户余额
+
+    Returns:
+        Dict: {
+            'base_free': float,      # BTC 可用
+            'base_locked': float,    # BTC 冻结
+            'base_net': float,       # BTC 净资产
+            'quote_free': float,     # USDT 可用
+            'quote_net': float,      # USDT 净资产
+            'total_net_btc': float   # 账户总净资产(BTC计价)
+        }
+    """
+    try:
+        api_key = os.getenv('BINANCE_API_KEY')
+        api_secret = os.getenv('BINANCE_API_SECRET')
+        if not api_key or not api_secret:
+            logger.error('BINANCE_API_KEY or BINANCE_API_SECRET not set')
+            return None
+
+        client = Client(api_key, api_secret)
+        account = client.get_margin_account()
+
+        # 解析交易对资产
+        base_asset = symbol.replace('USDT', '').replace('BUSD', '').replace('USD', '')
+        quote_asset = 'USDT' if 'USDT' in symbol else ('BUSD' if 'BUSD' in symbol else 'USD')
+
+        assets = {a['asset']: a for a in account.get('userAssets', [])}
+        base = assets.get(base_asset, {})
+        quote = assets.get(quote_asset, {})
+
+        return {
+            'base_free': float(base.get('free', 0)),
+            'base_locked': float(base.get('locked', 0)),
+            'base_net': float(base.get('netAsset', 0)),
+            'base_borrowed': float(base.get('borrowed', 0)),
+            'quote_free': float(quote.get('free', 0)),
+            'quote_net': float(quote.get('netAsset', 0)),
+            'quote_borrowed': float(quote.get('borrowed', 0)),
+            'total_net_btc': float(account.get('totalNetAssetOfBtc', 0)),
+        }
+    except Exception as e:
+        logger.error(f'Failed to get margin account balance: {e}')
+        return None
+
+
 def run_live_trading(symbol='BTCUSDT', tick_interval=1.0):
     """
     运行实盘交易主循环
@@ -136,7 +186,7 @@ def run_live_trading(symbol='BTCUSDT', tick_interval=1.0):
     print('等待Go引擎就绪...')
     for i in range(30):
         status = go_client.get_status()
-        if status.get('status') == 'running':
+        if status.get('connected') is True:
             print(f'[OK] Go引擎已就绪 (尝试 {i+1})')
             print(f'     Mode: {status.get("mode", "unknown")}')
             print(f'     Symbol: {status.get("symbol", "unknown")}')
@@ -151,18 +201,51 @@ def run_live_trading(symbol='BTCUSDT', tick_interval=1.0):
 
     print()
 
-    # 初始化MVP Trader
+    # 查询真实杠杆账户余额
+    print('查询现货杠杆账户余额...')
+    balance = get_margin_account_balance(symbol)
+
+    # 先获取市场价格用于计算
+    market_data = go_client.get_market_data()
+    mid_price = 0
+    if market_data:
+        mid_price = (market_data['best_bid'] + market_data['best_ask']) / 2
+
+    if balance and mid_price > 0:
+        quote_free = balance['quote_free']
+        base_net = balance['base_net']
+        # 最大仓位 = 可用USDT可买的BTC数量 * 0.95（保守系数）
+        max_position = (quote_free / mid_price) * 0.95 if mid_price > 0 else 0.01
+        initial_capital = balance['quote_net'] if balance['quote_net'] > 0 else 1000.0
+        print(f'[OK] 杠杆账户余额查询成功')
+        print(f'     {symbol.replace("USDT", "")} 净资产: {base_net:.6f}')
+        print(f'     USDT 可用: {quote_free:.2f}')
+        print(f'     USDT 净资产: {initial_capital:.2f}')
+        print(f'     计算最大仓位: {max_position:.6f} BTC')
+    else:
+        initial_capital = 1000.0
+        max_position = 0.01
+        print('[WARN] 无法获取杠杆账户余额，使用默认值')
+        print(f'     初始资金: ${initial_capital}')
+        print(f'     最大仓位: {max_position} BTC')
+
+    # 初始化MVP Trader（基于真实账户数据）
     tick_size = 0.01
     trader = MVPTrader(
         symbol=symbol,
-        initial_capital=1000.0,
-        max_position=0.1,  # 保守仓位
+        initial_capital=initial_capital,
+        max_position=max_position,
         tick_size=tick_size
     )
 
-    print('[OK] MVP Trader 已初始化')
-    print(f'     初始资金: $1000')
-    print(f'     最大仓位: 10%')
+    # 同步当前真实持仓
+    if balance:
+        trader.update_account_info(current_position=balance['base_net'])
+
+    print('[OK] MVP Trader 已初始化（基于真实账户）')
+    print(f'     初始资金: ${initial_capital:.2f}')
+    print(f'     最大仓位: {max_position:.6f} BTC')
+    print(f'     当前持仓: {trader.state.current_position:.6f} BTC')
     print()
 
     # 成交质量分析器
@@ -202,10 +285,10 @@ def run_live_trading(symbol='BTCUSDT', tick_interval=1.0):
             # 更新成交分析器
             fill_analyzer.update_mid_price(mid_price)
 
-            # 2. 同步持仓信息
+            # 2. 同步持仓信息（优先使用Go引擎，失败则保持本地）
             position = go_client.get_position()
             if position:
-                trader.state.current_position = position.get('size', 0)
+                trader.update_account_info(current_position=position.get('size', 0))
 
             # 3. 构建订单簿格式
             orderbook = {
@@ -248,18 +331,30 @@ def run_live_trading(symbol='BTCUSDT', tick_interval=1.0):
 
             tick_count += 1
 
-            # 定期打印状态（每30秒）
+            # 定期打印状态并同步账户（每30秒）
             if tick_count % 30 == 0:
                 status = trader.get_status()
                 state = status['state']
                 risk = go_client.get_risk_stats()
 
+                # 同步真实账户余额和仓位
+                balance = get_margin_account_balance(symbol)
+                if balance and mid_price > 0:
+                    quote_free = balance['quote_free']
+                    new_max_position = (quote_free / mid_price) * 0.95
+                    trader.update_account_info(
+                        initial_capital=balance['quote_net'] if balance['quote_net'] > 0 else initial_capital,
+                        max_position=new_max_position,
+                        current_position=balance['base_net']
+                    )
+
                 print(f'[{datetime.now().strftime("%H:%M:%S")}] '
                       f'Price: ${mid_price:,.2f} | '
-                      f'Spread: {spread_bps:.2f}bps | '
+                      f'Spread: ${spread:.2f} ({spread_bps:.4f}bps) | '
                       f'Pos: {state["current_position"]:.4f} | '
                       f'PnL: ${state["total_pnl"]:.2f} | '
-                      f'Orders: {order_count}')
+                      f'Orders: {order_count} | '
+                      f'MaxPos: {trader.max_position:.4f}')
 
                 # 检查风控状态
                 if risk.get('kill_switch_triggered'):
