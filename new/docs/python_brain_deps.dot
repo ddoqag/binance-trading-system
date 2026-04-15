@@ -1,0 +1,32 @@
+digraph PythonBrainDeps {
+    rankdir=TB;
+    node [shape=box, fontname="Consolas", fontsize=10];
+    edge [fontname="Consolas", fontsize=9];
+
+    live [label="mvp_trader_live.py\n(entry)", style=filled, fillcolor="#90EE90"];
+    trader [label="mvp_trader.py\nMVPTrader"];
+    strat [label="strategy_bridge.py\nStrategyBridge"];
+    exec [label="execution_bridge.py\nExecutionBridge"];
+    shm [label="shm_client.py\nSHMClient"];
+    evt [label="shm_event_client.py\nEventSHMClient"];
+    profit [label="profit_logger.py"];
+    fill [label="fill_quality_analyzer.py"];
+    binance [label="python-binance\nClient", shape=ellipse, fillcolor="#FFFACD"];
+    requests [label="requests", shape=ellipse, fillcolor="#FFFACD"];
+
+    live -> trader;
+    live -> strat;
+    live -> exec;
+    live -> shm;
+    live -> evt;
+    live -> profit;
+    live -> fill;
+    
+    strat -> trader;
+    exec -> trader;
+    exec -> requests;
+    trader -> shm;
+    trader -> evt;
+    live -> binance;
+    shm -> binance;
+}

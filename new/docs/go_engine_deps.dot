@@ -1,0 +1,42 @@
+digraph GoEngineDeps {
+    rankdir=TB;
+    node [shape=box, fontname="Consolas", fontsize=10];
+    edge [fontname="Consolas", fontsize=9];
+
+    main [label="main_with_http.go\n(entry)", style=filled, fillcolor="#ADD8E6"];
+    engine [label="engine.go\nHFTEngine"];
+    ws [label="websocket_manager.go"];
+    rws [label="reconnectable_ws.go"];
+    shm [label="shm_manager.go"];
+    protocol [label="protocol.go"];
+    live [label="live_api_client.go"];
+    uds [label="user_data_stream.go"];
+    fsm [label="order_fsm.go"];
+    mex [label="margin_executor.go"];
+    risk [label="risk_manager.go"];
+    wal [label="wal.go"];
+    degrade [label="degrade.go"];
+    defense [label="defense_manager.go"];
+    binance [label="go-binance/v2", shape=ellipse, fillcolor="#FFFACD"];
+
+    main -> engine;
+    engine -> ws;
+    engine -> shm;
+    engine -> live;
+    engine -> uds;
+    engine -> fsm;
+    engine -> mex;
+    engine -> risk;
+    engine -> wal;
+    engine -> degrade;
+    engine -> defense;
+    
+    ws -> rws;
+    ws -> live;
+    shm -> protocol;
+    uds -> live;
+    uds -> fsm;
+    mex -> live;
+    live -> binance;
+    rws -> binance;
+}
