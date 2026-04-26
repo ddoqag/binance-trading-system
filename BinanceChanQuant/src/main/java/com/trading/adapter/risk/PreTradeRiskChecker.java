@@ -122,7 +122,8 @@ public class PreTradeRiskChecker implements RiskManager {
             return RiskCheckResult.reject("Daily loss limit exceeded: " + pnl + " < " + (-maxDailyLoss), "DAILY_LOSS_LIMIT_EXCEEDED");
         }
 
-        // Passed all checks
+        // Passed all checks - increment rate limit counter
+        ordersThisMinute.incrementAndGet();
         return RiskCheckResult.allow();
     }
 
