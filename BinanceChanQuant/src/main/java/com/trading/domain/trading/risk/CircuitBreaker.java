@@ -55,6 +55,10 @@ public class CircuitBreaker {
                 if (state.compareAndSet(State.OPEN, State.HALF_OPEN)) {
                     halfOpenRequests.set(0);
                     System.out.println("[CircuitBreaker] OPEN -> HALF_OPEN");
+                    current = State.HALF_OPEN;
+                } else {
+                    // Another thread already transitioned, re-read state
+                    current = state.get();
                 }
             } else {
                 return false;
