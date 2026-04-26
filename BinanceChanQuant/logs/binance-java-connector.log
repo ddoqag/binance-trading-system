@@ -1,0 +1,164 @@
+2026-04-25 16:27:04.374[1777105624374] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777105624372&signature=049b7a305583d93d4932e44cfe665103953d277cf9face1472f7dd5369f65670
+2026-04-25 16:27:33.151[1777105653151] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777105653136&signature=7fefdba6f3f12e71b53712786db7dc4200a24b3c7d07b4254685d0a8a4b38637
+2026-04-25 16:28:04.876[1777105684876] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777105684860&signature=94ac91cf8c63eab4b531cf50ed0e0104597e385844dd3996cbaec04f05471e15
+2026-04-25 16:29:25.960[1777105765960] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777105765942&signature=c77eb87609d6f582dc90858a0f1aaa55300c16ad765b2cbf2c8df57bf413b6a9
+2026-04-25 16:29:29.656[1777105769656] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 16:29:31.509[1777105771509] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 16:29:32.590[1777105772590] | ERROR | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Failure
+java.lang.NumberFormatException: For input string: ""E":1777105772702"
+	at java.base/jdk.internal.math.FloatingDecimal.check(FloatingDecimal.java:1751)
+	at java.base/jdk.internal.math.FloatingDecimal.readJavaFormatString(FloatingDecimal.java:1374)
+	at java.base/jdk.internal.math.FloatingDecimal.parseDouble(FloatingDecimal.java:61)
+	at java.base/java.lang.Double.parseDouble(Double.java:993)
+	at ws.WsMaRsiStrategy.lambda$startStream$0(WsMaRsiStrategy.java:41)
+	at com.binance.connector.futures.client.utils.WebSocketConnection.onMessage(WebSocketConnection.java:85)
+	at okhttp3.internal.ws.RealWebSocket.onReadMessage(RealWebSocket.kt:333)
+	at okhttp3.internal.ws.WebSocketReader.readMessageFrame(WebSocketReader.kt:245)
+	at okhttp3.internal.ws.WebSocketReader.processNextFrame(WebSocketReader.kt:106)
+	at okhttp3.internal.ws.RealWebSocket.loopReader(RealWebSocket.kt:293)
+	at okhttp3.internal.ws.RealWebSocket$connect$1.onResponse(RealWebSocket.kt:195)
+	at okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:519)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1516)
+2026-04-25 16:30:37.483[1777105837483] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777105837464&signature=53f4ee229fc51caddcf7e299e4421868d19fdd7b5c75d6bd7629135f90078488
+2026-04-25 16:30:41.592[1777105841592] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 16:30:47.208[1777105847208] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 16:41:35.698[1777106495698] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777106495680&signature=bfb6395f9cef989a9074dae3155561baec524a70d7f6584aea6f2ed414b2f56a
+2026-04-25 16:41:38.451[1777106498451] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 16:41:41.234[1777106501234] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 16:43:04.961[1777106584961] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777106584943&signature=62f6173217d3944e62dbce04114481f8455c1ec313e4ee606207acb0b9eb7141
+2026-04-25 16:43:30.909[1777106610909] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - POST https://fapi.binance.com/fapi/v1/leverage?symbol=BTCUSDT&leverage=10&timestamp=1777106610895&signature=2c242dd85da6f0bb0905c7b9f8b20015771221edcdd2bab8ce0aedac6d893e71
+2026-04-25 16:43:33.228[1777106613228] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.client.utils.RequestHandler  - GET https://fapi.binance.com/fapi/v2/balance?timestamp=1777106613228&signature=8bf9a90d5cf65cc7d8031474bc39d2d5160d68cf83ab7b76bbf4a2079ce3347b
+2026-04-25 16:43:34.618[1777106614618] | INFO  | Main.JavaQuantMain.main() | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 16:43:37.810[1777106617810] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:15:42.392[1777126542392] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:15:42.398[1777126542398] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:15:44.425[1777126544425] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:15:45.316[1777126545316] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:18:56.760[1777126736760] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:18:56.768[1777126736768] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:19:01.733[1777126741733] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:19:04.237[1777126744237] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:20:14.739[1777126814739] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:20:14.745[1777126814745] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:20:16.646[1777126816646] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:20:17.946[1777126817946] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:49:24.313[1777128564313] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:49:24.320[1777128564320] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:49:26.333[1777128566333] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:49:34.582[1777128574582] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:50:42.952[1777128642952] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:50:42.958[1777128642958] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:50:44.946[1777128644946] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:50:45.435[1777128645435] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:53:02.670[1777128782670] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:53:02.676[1777128782676] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:53:04.974[1777128784974] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:53:07.226[1777128787226] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:53:47.074[1777128827074] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:53:47.080[1777128827080] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:53:49.892[1777128829892] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:53:51.313[1777128831313] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:55:35.602[1777128935602] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:55:35.608[1777128935608] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:55:38.088[1777128938088] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:55:39.631[1777128939631] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:57:24.567[1777129044567] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:57:24.573[1777129044573] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:57:29.598[1777129049598] | ERROR | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Failure
+javax.net.ssl.SSLHandshakeException: Remote host terminated the handshake
+	at java.base/sun.security.ssl.SSLSocketImpl.handleEOF(SSLSocketImpl.java:1716)
+	at java.base/sun.security.ssl.SSLSocketImpl.decode(SSLSocketImpl.java:1514)
+	at java.base/sun.security.ssl.SSLSocketImpl.readHandshakeRecord(SSLSocketImpl.java:1421)
+	at java.base/sun.security.ssl.SSLSocketImpl.startHandshake(SSLSocketImpl.java:455)
+	at java.base/sun.security.ssl.SSLSocketImpl.startHandshake(SSLSocketImpl.java:426)
+	at okhttp3.internal.connection.RealConnection.connectTls(RealConnection.kt:379)
+	at okhttp3.internal.connection.RealConnection.establishProtocol(RealConnection.kt:337)
+	at okhttp3.internal.connection.RealConnection.connect(RealConnection.kt:209)
+	at okhttp3.internal.connection.ExchangeFinder.findConnection(ExchangeFinder.kt:226)
+	at okhttp3.internal.connection.ExchangeFinder.findHealthyConnection(ExchangeFinder.kt:106)
+	at okhttp3.internal.connection.ExchangeFinder.find(ExchangeFinder.kt:74)
+	at okhttp3.internal.connection.RealCall.initExchange$okhttp(RealCall.kt:255)
+	at okhttp3.internal.connection.ConnectInterceptor.intercept(ConnectInterceptor.kt:32)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.cache.CacheInterceptor.intercept(CacheInterceptor.kt:95)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.http.BridgeInterceptor.intercept(BridgeInterceptor.kt:83)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.http.RetryAndFollowUpInterceptor.intercept(RetryAndFollowUpInterceptor.kt:76)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.connection.RealCall.getResponseWithInterceptorChain$okhttp(RealCall.kt:201)
+	at okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:517)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1516)
+Caused by: java.io.EOFException: SSL peer shut down incorrectly
+	at java.base/sun.security.ssl.SSLSocketInputRecord.read(SSLSocketInputRecord.java:494)
+	at java.base/sun.security.ssl.SSLSocketInputRecord.readHeader(SSLSocketInputRecord.java:483)
+	at java.base/sun.security.ssl.SSLSocketInputRecord.decode(SSLSocketInputRecord.java:160)
+	at java.base/sun.security.ssl.SSLTransport.decode(SSLTransport.java:111)
+	at java.base/sun.security.ssl.SSLSocketImpl.decode(SSLSocketImpl.java:1506)
+	... 23 common frames omitted
+2026-04-25 22:57:29.598[1777129049598] | ERROR | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Failure
+javax.net.ssl.SSLHandshakeException: Remote host terminated the handshake
+	at java.base/sun.security.ssl.SSLSocketImpl.handleEOF(SSLSocketImpl.java:1716)
+	at java.base/sun.security.ssl.SSLSocketImpl.decode(SSLSocketImpl.java:1514)
+	at java.base/sun.security.ssl.SSLSocketImpl.readHandshakeRecord(SSLSocketImpl.java:1421)
+	at java.base/sun.security.ssl.SSLSocketImpl.startHandshake(SSLSocketImpl.java:455)
+	at java.base/sun.security.ssl.SSLSocketImpl.startHandshake(SSLSocketImpl.java:426)
+	at okhttp3.internal.connection.RealConnection.connectTls(RealConnection.kt:379)
+	at okhttp3.internal.connection.RealConnection.establishProtocol(RealConnection.kt:337)
+	at okhttp3.internal.connection.RealConnection.connect(RealConnection.kt:209)
+	at okhttp3.internal.connection.ExchangeFinder.findConnection(ExchangeFinder.kt:226)
+	at okhttp3.internal.connection.ExchangeFinder.findHealthyConnection(ExchangeFinder.kt:106)
+	at okhttp3.internal.connection.ExchangeFinder.find(ExchangeFinder.kt:74)
+	at okhttp3.internal.connection.RealCall.initExchange$okhttp(RealCall.kt:255)
+	at okhttp3.internal.connection.ConnectInterceptor.intercept(ConnectInterceptor.kt:32)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.cache.CacheInterceptor.intercept(CacheInterceptor.kt:95)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.http.BridgeInterceptor.intercept(BridgeInterceptor.kt:83)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.http.RetryAndFollowUpInterceptor.intercept(RetryAndFollowUpInterceptor.kt:76)
+	at okhttp3.internal.http.RealInterceptorChain.proceed(RealInterceptorChain.kt:109)
+	at okhttp3.internal.connection.RealCall.getResponseWithInterceptorChain$okhttp(RealCall.kt:201)
+	at okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:517)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1516)
+Caused by: java.io.EOFException: SSL peer shut down incorrectly
+	at java.base/sun.security.ssl.SSLSocketInputRecord.read(SSLSocketInputRecord.java:494)
+	at java.base/sun.security.ssl.SSLSocketInputRecord.readHeader(SSLSocketInputRecord.java:483)
+	at java.base/sun.security.ssl.SSLSocketInputRecord.decode(SSLSocketInputRecord.java:160)
+	at java.base/sun.security.ssl.SSLTransport.decode(SSLTransport.java:111)
+	at java.base/sun.security.ssl.SSLSocketImpl.decode(SSLSocketImpl.java:1506)
+	... 23 common frames omitted
+2026-04-25 22:57:58.714[1777129078714] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connecting to fstream.binance.com/ws/btcusdt@depth@100ms
+2026-04-25 22:57:58.720[1777129078720] | INFO  | main       | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connecting to fstream.binance.com/ws/btcusdt@aggTrade
+2026-04-25 22:58:02.264[1777129082264] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Connected to Server
+2026-04-25 22:58:03.219[1777129083219] | INFO  | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Connected to Server
+2026-04-25 22:58:15.709[1777129095709] | ERROR | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 2] Failure
+java.io.EOFException: null
+	at okio.RealBufferedSource.require(RealBufferedSource.kt:199)
+	at okio.RealBufferedSource.readByte(RealBufferedSource.kt:209)
+	at okhttp3.internal.ws.WebSocketReader.readHeader(WebSocketReader.kt:119)
+	at okhttp3.internal.ws.WebSocketReader.processNextFrame(WebSocketReader.kt:102)
+	at okhttp3.internal.ws.RealWebSocket.loopReader(RealWebSocket.kt:293)
+	at okhttp3.internal.ws.RealWebSocket$connect$1.onResponse(RealWebSocket.kt:195)
+	at okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:519)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1516)
+2026-04-25 22:58:15.714[1777129095714] | ERROR | OkHttp https://fstream.binance.com/... | c.b.c.f.c.utils.WebSocketConnection  - [Connection 1] Failure
+java.io.EOFException: null
+	at okio.RealBufferedSource.require(RealBufferedSource.kt:199)
+	at okio.RealBufferedSource.readByte(RealBufferedSource.kt:209)
+	at okhttp3.internal.ws.WebSocketReader.readHeader(WebSocketReader.kt:119)
+	at okhttp3.internal.ws.WebSocketReader.processNextFrame(WebSocketReader.kt:102)
+	at okhttp3.internal.ws.RealWebSocket.loopReader(RealWebSocket.kt:293)
+	at okhttp3.internal.ws.RealWebSocket$connect$1.onResponse(RealWebSocket.kt:195)
+	at okhttp3.internal.connection.RealCall$AsyncCall.run(RealCall.kt:519)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1516)
