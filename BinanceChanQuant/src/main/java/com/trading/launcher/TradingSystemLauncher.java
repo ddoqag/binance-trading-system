@@ -4,12 +4,32 @@ import com.trading.config.ConfigUtil;
 import com.trading.adapter.risk.PreTradeRiskChecker;
 import com.trading.adapter.learning.MetaLearner;
 import com.trading.adapter.execution.ExecutionEngine;
+import com.trading.adapter.chan.config.ChanFeatureToggle;
+import com.trading.adapter.chan.integration.ChanMetaLearnerBridge;
+import com.trading.adapter.chan.integration.ChanShadowExecutor;
+import com.trading.adapter.chan.validation.ChanSignalValidator;
+import com.trading.adapter.chan.analyzer.ChanKLineProcessor;
+import com.trading.adapter.pool.AlphaPool;
+import com.trading.adapter.pool.AIExpert;
+import com.trading.adapter.pool.ChanExpert;
+import com.trading.adapter.learning.ContextualMetaLearner;
+import com.trading.adapter.attribution.AttributionTracker;
+import com.trading.adapter.attribution.ExecutionAttributionAnalyzer;
+import com.trading.domain.market.model.MarketData;
+import com.trading.domain.market.model.MarketRegime;
+import com.trading.domain.signal.AlphaExpert;
+import com.trading.domain.signal.AlphaSignal;
+import com.trading.domain.signal.CompositeAlphaSignal;
+import com.trading.domain.signal.MarketContext;
+import com.trading.domain.signal.VolatilityRegime;
+import com.trading.domain.signal.TrendStrength;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.OrderType;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.risk.RiskManager;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -34,6 +54,25 @@ public class TradingSystemLauncher {
     private MetaLearner metaLearner;
     private ExecutionEngine executionEngine;
 
+    // AlphaPool components
+    private AlphaPool alphaPool;
+    private AIExpert aiExpert;
+    private ChanExpert chanExpert;
+    private ContextualMetaLearner contextualMetaLearner;
+
+    // Attribution components
+    private AttributionTracker attributionTracker;
+    private ExecutionAttributionAnalyzer attributionAnalyzer;
+
+    // Chan components
+    private ChanFeatureToggle chanToggle;
+    private ChanMetaLearnerBridge chanBridge;
+    private ChanShadowExecutor chanExecutor;
+    private ChanSignalValidator chanValidator;
+
+    // Extracted trading loop
+    private TradingLoop tradingLoop;
+
     static {
         String symbol = ConfigUtil.get("symbol");
         SYMBOL = (symbol != null) ? symbol : "BTCUSDT";
@@ -41,10 +80,31 @@ public class TradingSystemLauncher {
 
     public static void main(String[] args) {
         TradingSystemLauncher launcher = new TradingSystemLauncher();
-        launcher.start();
+
+        // Parse arguments
+        boolean paperMode = true;
+        for (String arg : args) {
+            if ("--live".equalsIgnoreCase(arg)) {
+                paperMode = false;
+            } else if ("--paper".equalsIgnoreCase(arg)) {
+                paperMode = true;
+            }
+        }
+
+        if (!paperMode) {
+            System.out.println("[Launcher] Running in LIVE trading mode");
+        } else {
+            System.out.println("[Launcher] Running in PAPER trading mode");
+        }
+
+        launcher.start(paperMode);
     }
 
     public void start() {
+        start(true); // Default to paper mode
+    }
+
+    public void start(boolean paperMode) {
         System.out.println("============================================================");
         System.out.println("Trading System V4.0 - Clean Architecture");
         System.out.println("============================================================");
@@ -52,16 +112,19 @@ public class TradingSystemLauncher {
         // Load configuration
         String apiKey = ConfigUtil.get("api.key");
         if (apiKey == null) apiKey = "";
+        String apiSecret = ConfigUtil.get("api.secret");
+        if (apiSecret == null) apiSecret = "";
         boolean testnet = ConfigUtil.isTestNet();
 
         System.out.println("Symbol: " + SYMBOL);
         System.out.println("API Key: " + (apiKey.isEmpty() ? "(empty)" : "***"));
         System.out.println("Testnet: " + testnet);
+        System.out.println("Mode: " + (paperMode ? "PAPER" : "LIVE"));
         System.out.println("============================================================");
 
         try {
             // Initialize components
-            initializeComponents();
+            initializeComponents(paperMode, apiKey, apiSecret);
 
             // Start components
             startComponents();
@@ -77,7 +140,7 @@ public class TradingSystemLauncher {
         }
     }
 
-    private void initializeComponents() {
+    private void initializeComponents(boolean paperMode, String apiKey, String apiSecret) {
         System.out.println("[Launcher] Initializing components...");
 
         // 1. Initialize Risk Checker
@@ -89,9 +152,54 @@ public class TradingSystemLauncher {
         System.out.println("[Launcher] MetaLearner initialized");
         System.out.println("[Launcher] Initial weights: " + metaLearner.getWeightsString());
 
-        // 3. Initialize Execution Engine with Risk Checker
-        executionEngine = new ExecutionEngine(riskChecker);
-        System.out.println("[Launcher] ExecutionEngine initialized");
+        // 3. Initialize Chan components (Phase 4)
+        chanToggle = ChanFeatureToggle.defaults();
+        chanBridge = new ChanMetaLearnerBridge(chanToggle, 120);
+        chanValidator = new ChanSignalValidator();
+        chanExecutor = new ChanShadowExecutor(chanBridge, chanValidator, chanToggle);
+        System.out.println("[Launcher] Chan components initialized");
+        System.out.println("[Launcher] Chan modes: reverse=" + chanToggle.getReverseMode()
+            + ", trend=" + chanToggle.getTrendMode()
+            + ", grid=" + chanToggle.getGridMode()
+            + ", resonance=" + chanToggle.getResonanceMode());
+
+        // 4. Initialize Execution Engine with Risk Checker
+        // Pass paperMode and API credentials for live trading support
+        executionEngine = new ExecutionEngine(riskChecker, paperMode, apiKey, apiSecret);
+        System.out.println("[Launcher] ExecutionEngine initialized (paper=" + paperMode + ")");
+
+        // 5. Initialize AlphaPool (Phase 1)
+        initializeAlphaPool();
+        System.out.println("[Launcher] AlphaPool initialized with " + alphaPool.getExpertCount() + " experts");
+
+        // 6. Initialize Contextual Meta-Learner (Phase 2)
+        contextualMetaLearner = ContextualMetaLearner.defaults();
+        System.out.println("[Launcher] ContextualMetaLearner initialized");
+
+        // 7. Initialize Attribution Tracker (Phase 3)
+        attributionTracker = new AttributionTracker();
+        attributionAnalyzer = new ExecutionAttributionAnalyzer();
+        System.out.println("[Launcher] AttributionTracker initialized");
+
+        // 8. Initialize TradingLoop
+        tradingLoop = new TradingLoop(alphaPool, riskChecker, executionEngine, attributionTracker, HEARTBEAT_MS);
+        System.out.println("[Launcher] TradingLoop initialized");
+    }
+
+    private void initializeAlphaPool() {
+        alphaPool = new AlphaPool();
+
+        // Create AI Expert wrapping MetaLearner
+        aiExpert = new AIExpert(metaLearner);
+        alphaPool.registerExpert(aiExpert);
+
+        // Create Chan Expert wrapping Chan components
+        ChanKLineProcessor processor = new ChanKLineProcessor();
+        chanExpert = new ChanExpert(chanBridge, chanValidator, processor, chanToggle);
+        alphaPool.registerExpert(chanExpert);
+
+        System.out.println("[Launcher] AlphaPool: registered ai=" + aiExpert.getId()
+            + ", chan=" + chanExpert.getId());
     }
 
     private void startComponents() {
@@ -113,7 +221,10 @@ public class TradingSystemLauncher {
         while (running.get()) {
             try {
                 // Simulate market signal every heartbeat
-                simulateMarketSignal(iteration);
+                MarketData marketData = createSimulatedMarketData(iteration);
+                MarketRegime regime = determineRegime(iteration);
+
+                simulateMarketSignal(iteration, marketData, regime);
 
                 // Print status every 10 iterations
                 if (iteration % 10 == 0) {
@@ -122,12 +233,6 @@ public class TradingSystemLauncher {
 
                 Thread.sleep(HEARTBEAT_MS);
                 iteration++;
-
-                // Safety: stop after 60 iterations for demo
-                if (iteration >= 60) {
-                    System.out.println("[Launcher] Demo mode: stopping after 60 iterations");
-                    break;
-                }
 
             } catch (InterruptedException e) {
                 System.out.println("[Launcher] Interrupted, shutting down...");
@@ -138,38 +243,25 @@ public class TradingSystemLauncher {
         }
     }
 
-    private void simulateMarketSignal(int iteration) {
+    private void simulateMarketSignal(int iteration, MarketData marketData, MarketRegime regime) {
         // Simulate market conditions changing
         // In real system, this would come from WebSocket/market data
 
-        // Generate a simulated signal every few iterations
-        if (iteration % 5 == 0 && iteration > 0) {
-            // Simulate an AI signal
-            double signalDirection = Math.sin(iteration * 0.1);
-            double confidence = 0.5 + Math.random() * 0.4;
-            double urgency = 0.3 + Math.random() * 0.4;
+        // Generate simulated MarketData for Chan processing
+        if (iteration % 2 == 0 && iteration > 0) {
+            // Process through Chan system (Phase 4)
+            if (chanExecutor != null) {
+                chanExecutor.processShadow(marketData, regime);
+            }
 
-            // Create and submit order based on signal
-            if (Math.abs(signalDirection) > 0.3 && confidence > 0.6) {
-                TradeDirection direction = signalDirection > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
-                double quantity = 0.01 + Math.random() * 0.05;
-                double price = 50000 + Math.random() * 1000;
+            // Build MarketContext for AlphaPool
+            MarketContext context = buildMarketContext(marketData, regime, iteration);
 
-                Order order = new Order(
-                    "signal-" + iteration,
-                    SYMBOL,
-                    direction,
-                    OrderType.LIMIT,
-                    quantity,
-                    price,
-                    "META_LEARNER",
-                    urgency
-                );
-
-                // Try to submit order
-                if (executionEngine.submitOrder(order)) {
-                    System.out.printf("[Launcher] Signal order submitted: %s %.4f @ %.2f%n",
-                        direction, quantity, price);
+            // Generate composite signal via AlphaPool
+            if (alphaPool != null && iteration % 5 == 0) {
+                CompositeAlphaSignal compositeSignal = alphaPool.generateCompositeSignal(context);
+                if (compositeSignal != null) {
+                    processAlphaPoolSignal(compositeSignal, iteration);
                 }
             }
         }
@@ -179,6 +271,122 @@ public class TradingSystemLauncher {
             // Simulate recording an execution outcome
             double simulatedPnl = (Math.random() - 0.4) * 100; // Slightly positive bias
             simulateExecutionOutcome(simulatedPnl);
+        }
+    }
+
+    private MarketContext buildMarketContext(MarketData data, MarketRegime regime, int iteration) {
+        double atr = data.getVolatility() * data.getLastPrice() * 0.02;
+        double atrPercent = data.getVolatility() * 2;
+
+        // Determine volatility regime
+        VolatilityRegime volRegime = VolatilityRegime.MEDIUM;
+        if (data.getVolatility() > 0.03) {
+            volRegime = VolatilityRegime.HIGH;
+        } else if (data.getVolatility() > 0.05) {
+            volRegime = VolatilityRegime.EXTREME;
+        } else if (data.getVolatility() < 0.01) {
+            volRegime = VolatilityRegime.LOW;
+        }
+
+        // Determine trend strength
+        TrendStrength trendStrength = TrendStrength.NONE;
+        if (regime == MarketRegime.TREND_UP || regime == MarketRegime.TREND_DOWN) {
+            trendStrength = TrendStrength.MODERATE;
+        }
+
+        return MarketContext.builder()
+            .regime(regime)
+            .volatilityRegime(volRegime)
+            .trendStrength(trendStrength)
+            .currentPrice(data.getLastPrice())
+            .atr(atr)
+            .atrPercent(atrPercent)
+            .volumeRatio(1.0)
+            .timestamp(System.currentTimeMillis())
+            .build();
+    }
+
+    private void processAlphaPoolSignal(CompositeAlphaSignal signal, int iteration) {
+        double score = signal.getScore(null);
+        if (score < 0.3) {
+            return; // Low score, skip
+        }
+
+        TradeDirection direction = signal.getDirection();
+        double confidence = signal.getConfidence();
+
+        if (confidence > 0.6) {
+            double quantity = 0.01 + Math.random() * 0.03;
+            double price = signal.getEntryPrice();
+
+            if (price <= 0) {
+                price = 50000 + Math.random() * 1000;
+            }
+
+            Order order = new Order(
+                "alpha-" + iteration,
+                SYMBOL,
+                direction,
+                OrderType.LIMIT,
+                quantity,
+                price,
+                signal.getSource(),
+                signal.getUrgency()
+            );
+
+            // Track order for attribution
+            if (attributionTracker != null) {
+                attributionTracker.trackOrder(order.getOrderId(), signal);
+            }
+
+            // Try to submit order
+            if (executionEngine.submitOrder(order)) {
+                System.out.printf("[Launcher] AlphaPool signal: %s conf=%.2f score=%.2f %s%n",
+                    signal.getType(), confidence, score, direction);
+            }
+
+            // Record component signals
+            for (AlphaSignal component : signal.getComponentSignals()) {
+                recordComponentOutcome(component, signal);
+            }
+        }
+    }
+
+    private void recordComponentOutcome(AlphaSignal signal, AlphaSignal composite) {
+        // Record outcome for learning
+        double pnl = (Math.random() - 0.4) * 50;
+        AlphaExpert.ExecutionResult result = new AlphaExpert.ExecutionResult(
+            signal.getSource(),
+            pnl,
+            pnl > 0
+        );
+        alphaPool.recordExecutionResult(result);
+    }
+
+    private MarketData createSimulatedMarketData(int iteration) {
+        MarketData data = new MarketData();
+        double basePrice = 50000 + Math.sin(iteration * 0.05) * 2000;
+        double spread = 10 + Math.random() * 5;
+
+        data.setBidPrice(basePrice - spread / 2);
+        data.setAskPrice(basePrice + spread / 2);
+        data.setLastPrice(basePrice);
+        data.setVolume(100 + Math.random() * 1000);
+        data.setVolatility(0.01 + Math.random() * 0.02);
+        data.setTimestamp(System.currentTimeMillis());
+
+        return data;
+    }
+
+    private MarketRegime determineRegime(int iteration) {
+        // Simulate regime changes
+        double regimePhase = Math.sin(iteration * 0.02);
+        if (regimePhase > 0.3) {
+            return MarketRegime.TREND_UP;
+        } else if (regimePhase < -0.3) {
+            return MarketRegime.TREND_DOWN;
+        } else {
+            return MarketRegime.RANGE;
         }
     }
 
@@ -208,14 +416,50 @@ public class TradingSystemLauncher {
         RiskManager.DailyRiskMetrics riskMetrics = riskChecker.getDailyRiskMetrics();
         RiskManager.PositionRisk posRisk = riskChecker.getPositionRisk();
 
+        // Get Chan metrics
+        String chanStatus = "";
+        if (chanExecutor != null) {
+            int totalSignals = chanExecutor.getTotalSignals();
+            int accepted = chanExecutor.getAcceptedSignals();
+            chanStatus = String.format(" | chan_signals=%d/%d", accepted, totalSignals);
+        }
+
+        // Get AlphaPool status
+        String poolStatus = "";
+        if (alphaPool != null) {
+            AlphaPool.PoolStatus pool = alphaPool.getStatus();
+            poolStatus = String.format(" | pool=%d/%d experts signals=%d/%d",
+                pool.getActiveExperts(), pool.getTotalExperts(),
+                pool.getTotalSignalsExecuted(), pool.getTotalSignalsGenerated());
+        }
+
+        // Get volatility info
+        String volStatus = "";
+        double volScale = riskChecker.getVolatilityScaleFactor();
+        if (volScale > 0) {
+            volStatus = String.format(" | vol_scale=%.2f pos_lim=%.2f", volScale, riskChecker.getDynamicPositionLimit());
+        }
+
+        // Get attribution info
+        String attribStatus = "";
+        if (attributionTracker != null) {
+            AttributionTracker.TrackerStats trackerStats = attributionTracker.getStats();
+            attribStatus = String.format(" | attrib.pending=%d completed=%d",
+                trackerStats.pendingOrders, trackerStats.completedAttributions);
+        }
+
         System.out.printf("[%d] Status | risk_trades=%d | risk_rejects=%d | " +
-                        "pnl=%.2f | pos=%.4f | meta_weights=[%s]%n",
+                        "pnl=%.2f | pos=%.4f | meta_weights=[%s]%s%s%s%s%n",
             iteration,
             riskMetrics.dailyTrades,
             riskMetrics.dailyRejects,
             riskMetrics.dailyPnl,
             posRisk.currentPosition,
-            metaLearner.getWeightsString()
+            metaLearner.getWeightsString(),
+            chanStatus,
+            poolStatus,
+            volStatus,
+            attribStatus
         );
     }
 

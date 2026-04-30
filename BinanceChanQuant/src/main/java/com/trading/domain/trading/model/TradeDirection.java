@@ -6,6 +6,7 @@ package com.trading.domain.trading.model;
 public enum TradeDirection {
     LONG,
     SHORT,
+    NEUTRAL,
     CLOSE,
     WAIT
 }

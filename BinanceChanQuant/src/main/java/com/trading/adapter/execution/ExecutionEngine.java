@@ -25,6 +25,7 @@ public class ExecutionEngine {
     private final SmartOrderRouter orderRouter;
     private final AlgoExecutionEngine algoEngine;
     private final RiskManager riskManager;
+    private final BinanceExchangeAdapter exchangeAdapter;
 
     // Queues
     private final BlockingQueue<Order> orderQueue = new LinkedBlockingQueue<>(1000);
@@ -39,11 +40,25 @@ public class ExecutionEngine {
     private final AtomicLong filledOrders = new AtomicLong(0);
     private final AtomicLong rejectedOrders = new AtomicLong(0);
 
+    /**
+     * Constructor for paper trading mode
+     */
     public ExecutionEngine(RiskManager riskManager) {
+        this(riskManager, true, null, null);
+    }
+
+    /**
+     * Constructor with trading mode control
+     */
+    public ExecutionEngine(RiskManager riskManager, boolean paperTrading, String apiKey, String apiSecret) {
         this.riskManager = riskManager;
         this.stateMachine = new ExecutionStateMachine(riskManager);
         this.orderRouter = new SmartOrderRouter();
         this.algoEngine = new AlgoExecutionEngine();
+
+        // Initialize exchange adapter
+        String symbol = "BTCUSDT"; // Default, should be from config
+        this.exchangeAdapter = new BinanceExchangeAdapter(symbol, paperTrading, apiKey, apiSecret);
     }
 
     /**
@@ -161,39 +176,18 @@ public class ExecutionEngine {
     }
 
     /**
-     * Send order directly to exchange
+     * Send order directly to exchange (via Binance adapter)
      */
     private void sendOrderDirect(Order order, String exchange) {
         System.out.printf("[ExecutionEngine] Sending order %s to %s: %s %s %.4f @ %.2f%n",
             order.getOrderId(), exchange, order.getSide(),
             order.getOrderType(), order.getQuantity(), order.getPrice());
 
-        // In real implementation, this would call the exchange adapter
-        // For now, simulate immediate fill in paper trading mode
-        simulateFill(order);
-    }
-
-    /**
-     * Simulate order fill for paper trading
-     */
-    private void simulateFill(Order order) {
-        // Create execution report as if order was filled
-        ExecutionReport report = new ExecutionReport(
-            order.getOrderId(),
-            order.getSymbol(),
-            order.getSide(),
-            order.getOrderType(),
-            order.getQuantity(),
-            order.getPrice(),
-            order.getQuantity(),
-            order.getPrice(),
-            com.trading.domain.trading.model.OrderStatus.FILLED,
-            System.currentTimeMillis(),
-            0.0, // pnl
-            0.0  // fee
-        );
-
-        reportQueue.offer(report);
+        // Use Binance adapter for live trading, or simulate for paper mode
+        ExecutionReport report = exchangeAdapter.sendOrder(order);
+        if (report != null) {
+            reportQueue.offer(report);
+        }
     }
 
     /**

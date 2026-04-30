@@ -44,14 +44,21 @@ public class PreTradeRiskChecker implements RiskManager {
     private final AtomicInteger dailyRejects = new AtomicInteger(0);
     private final AtomicInteger consecutiveLosses = new AtomicInteger(0);
 
+    // Volatility estimator for adaptive risk
+    private final VolatilityEstimator volatilityEstimator;
+    private volatile double dynamicPositionLimit = 10.0;
+    private volatile double volatilityScaleFactor = 1.0;
+
     public PreTradeRiskChecker(double maxPosition, double maxDailyLoss,
                                int maxOrdersPerMinute, double maxOrderValue,
-                               double maxDrawdown) {
+                               double maxDrawdown,
+                               VolatilityEstimator volatilityEstimator) {
         this.maxPosition = maxPosition;
         this.maxDailyLoss = maxDailyLoss;
         this.maxOrdersPerMinute = maxOrdersPerMinute;
         this.maxOrderValue = maxOrderValue;
         this.maxDrawdown = maxDrawdown;
+        this.volatilityEstimator = volatilityEstimator;
 
         this.orderCircuitBreaker = CircuitBreaker.defaults();
         this.positionCircuitBreaker = new CircuitBreaker(3, 2, 60000, 2);
@@ -59,7 +66,8 @@ public class PreTradeRiskChecker implements RiskManager {
     }
 
     public static PreTradeRiskChecker defaults() {
-        return new PreTradeRiskChecker(10.0, 10000.0, 120, 1000000.0, 0.05);
+        return new PreTradeRiskChecker(10.0, 10000.0, 120, 1000000.0, 0.05,
+            new VolatilityEstimator());
     }
 
     @Override
@@ -89,14 +97,15 @@ public class PreTradeRiskChecker implements RiskManager {
             return RiskCheckResult.reject("Order value exceeds maximum: " + orderValue + " > " + maxOrderValue, "ORDER_VALUE_EXCEEDS_MAX");
         }
 
-        // Position limit check
+        // Position limit check (use dynamic limit based on volatility)
         String symbol = order.getSymbol();
         double currentPosition = positions.getOrDefault(symbol, 0.0);
         double newPosition = calculateNewPosition(symbol, order);
+        double effectiveLimit = dynamicPositionLimit;
 
-        if (Math.abs(newPosition) > maxPosition) {
+        if (Math.abs(newPosition) > effectiveLimit) {
             dailyRejects.incrementAndGet();
-            return RiskCheckResult.reject("Position limit exceeded: " + newPosition + " > " + maxPosition, "POSITION_LIMIT_EXCEEDED");
+            return RiskCheckResult.reject("Position limit exceeded: " + newPosition + " > " + effectiveLimit + " (vol-scale=" + String.format("%.2f", volatilityScaleFactor) + ")", "POSITION_LIMIT_EXCEEDED");
         }
 
         // Position circuit breaker
@@ -173,8 +182,8 @@ public class PreTradeRiskChecker implements RiskManager {
         PositionRisk risk = new PositionRisk();
         double totalPosition = positions.values().stream().mapToDouble(Double::doubleValue).sum();
         risk.currentPosition = totalPosition;
-        risk.maxPosition = maxPosition;
-        risk.positionUtilization = Math.abs(totalPosition) / maxPosition;
+        risk.maxPosition = dynamicPositionLimit;
+        risk.positionUtilization = Math.abs(totalPosition) / dynamicPositionLimit;
 
         Double equity = currentEquity.get();
         Double peak = peakEquity.get();
@@ -236,7 +245,37 @@ public class PreTradeRiskChecker implements RiskManager {
 
     @Override
     public void updateMarketData(double price, double volatility, double volume) {
-        // Would update risk model with current market conditions
+        // Update volatility estimator
+        volatilityEstimator.update(price);
+
+        // Calculate dynamic position limit based on volatility
+        double atrPercent = volatilityEstimator.getAtrPercent();
+        volatilityScaleFactor = volatilityEstimator.getVolatilityScaleFactor();
+        dynamicPositionLimit = maxPosition * Math.min(volatilityScaleFactor, 2.0);
+
+        // Update equity with current price
+        updateEquity(price);
+    }
+
+    /**
+     * Get current volatility scale factor
+     */
+    public double getVolatilityScaleFactor() {
+        return volatilityScaleFactor;
+    }
+
+    /**
+     * Get dynamic position limit
+     */
+    public double getDynamicPositionLimit() {
+        return dynamicPositionLimit;
+    }
+
+    /**
+     * Get volatility estimator for external use
+     */
+    public VolatilityEstimator getVolatilityEstimator() {
+        return volatilityEstimator;
     }
 
     private boolean checkRateLimit() {

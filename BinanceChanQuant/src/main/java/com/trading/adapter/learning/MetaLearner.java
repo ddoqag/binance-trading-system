@@ -1,9 +1,12 @@
 package com.trading.adapter.learning;
 
+import com.trading.domain.signal.AlphaType;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.TradeDirection;
 
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -17,29 +20,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * - Uses temperature-scaled softmax for weight normalization
  *
  * Works with MoE (Mixture of Experts) architecture:
- * - Expert 0: Mean Reversion
- * - Expert 1: Trend Following
- * - Expert 2: Volatility
+ * - AlphaType.MEAN_REVERSION
+ * - AlphaType.TREND_FOLLOWING
+ * - AlphaType.VOLATILITY
  */
 public class MetaLearner {
 
-    public enum ExpertType {
-        MEAN_REVERSION(0, "Mean Reversion"),
-        TREND(1, "Trend Following"),
-        VOLATILITY(2, "Volatility");
+    private static final AlphaType[] EXPERT_TYPES = {
+        AlphaType.MEAN_REVERSION,
+        AlphaType.TREND_FOLLOWING,
+        AlphaType.VOLATILITY
+    };
 
-        public final int index;
-        public final String name;
-
-        ExpertType(int index, String name) {
-            this.index = index;
-            this.name = name;
-        }
-    }
-
-    // Expert weights (learnable)
-    private final double[] rawWeights = new double[3];
-    private final double[] smoothedWeights = new double[3];
+    // Expert weights (learnable) - using Map for type safety
+    private final Map<AlphaType, Double> rawWeights = new EnumMap<>(AlphaType.class);
+    private final Map<AlphaType, Double> smoothedWeights = new EnumMap<>(AlphaType.class);
 
     // Learning parameters
     private final double learningRate;
@@ -52,8 +47,8 @@ public class MetaLearner {
     private final int maxOutcomes = 100;
 
     // EMA of returns per expert
-    private final double[] expertReturns = new double[3];
-    private final double[] expertSquaredReturns = new double[3];
+    private final Map<AlphaType, Double> expertReturns = new EnumMap<>(AlphaType.class);
+    private final Map<AlphaType, Double> expertSquaredReturns = new EnumMap<>(AlphaType.class);
     private final AtomicInteger outcomeCount = new AtomicInteger(0);
 
     // Meta-learner state
@@ -67,11 +62,11 @@ public class MetaLearner {
         this.decay = decay;
 
         // Initialize with uniform weights
-        for (int i = 0; i < 3; i++) {
-            rawWeights[i] = 0.0;
-            smoothedWeights[i] = 1.0 / 3.0;
-            expertReturns[i] = 0.0;
-            expertSquaredReturns[i] = 0.0;
+        for (AlphaType type : EXPERT_TYPES) {
+            rawWeights.put(type, 0.0);
+            smoothedWeights.put(type, 1.0 / 3.0);
+            expertReturns.put(type, 0.0);
+            expertSquaredReturns.put(type, 0.0);
         }
     }
 
@@ -82,8 +77,8 @@ public class MetaLearner {
     /**
      * Record an expert signal and its outcome
      */
-    public void recordOutcome(ExpertType expert, double signal, double actualReturn) {
-        ExpertOutcome outcome = new ExpertOutcome(expert.index, signal, actualReturn, System.currentTimeMillis());
+    public void recordOutcome(AlphaType expert, double signal, double actualReturn) {
+        ExpertOutcome outcome = new ExpertOutcome(expert, signal, actualReturn, System.currentTimeMillis());
         recentOutcomes.add(outcome);
 
         // Maintain window size
@@ -92,9 +87,10 @@ public class MetaLearner {
         }
 
         // Update EMA of returns
-        int idx = expert.index;
-        expertReturns[idx] = momentum * expertReturns[idx] + (1 - momentum) * actualReturn;
-        expertSquaredReturns[idx] = momentum * expertSquaredReturns[idx] + (1 - momentum) * actualReturn * actualReturn;
+        Double ema = expertReturns.get(expert);
+        Double emaSq = expertSquaredReturns.get(expert);
+        expertReturns.put(expert, momentum * ema + (1 - momentum) * actualReturn);
+        expertSquaredReturns.put(expert, momentum * emaSq + (1 - momentum) * actualReturn * actualReturn);
 
         outcomeCount.incrementAndGet();
         lastUpdateTime = System.currentTimeMillis();
@@ -110,30 +106,36 @@ public class MetaLearner {
      */
     private synchronized void updateWeights() {
         // Calculate scores (EMA return / EMA std)
-        double[] scores = new double[3];
+        Map<AlphaType, Double> scores = new EnumMap<>(AlphaType.class);
         double totalScore = 0;
 
-        for (int i = 0; i < 3; i++) {
-            double ema = expertReturns[i];
-            double emaVar = expertSquaredReturns[i] - ema * ema;
+        for (AlphaType type : EXPERT_TYPES) {
+            double ema = expertReturns.get(type);
+            double emaSq = expertSquaredReturns.get(type);
+            double emaVar = emaSq - ema * ema;
             double emaStd = Math.sqrt(Math.max(0.001, emaVar));
 
             // Sharpe-like score
-            scores[i] = ema / emaStd;
-            totalScore += scores[i];
+            double score = ema / emaStd;
+            scores.put(type, score);
+            totalScore += score;
         }
 
         // Apply temperature-scaled softmax
-        double[] newWeights = softmax(scores, temperature);
+        Map<AlphaType, Double> newWeights = softmax(scores, temperature);
 
         // Apply decay to raw weights
-        for (int i = 0; i < 3; i++) {
-            rawWeights[i] = decay * rawWeights[i] + (1 - decay) * newWeights[i];
+        for (AlphaType type : EXPERT_TYPES) {
+            Double raw = rawWeights.get(type);
+            Double neu = newWeights.get(type);
+            rawWeights.put(type, decay * raw + (1 - decay) * neu);
         }
 
         // Smooth weights
-        for (int i = 0; i < 3; i++) {
-            smoothedWeights[i] = 0.9 * smoothedWeights[i] + 0.1 * rawWeights[i];
+        for (AlphaType type : EXPERT_TYPES) {
+            Double smooth = smoothedWeights.get(type);
+            Double raw = rawWeights.get(type);
+            smoothedWeights.put(type, 0.9 * smooth + 0.1 * raw);
         }
 
         // Normalize to sum to 1
@@ -143,30 +145,31 @@ public class MetaLearner {
     /**
      * Temperature-scaled softmax
      */
-    private double[] softmax(double[] scores, double temp) {
-        double[] exp = new double[scores.length];
+    private Map<AlphaType, Double> softmax(Map<AlphaType, Double> scores, double temp) {
+        Map<AlphaType, Double> exp = new EnumMap<>(AlphaType.class);
         double sum = 0;
 
-        for (int i = 0; i < scores.length; i++) {
-            exp[i] = Math.exp(scores[i] / temp);
-            sum += exp[i];
+        for (AlphaType type : EXPERT_TYPES) {
+            double val = Math.exp(scores.get(type) / temp);
+            exp.put(type, val);
+            sum += val;
         }
 
-        for (int i = 0; i < scores.length; i++) {
-            exp[i] /= sum;
+        for (AlphaType type : EXPERT_TYPES) {
+            exp.put(type, exp.get(type) / sum);
         }
 
         return exp;
     }
 
-    private void normalize(double[] weights) {
+    private void normalize(Map<AlphaType, Double> weights) {
         double sum = 0;
-        for (double w : weights) {
+        for (Double w : weights.values()) {
             sum += w;
         }
         if (sum > 0) {
-            for (int i = 0; i < weights.length; i++) {
-                weights[i] /= sum;
+            for (AlphaType type : EXPERT_TYPES) {
+                weights.put(type, weights.get(type) / sum);
             }
         }
     }
@@ -174,15 +177,15 @@ public class MetaLearner {
     /**
      * Get current expert weights
      */
-    public double[] getWeights() {
-        return smoothedWeights.clone();
+    public Map<AlphaType, Double> getWeights() {
+        return new EnumMap<>(smoothedWeights);
     }
 
     /**
      * Get weight for specific expert
      */
-    public double getWeight(ExpertType expert) {
-        return smoothedWeights[expert.index];
+    public double getWeight(AlphaType expert) {
+        return smoothedWeights.get(expert);
     }
 
     /**
@@ -190,7 +193,9 @@ public class MetaLearner {
      */
     public String getWeightsString() {
         return String.format("MR=%.3f TR=%.3f VL=%.3f",
-            smoothedWeights[0], smoothedWeights[1], smoothedWeights[2]);
+            smoothedWeights.get(AlphaType.MEAN_REVERSION),
+            smoothedWeights.get(AlphaType.TREND_FOLLOWING),
+            smoothedWeights.get(AlphaType.VOLATILITY));
     }
 
     /**
@@ -211,11 +216,11 @@ public class MetaLearner {
      * Reset learning (e.g., after regime change)
      */
     public synchronized void reset() {
-        for (int i = 0; i < 3; i++) {
-            expertReturns[i] = 0;
-            expertSquaredReturns[i] = 0;
-            rawWeights[i] = 0;
-            smoothedWeights[i] = 1.0 / 3.0;
+        for (AlphaType type : EXPERT_TYPES) {
+            expertReturns.put(type, 0.0);
+            expertSquaredReturns.put(type, 0.0);
+            rawWeights.put(type, 0.0);
+            smoothedWeights.put(type, 1.0 / 3.0);
         }
         recentOutcomes.clear();
         outcomeCount.set(0);
@@ -233,19 +238,19 @@ public class MetaLearner {
         double pnl = report.getPnL();
 
         // Record outcome for all experts with slight bias
-        for (ExpertType expert : ExpertType.values()) {
+        for (AlphaType expert : EXPERT_TYPES) {
             double signal = getExpertSignal(expert, report);
             double noise = (Math.random() - 0.5) * 0.1;
             recordOutcome(expert, signal, pnl + noise);
         }
     }
 
-    private double getExpertSignal(ExpertType expert, ExecutionReport report) {
+    private double getExpertSignal(AlphaType expert, ExecutionReport report) {
         // Simplified - would use actual expert signals
         switch (expert) {
             case MEAN_REVERSION:
                 return report.getSide() == TradeDirection.LONG ? -0.5 : 0.5;
-            case TREND:
+            case TREND_FOLLOWING:
                 return report.getSide() == TradeDirection.LONG ? 0.5 : -0.5;
             case VOLATILITY:
                 return 0.0;
@@ -270,13 +275,13 @@ public class MetaLearner {
     }
 
     private static class ExpertOutcome {
-        final int expertIndex;
+        final AlphaType expertType;
         final double signal;
         final double actualReturn;
         final long timestamp;
 
-        ExpertOutcome(int expertIndex, double signal, double actualReturn, long timestamp) {
-            this.expertIndex = expertIndex;
+        ExpertOutcome(AlphaType expertType, double signal, double actualReturn, long timestamp) {
+            this.expertType = expertType;
             this.signal = signal;
             this.actualReturn = actualReturn;
             this.timestamp = timestamp;
