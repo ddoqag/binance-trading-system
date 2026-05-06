@@ -1,0 +1,38 @@
+# Build output
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Sensitive configuration - DO NOT COMMIT
+BinanceChanQuant/src/main/resources/config.properties
+BinanceChanQuant/src/main/resources/trading-config.properties
+!**/config.properties.example
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Credentials and secrets
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# OS files
+Thumbs.db
+~$*
+
+# Shared memory files
+*.shm
+shm/
