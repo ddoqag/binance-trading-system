@@ -24,7 +24,7 @@ public class ChanTrendStrategyAdapter extends ChanStrategyAdapter {
 
     @Override
     public double getMinConfidence() {
-        return 0.55;
+        return 0.35;  // Lower for provisional signals
     }
 
     @Override
@@ -169,6 +169,54 @@ public class ChanTrendStrategyAdapter extends ChanStrategyAdapter {
                     "前中枢下降笔( provisional, klines=" + klineCount + ")"
                 );
             }
+        }
+
+        // 没有分型和笔时，使用简单的K线趋势判断
+        if (klineCount >= 5) {
+            return detectTrendBasedSignal(ctx, regime, klineCount);
+        }
+
+        return PatternSignal.none();
+    }
+
+    /**
+     * 基于K线趋势的简单信号检测（当没有笔/分型时使用）
+     */
+    private PatternSignal detectTrendBasedSignal(KlineContext ctx, MarketRegime regime, int klineCount) {
+        if (ctx.recentKlines == null || ctx.recentKlines.size() < 5) {
+            return PatternSignal.none();
+        }
+
+        java.util.List<KLine> recent = ctx.recentKlines;
+        int len = recent.size();
+
+        double lastHigh = recent.get(len - 1).high;
+        double lastLow = recent.get(len - 1).low;
+        double prevHigh = recent.get(len - 2).high;
+        double prevLow = recent.get(len - 2).low;
+
+        if (regime == MarketRegime.TREND_UP && lastLow > prevLow) {
+            // 上升趋势中的低点抬升可能是买入机会
+            double confidence = 0.35 + Math.min(0.10, klineCount * 0.002);
+            return new PatternSignal(
+                SignalType.BUY_2,
+                confidence,
+                lastLow,
+                System.currentTimeMillis(),
+                "前中枢上升K线( provisional, klines=" + klineCount + ")"
+            );
+        }
+
+        if (regime == MarketRegime.TREND_DOWN && lastHigh < prevHigh) {
+            // 下降趋势中的高点降低可能是卖出机会
+            double confidence = 0.35 + Math.min(0.10, klineCount * 0.002);
+            return new PatternSignal(
+                SignalType.SELL_2,
+                confidence,
+                lastHigh,
+                System.currentTimeMillis(),
+                "前中枢下降K线( provisional, klines=" + klineCount + ")"
+            );
         }
 
         return PatternSignal.none();

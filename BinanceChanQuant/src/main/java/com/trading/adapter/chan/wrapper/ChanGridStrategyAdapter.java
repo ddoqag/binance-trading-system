@@ -25,7 +25,7 @@ public class ChanGridStrategyAdapter extends ChanStrategyAdapter {
 
     @Override
     public double getMinConfidence() {
-        return 0.50;
+        return 0.35;  // Lower for provisional signals
     }
 
     @Override
@@ -45,16 +45,16 @@ public class ChanGridStrategyAdapter extends ChanStrategyAdapter {
         }
 
         Fenxing lastFenxing = ctx.lastFenxing;
+        Zhongshu zhongshu = ctx.zhongshu;
         Bi lastBi = ctx.lastBi;
-        if (lastBi == null) {
-            return PatternSignal.none();
+
+        // 中枢未形成时，使用分型生成临时信号（不依赖lastBi）
+        if (zhongshu == null) {
+            return detectPreZhongshu(ctx, lastFenxing);
         }
 
-        Zhongshu zhongshu = ctx.zhongshu;
-
-        // 中枢未形成时，使用笔分型生成临时信号
-        if (zhongshu == null) {
-            return detectPreZhongshu(ctx, lastFenxing, lastBi);
+        if (lastBi == null) {
+            return PatternSignal.none();
         }
 
         double zg = zhongshu.zg;
@@ -92,33 +92,82 @@ public class ChanGridStrategyAdapter extends ChanStrategyAdapter {
     /**
      * 中枢未形成时的分型信号检测
      */
-    private PatternSignal detectPreZhongshu(KlineContext ctx, Fenxing lastFenxing, Bi lastBi) {
-        if (lastFenxing == null) {
-            return PatternSignal.none();
-        }
-
+    private PatternSignal detectPreZhongshu(KlineContext ctx, Fenxing lastFenxing) {
         int klineCount = ctx.recentKlines != null ? ctx.recentKlines.size() : 0;
 
         // 基于分型方向生成信号
-        if (lastFenxing.type == Fenxing.Type.TOP) {
-            // 顶分型：可能做空
-            double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);  // 0.40-0.50
+        if (lastFenxing != null) {
+            if (lastFenxing.type == Fenxing.Type.TOP) {
+                // 顶分型：可能做空
+                double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);
+                return new PatternSignal(
+                    SignalType.RANGE_BOUND,
+                    confidence,
+                    lastFenxing.price,
+                    System.currentTimeMillis(),
+                    "前中枢顶分型做空( provisional, klines=" + klineCount + ")"
+                );
+            } else if (lastFenxing.type == Fenxing.Type.BOTTOM) {
+                // 底分型：可能做多
+                double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);
+                return new PatternSignal(
+                    SignalType.RANGE_BOUND,
+                    confidence,
+                    lastFenxing.price,
+                    System.currentTimeMillis(),
+                    "前中枢底分型做多( provisional, klines=" + klineCount + ")"
+                );
+            }
+        }
+
+        // 没有分型但有足够K线时，使用简单的趋势判断
+        if (klineCount >= 5) {
+            return detectTrendBasedSignal(ctx, klineCount);
+        }
+
+        return PatternSignal.none();
+    }
+
+    /**
+     * 基于K线趋势的简单信号检测（当没有分型时使用）
+     */
+    private PatternSignal detectTrendBasedSignal(KlineContext ctx, int klineCount) {
+        if (ctx.recentKlines == null || ctx.recentKlines.size() < 5) {
+            return PatternSignal.none();
+        }
+
+        // 获取最近的几根K线分析趋势
+        java.util.List<KLine> recent = ctx.recentKlines;
+        int len = recent.size();
+
+        double lastHigh = recent.get(len - 1).high;
+        double lastLow = recent.get(len - 1).low;
+        double prevHigh = recent.get(len - 2).high;
+        double prevLow = recent.get(len - 2).low;
+
+        // 简单趋势判断：连续上升
+        if (lastHigh > prevHigh && lastLow > prevLow) {
+            // 上升趋势中的回调可能做多
+            double confidence = 0.35 + Math.min(0.10, klineCount * 0.002);
             return new PatternSignal(
                 SignalType.RANGE_BOUND,
                 confidence,
-                lastFenxing.price,
+                lastLow,
                 System.currentTimeMillis(),
-                "前中枢顶分型做空( provisional, klines=" + klineCount + ")"
+                "前中枢上升K线( provisional, klines=" + klineCount + ")"
             );
-        } else if (lastFenxing.type == Fenxing.Type.BOTTOM) {
-            // 底分型：可能做多
-            double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);  // 0.40-0.50
+        }
+
+        // 连续下降
+        if (lastHigh < prevHigh && lastLow < prevLow) {
+            // 下降趋势中的反弹可能做空
+            double confidence = 0.35 + Math.min(0.10, klineCount * 0.002);
             return new PatternSignal(
                 SignalType.RANGE_BOUND,
                 confidence,
-                lastFenxing.price,
+                lastHigh,
                 System.currentTimeMillis(),
-                "前中枢底分型做多( provisional, klines=" + klineCount + ")"
+                "前中枢下降K线( provisional, klines=" + klineCount + ")"
             );
         }
 

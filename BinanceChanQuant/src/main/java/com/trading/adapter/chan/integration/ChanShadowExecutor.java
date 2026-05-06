@@ -48,6 +48,7 @@ public class ChanShadowExecutor {
      */
     public Optional<ShadowSignalResult> processShadow(MarketData data, MarketRegime regime) {
         if (!featureToggle.isChanActive()) {
+            log.info("Shadow signal skipped: isChanActive=false");
             return Optional.empty();
         }
 
@@ -57,6 +58,7 @@ public class ChanShadowExecutor {
             metaLearnerBridge.generateSignal(data, regime);
 
         if (chanResult.isEmpty()) {
+            log.info("Shadow signal empty: generateSignal returned empty for regime={}", regime);
             return Optional.empty();
         }
 
@@ -81,7 +83,7 @@ public class ChanShadowExecutor {
 
         if (!validation.isValid) {
             rejectedSignals.incrementAndGet();
-            log.debug("Shadow signal rejected: {} - {}", result.chanSignalType, validation.reason);
+            log.debug("Shadow signal rejected: {} - {} - confidence={}", result.chanSignalType, validation.reason, result.confidence);
             return Optional.empty();
         }
 

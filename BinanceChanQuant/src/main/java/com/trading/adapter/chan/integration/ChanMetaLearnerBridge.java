@@ -1,6 +1,8 @@
 package com.trading.adapter.chan.integration;
 
 import com.trading.adapter.chan.analyzer.ChanKLineProcessor;
+import com.trading.adapter.chan.analyzer.ChanKLineProcessor.Bi;
+import com.trading.adapter.chan.analyzer.ChanKLineProcessor.Fenxing;
 import com.trading.adapter.chan.analyzer.ChanKLineProcessor.KlineContext;
 import com.trading.adapter.chan.config.ChanFeatureToggle;
 import com.trading.adapter.chan.detector.ChanPatternDetector.SignalType;
@@ -40,7 +42,7 @@ public class ChanMetaLearnerBridge {
     // Regime-specific weight adjustments
     private static final double[] REGIME_WEIGHTS = {
         0.0,   // UNKNOWN
-        0.25,  // RANGE
+        0.40,  // RANGE (raised for provisional signals)
         0.35,  // TREND_UP
         0.35,  // TREND_DOWN
         0.20,  // HIGH_VOL
@@ -67,21 +69,34 @@ public class ChanMetaLearnerBridge {
      * Generate Chan signal for market data
      */
     public Optional<ChanSignalResult> generateSignal(MarketData data, MarketRegime regime) {
+        // Process K-line data to update Chan analysis
         multiTimeframeProcessors[0].processMarketData(data);
+
+        KlineContext ctx = multiTimeframeProcessors[0].getCurrentContext();
+
+        // Re-determine regime based on current context (since K-line was just added)
+        regime = determineRegimeFromContext(ctx);
 
         ChanStrategyAdapter adapter = selectAdapter(regime);
         if (adapter == null) {
+            log.debug("generateSignal: no adapter for regime={}", regime);
             return Optional.empty();
         }
 
         if (!adapter.isStrategyEnabled()) {
+            log.debug("generateSignal: adapter {} not enabled", adapter.getClass().getSimpleName());
             return Optional.empty();
         }
 
-        KlineContext ctx = multiTimeframeProcessors[0].getCurrentContext();
         PatternSignal signal = adapter.detect(ctx, regime);
 
-        if (!signal.hasSignal() || signal.confidence < adapter.getMinConfidence()) {
+        if (!signal.hasSignal()) {
+            log.debug("generateSignal: no signal hasSignal=false for regime={}", regime);
+            return Optional.empty();
+        }
+        if (signal.confidence < adapter.getMinConfidence()) {
+            log.debug("generateSignal: confidence {} < min {} for regime={}",
+                signal.confidence, adapter.getMinConfidence(), regime);
             return Optional.empty();
         }
 
@@ -126,6 +141,25 @@ public class ChanMetaLearnerBridge {
             default:
                 return null;
         }
+    }
+
+    /**
+     * Determine regime from current context (after K-line processed)
+     */
+    private MarketRegime determineRegimeFromContext(KlineContext ctx) {
+        if (ctx == null || ctx.zhongshu == null) {
+            if (ctx != null && ctx.lastFenxing != null) {
+                return ctx.lastFenxing.type == Fenxing.Type.TOP
+                    ? MarketRegime.TREND_DOWN : MarketRegime.TREND_UP;
+            }
+            return MarketRegime.RANGE;
+        }
+
+        if (ctx.lastBi != null) {
+            return ctx.lastBi.direction == Bi.Direction.UP
+                ? MarketRegime.TREND_UP : MarketRegime.TREND_DOWN;
+        }
+        return MarketRegime.RANGE;
     }
 
     public double calculateDynamicWeight(MarketRegime regime) {

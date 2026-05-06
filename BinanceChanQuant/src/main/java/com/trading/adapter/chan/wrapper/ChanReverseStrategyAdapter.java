@@ -24,7 +24,7 @@ public class ChanReverseStrategyAdapter extends ChanStrategyAdapter {
 
     @Override
     public double getMinConfidence() {
-        return 0.55;
+        return 0.35;  // Lower for paper trading
     }
 
     @Override

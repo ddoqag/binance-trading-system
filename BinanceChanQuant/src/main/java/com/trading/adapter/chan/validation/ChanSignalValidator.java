@@ -64,7 +64,7 @@ public class ChanSignalValidator {
         if (ctx.zhongshu == null) {
             int klineCount = ctx.recentKlines != null ? ctx.recentKlines.size() : 0;
 
-            if (klineCount < 50) {
+            if (klineCount < 5) {
                 blockedSignals.incrementAndGet();
                 return ValidationResult.reject("NO_ZHONGSHU_EARLY", "No 中枢 detected, K-lines insufficient: " + klineCount);
             }
