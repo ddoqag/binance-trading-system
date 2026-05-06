@@ -45,9 +45,11 @@ hft\optimizer\ExecutionOptimizer.class
 hft\optimizer\ExecutionOptimizer$OptimizedParams.class
 com\trading\adapter\risk\RiskDashboard$RiskAlert.class
 com\trading\domain\trading\model\ExecutionReport$Builder.class
+com\trading\domain\signal\AlphaType.class
 com\trading\domain\signal\AlphaExpert$ExecutionResult.class
 com\trading\adapter\validation\ExecutionValidator$LegacyExecutorAdapter.class
 com\trading\adapter\attribution\AttributionTracker$TrackerStats.class
+com\trading\domain\signal\AlphaSignal$AlphaSignalBuilder.class
 com\trading\messaging\messages\SubmitOrderCommand.class
 com\trading\actors\SignalAggregatorActor$SignalExpert$ExpertSignal.class
 com\trading\adapter\shadow\RingBuffer.class
@@ -63,6 +65,7 @@ com\trading\messaging\messages\PositionModifiedEvent.class
 com\trading\execution\v4\ExecutionEngineV4$OrderRequest.class
 com\trading\adapter\shadow\ChampionChallengerManager$MutatedStrategyPlugin.class
 com\trading\actors\RiskActor$RiskState.class
+com\trading\domain\signal\MarketContext$Builder.class
 com\trading\actors\ExecutionActor$OrderContext.class
 com\trading\factory\generator\StrategyGenerator$GenerationProgress.class
 com\trading\infrastructure\observability\ObservabilityFramework$Timer.class
@@ -165,6 +168,7 @@ com\trading\factory\model\BacktestResult.class
 com\trading\execution\v6\ExecutionEngineV6$OrderStatus.class
 com\trading\actors\ExecutionActor.class
 com\trading\adapter\routing\TrafficRouter$RoutingMode.class
+com\trading\domain\trading\model\TradeDirection.class
 com\trading\adapter\execution\NewTradingServiceImpl$1.class
 com\trading\factory\StrategyFactory$GenerationEvent.class
 state\TradeDirection.class
@@ -310,6 +314,7 @@ com\trading\execution\v3\ExecutionEngineV3.class
 chan\ChanPricePoint.class
 com\trading\execution\v4\V4IntegrationTest.class
 trade\TradeSignalExecutor.class
+com\trading\domain\signal\MarketContext.class
 com\trading\domain\trading\TradingService.class
 com\trading\infrastructure\observability\ObservabilityFramework$Counter.class
 com\trading\adapter\shadow\ShadowExecutionBook.class
@@ -371,6 +376,7 @@ com\trading\infrastructure\rollback\RollbackManager$RollbackEvent.class
 com\trading\adapter\chan\analyzer\ChanKLineProcessor$BeichiResult.class
 com\trading\messaging\messages\UpdateRiskStateCommand.class
 com\trading\launcher\TradingSystemLauncher.class
+com\trading\domain\signal\AlphaSignal.class
 com\trading\adapter\execution\AlgoExecutionEngine$AlgoExecution.class
 com\trading\messaging\messages\PositionOpenedEvent.class
 com\trading\execution\v6\ProductionExchangeAdapter.class

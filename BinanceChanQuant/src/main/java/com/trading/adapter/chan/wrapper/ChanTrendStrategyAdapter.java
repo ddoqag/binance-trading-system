@@ -44,11 +44,14 @@ public class ChanTrendStrategyAdapter extends ChanStrategyAdapter {
         }
 
         Zhongshu zhongshu = ctx.zhongshu;
+        Bi lastBi = ctx.lastBi;
+        Fenxing lastFenxing = ctx.lastFenxing;
+
+        // 中枢未形成时，使用笔分型生成临时信号
         if (zhongshu == null) {
-            return PatternSignal.none();
+            return detectPreZhongshu(ctx, regime, lastBi, lastFenxing);
         }
 
-        Bi lastBi = ctx.lastBi;
         if (lastBi == null) {
             return PatternSignal.none();
         }
@@ -105,6 +108,65 @@ public class ChanTrendStrategyAdapter extends ChanStrategyAdapter {
                     testLevel,
                     System.currentTimeMillis(),
                     "三卖跌破中枢下沿"
+                );
+            }
+        }
+
+        return PatternSignal.none();
+    }
+
+    /**
+     * 中枢未形成时的分型信号检测
+     */
+    private PatternSignal detectPreZhongshu(KlineContext ctx, MarketRegime regime, Bi lastBi, Fenxing lastFenxing) {
+        int klineCount = ctx.recentKlines != null ? ctx.recentKlines.size() : 0;
+
+        // 基于笔的方向和分型生成趋势信号
+        if (lastFenxing != null) {
+            if (regime == MarketRegime.TREND_UP && lastFenxing.type == Fenxing.Type.BOTTOM) {
+                // 上升趋势中的底分型可能是买入机会
+                double confidence = 0.45 + Math.min(0.10, klineCount * 0.002);
+                return new PatternSignal(
+                    SignalType.BUY_2,
+                    confidence,
+                    lastFenxing.price,
+                    System.currentTimeMillis(),
+                    "前中枢底分型( provisional, klines=" + klineCount + ")"
+                );
+            }
+            if (regime == MarketRegime.TREND_DOWN && lastFenxing.type == Fenxing.Type.TOP) {
+                // 下降趋势中的顶分型可能是卖出机会
+                double confidence = 0.45 + Math.min(0.10, klineCount * 0.002);
+                return new PatternSignal(
+                    SignalType.SELL_2,
+                    confidence,
+                    lastFenxing.price,
+                    System.currentTimeMillis(),
+                    "前中枢顶分型( provisional, klines=" + klineCount + ")"
+                );
+            }
+        }
+
+        // 基于笔的方向
+        if (lastBi != null) {
+            if (regime == MarketRegime.TREND_UP && lastBi.direction == Bi.Direction.UP) {
+                double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);
+                return new PatternSignal(
+                    SignalType.BUY_2,
+                    confidence,
+                    lastBi.low,
+                    System.currentTimeMillis(),
+                    "前中枢上升笔( provisional, klines=" + klineCount + ")"
+                );
+            }
+            if (regime == MarketRegime.TREND_DOWN && lastBi.direction == Bi.Direction.DOWN) {
+                double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);
+                return new PatternSignal(
+                    SignalType.SELL_2,
+                    confidence,
+                    lastBi.high,
+                    System.currentTimeMillis(),
+                    "前中枢下降笔( provisional, klines=" + klineCount + ")"
                 );
             }
         }

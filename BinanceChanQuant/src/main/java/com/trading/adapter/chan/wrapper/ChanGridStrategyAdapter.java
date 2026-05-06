@@ -44,15 +44,17 @@ public class ChanGridStrategyAdapter extends ChanStrategyAdapter {
             return PatternSignal.none();
         }
 
-        Zhongshu zhongshu = ctx.zhongshu;
-        if (zhongshu == null) {
-            return PatternSignal.none();
-        }
-
         Fenxing lastFenxing = ctx.lastFenxing;
         Bi lastBi = ctx.lastBi;
         if (lastBi == null) {
             return PatternSignal.none();
+        }
+
+        Zhongshu zhongshu = ctx.zhongshu;
+
+        // 中枢未形成时，使用笔分型生成临时信号
+        if (zhongshu == null) {
+            return detectPreZhongshu(ctx, lastFenxing, lastBi);
         }
 
         double zg = zhongshu.zg;
@@ -82,6 +84,42 @@ public class ChanGridStrategyAdapter extends ChanStrategyAdapter {
                     "中枢下沿底分型做多"
                 );
             }
+        }
+
+        return PatternSignal.none();
+    }
+
+    /**
+     * 中枢未形成时的分型信号检测
+     */
+    private PatternSignal detectPreZhongshu(KlineContext ctx, Fenxing lastFenxing, Bi lastBi) {
+        if (lastFenxing == null) {
+            return PatternSignal.none();
+        }
+
+        int klineCount = ctx.recentKlines != null ? ctx.recentKlines.size() : 0;
+
+        // 基于分型方向生成信号
+        if (lastFenxing.type == Fenxing.Type.TOP) {
+            // 顶分型：可能做空
+            double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);  // 0.40-0.50
+            return new PatternSignal(
+                SignalType.RANGE_BOUND,
+                confidence,
+                lastFenxing.price,
+                System.currentTimeMillis(),
+                "前中枢顶分型做空( provisional, klines=" + klineCount + ")"
+            );
+        } else if (lastFenxing.type == Fenxing.Type.BOTTOM) {
+            // 底分型：可能做多
+            double confidence = 0.40 + Math.min(0.10, klineCount * 0.002);  // 0.40-0.50
+            return new PatternSignal(
+                SignalType.RANGE_BOUND,
+                confidence,
+                lastFenxing.price,
+                System.currentTimeMillis(),
+                "前中枢底分型做多( provisional, klines=" + klineCount + ")"
+            );
         }
 
         return PatternSignal.none();
