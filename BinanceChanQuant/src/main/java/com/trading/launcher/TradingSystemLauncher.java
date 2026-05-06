@@ -28,6 +28,9 @@ import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.OrderType;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.risk.RiskManager;
+import com.trading.execution.v6.ExecutionEngineV6;
+import com.trading.execution.v6.ProductionExchangeAdapter;
+import com.trading.execution.v6.PositionSynchronizer;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -73,6 +76,12 @@ public class TradingSystemLauncher {
     // Extracted trading loop
     private TradingLoop tradingLoop;
 
+    // V6 Execution components
+    private ExecutionEngineV6 executionEngineV6;
+    private ProductionExchangeAdapter productionAdapter;
+    private PositionSynchronizer positionSynchronizer;
+    private boolean v6Enabled = false;
+
     static {
         String symbol = ConfigUtil.get("symbol");
         SYMBOL = (symbol != null) ? symbol : "BTCUSDT";
@@ -83,11 +92,14 @@ public class TradingSystemLauncher {
 
         // Parse arguments
         boolean paperMode = true;
+        boolean enableV6 = false;
         for (String arg : args) {
             if ("--live".equalsIgnoreCase(arg)) {
                 paperMode = false;
             } else if ("--paper".equalsIgnoreCase(arg)) {
                 paperMode = true;
+            } else if ("--v6".equalsIgnoreCase(arg)) {
+                enableV6 = true;
             }
         }
 
@@ -97,14 +109,22 @@ public class TradingSystemLauncher {
             System.out.println("[Launcher] Running in PAPER trading mode");
         }
 
-        launcher.start(paperMode);
+        if (enableV6) {
+            System.out.println("[Launcher] V6 Execution Mode ENABLED");
+        }
+
+        launcher.start(paperMode, enableV6);
     }
 
     public void start() {
-        start(true); // Default to paper mode
+        start(true, false);
     }
 
     public void start(boolean paperMode) {
+        start(paperMode, false);
+    }
+
+    public void start(boolean paperMode, boolean enableV6) {
         System.out.println("============================================================");
         System.out.println("Trading System V4.0 - Clean Architecture");
         System.out.println("============================================================");
@@ -120,11 +140,14 @@ public class TradingSystemLauncher {
         System.out.println("API Key: " + (apiKey.isEmpty() ? "(empty)" : "***"));
         System.out.println("Testnet: " + testnet);
         System.out.println("Mode: " + (paperMode ? "PAPER" : "LIVE"));
+        if (enableV6) {
+            System.out.println("V6 Mode: ENABLED");
+        }
         System.out.println("============================================================");
 
         try {
             // Initialize components
-            initializeComponents(paperMode, apiKey, apiSecret);
+            initializeComponents(paperMode, enableV6, apiKey, apiSecret);
 
             // Start components
             startComponents();
@@ -140,7 +163,7 @@ public class TradingSystemLauncher {
         }
     }
 
-    private void initializeComponents(boolean paperMode, String apiKey, String apiSecret) {
+    private void initializeComponents(boolean paperMode, boolean enableV6, String apiKey, String apiSecret) {
         System.out.println("[Launcher] Initializing components...");
 
         // 1. Initialize Risk Checker
@@ -167,6 +190,39 @@ public class TradingSystemLauncher {
         // Pass paperMode and API credentials for live trading support
         executionEngine = new ExecutionEngine(riskChecker, paperMode, apiKey, apiSecret);
         System.out.println("[Launcher] ExecutionEngine initialized (paper=" + paperMode + ")");
+
+        // 4b. Initialize V6 Execution Engine (if enabled)
+        if (enableV6) {
+            System.out.println("[Launcher] Initializing V6 components...");
+            positionSynchronizer = new PositionSynchronizer();
+            productionAdapter = new ProductionExchangeAdapter(SYMBOL, paperMode, apiKey, apiSecret);
+            executionEngineV6 = new ExecutionEngineV6(SYMBOL, 10000.0, productionAdapter, positionSynchronizer);
+
+            // Wire PositionSynchronizer to ProductionExchangeAdapter WebSocket
+            productionAdapter.getDelegate().setOrderUpdateCallback(update -> {
+                if ("TRADE".equals(update.status)) {
+                    executionEngineV6.onFill(new ExecutionReport(
+                        update.clientOrderId,
+                        SYMBOL,
+                        TradeDirection.LONG,
+                        OrderType.LIMIT,
+                        update.filledQty,
+                        update.avgFillPrice,
+                        update.filledQty,
+                        update.avgFillPrice,
+                        com.trading.domain.trading.model.OrderStatus.FILLED,
+                        System.currentTimeMillis(),
+                        0.0,
+                        0.0
+                    ));
+                }
+            });
+
+            System.out.println("[Launcher] ExecutionEngineV6 initialized (paper=" + paperMode + ")");
+        }
+
+        // Store V6 flag for use in main loop
+        this.v6Enabled = enableV6;
 
         // 5. Initialize AlphaPool (Phase 1)
         initializeAlphaPool();
@@ -339,8 +395,12 @@ public class TradingSystemLauncher {
                 attributionTracker.trackOrder(order.getOrderId(), signal);
             }
 
-            // Try to submit order
-            if (executionEngine.submitOrder(order)) {
+            // Use V6 engine if enabled
+            if (v6Enabled && executionEngineV6 != null) {
+                executionEngineV6.onSignal(signal);
+                System.out.printf("[Launcher-V6] AlphaPool signal: %s conf=%.2f score=%.2f %s%n",
+                    signal.getType(), confidence, score, direction);
+            } else if (executionEngine.submitOrder(order)) {
                 System.out.printf("[Launcher] AlphaPool signal: %s conf=%.2f score=%.2f %s%n",
                     signal.getType(), confidence, score, direction);
             }
