@@ -17,12 +17,19 @@ import com.trading.adapter.shadow.FitnessResult;
 import com.trading.adapter.shadow.ShadowRunner;
 import com.trading.adapter.execution.BinanceExchangeAdapter;
 import com.trading.adapter.execution.ExecutionEngine;
+import com.trading.execution.v6.ExecutionEngineV6;
+import com.trading.execution.v6.ProductionExchangeAdapter;
+import com.trading.execution.v6.PositionSynchronizer;
 import com.trading.adapter.learning.MetaLearner;
 import com.trading.adapter.risk.PreTradeRiskChecker;
 import com.trading.config.ConfigUtil;
 import com.trading.domain.market.model.MarketData;
 import com.trading.domain.market.model.MarketRegime;
 import com.trading.domain.signal.AlphaType;
+import com.trading.domain.signal.CompositeAlphaSignal;
+import com.trading.domain.signal.CompositeSignal;
+import com.trading.domain.signal.AlphaSignal;
+import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.trading.model.OrderType;
@@ -38,6 +45,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -98,6 +106,7 @@ public class EvolvingTradingLauncher {
     private final ObjectMapper mapper = new ObjectMapper();
     private final AtomicBoolean wsConnected = new AtomicBoolean(false);
     private final AtomicLong lastKlineTime = new AtomicLong(0);
+    private final AtomicLong lastDepthUpdateTime = new AtomicLong(0);
     private final ScheduledExecutorService wsReconnectScheduler = Executors.newSingleThreadScheduledExecutor();
     private UMFuturesClientImpl restClient;
     private volatile boolean useRestFallback = false;
@@ -136,6 +145,12 @@ public class EvolvingTradingLauncher {
     private long startTime;
     private long lastPositionSync;
 
+    // V6 Execution components
+    private ExecutionEngineV6 executionEngineV6;
+    private ProductionExchangeAdapter productionAdapter;
+    private PositionSynchronizer positionSynchronizer;
+    private boolean v6Enabled = false;
+
     // Mode transition
     private int shadowTradesRequired = 20;
     private int shadowTradesCompleted = 0;
@@ -164,6 +179,8 @@ public class EvolvingTradingLauncher {
                 launcher.tradingMode = TradingMode.LIVE;
             } else if ("--rest-only".equalsIgnoreCase(arg)) {
                 launcher.restOnly = true;
+            } else if ("--v6".equalsIgnoreCase(arg)) {
+                launcher.v6Enabled = true;
             }
         }
 
@@ -242,7 +259,37 @@ public class EvolvingTradingLauncher {
         executionEngine.start();
         System.out.println("[Launcher] ExecutionEngine started (paper=" + isPaper + ")");
 
-        // 5b. Strategy selector and plugin hot-swap engine
+        // 5b. V6 Execution Engine (if enabled)
+        if (v6Enabled) {
+            System.out.println("[Launcher] Initializing V6 components...");
+            positionSynchronizer = new PositionSynchronizer();
+            productionAdapter = new ProductionExchangeAdapter(SYMBOL, isPaper, apiKey, apiSecret);
+            executionEngineV6 = new ExecutionEngineV6(SYMBOL, 10000.0, productionAdapter, positionSynchronizer);
+
+            // Wire PositionSynchronizer to ProductionExchangeAdapter WebSocket
+            productionAdapter.getDelegate().setOrderUpdateCallback(update -> {
+                if ("TRADE".equals(update.status)) {
+                    executionEngineV6.onFill(new ExecutionReport(
+                        update.clientOrderId,
+                        SYMBOL,
+                        TradeDirection.LONG,
+                        OrderType.LIMIT,
+                        update.filledQty,
+                        update.avgFillPrice,
+                        update.filledQty,
+                        update.avgFillPrice,
+                        OrderStatus.FILLED,
+                        System.currentTimeMillis(),
+                        0.0,
+                        0.0
+                    ));
+                }
+            });
+
+            System.out.println("[Launcher] ExecutionEngineV6 initialized (paper=" + isPaper + ")");
+        }
+
+        // 5c. Strategy selector and plugin hot-swap engine
         strategySelector = new StrategySelector();
         pluginEngine = new PluginHotSwapEngine(strategySelector);
         System.out.println("[Launcher] PluginHotSwapEngine started (plugins/ directory)");
@@ -390,36 +437,22 @@ public class EvolvingTradingLauncher {
 
             String sym = SYMBOL.toLowerCase();
 
-            // Subscribe to kline stream only first (most important)
-            final int[] connectionCount = {0};
-
-            wsClient.klineStream(sym, "1m", msg -> {
-                try {
-                    lastKlineTime.set(System.currentTimeMillis());
-                    if (!wsConnected.compareAndSet(false, true)) {
-                        // Already logged
-                    }
-                    handleKlineMessage(msg);
-                    connectionCount[0]++;
-                } catch (Exception e) {
-                    System.err.println("[WS] Kline error: " + e.getMessage());
-                }
-            });
-            System.out.println("[Launcher] Subscribed to: " + sym + "@kline_1m");
-
-            // Depth stream
+            // Depth stream only - Binance kline/aggTrade streams don't push data reliably
+            // Use REST polling for kline data instead (more reliable for periodic data)
             wsClient.diffDepthStream(sym, 100, msg -> {
-                try { handleDepthMessage(msg); } catch (Exception e) { }
+                try {
+                    System.out.println("[WS] Depth message received: " + msg.substring(0, Math.min(100, msg.length())) + "...");
+                    handleDepthMessage(msg);
+                } catch (Exception e) {
+                    System.err.println("[WS] Depth error: " + e.getMessage());
+                    e.printStackTrace();
+                }
             });
             System.out.println("[Launcher] Subscribed to: " + sym + "@depth@100ms");
 
-            // Trade stream
-            wsClient.aggTradeStream(sym, msg -> {
-                try { handleTradeMessage(msg); } catch (Exception e) { }
-            });
-            System.out.println("[Launcher] Subscribed to: " + sym + "@aggTrade");
-
-            System.out.println("[Launcher] WebSocket connected (3 streams active)");
+            System.out.println("[Launcher] WebSocket connected (1 stream: depth only)");
+            System.out.println("[Launcher] K-line data will be fetched via REST polling (Binance kline stream issue)");
+            System.out.println("[Launcher] Waiting for messages...");
 
             // Start connection health checker
             startConnectionHealthCheck();
@@ -476,33 +509,8 @@ public class EvolvingTradingLauncher {
 
                     // Only process if this is new data
                     if (timestamp > lastKlineTime.get()) {
-                        lastKlineTime.set(timestamp);
-                        lastPrice.set(close);
-
-                        ChanKLineProcessor.KLine kline = new ChanKLineProcessor.KLine(
-                            timestamp, open, high, low, close, volume
-                        );
-                        chanProcessor.addKLine(kline);
-
-                        MarketData marketData = createMarketData(close);
-                        MarketRegime regime = determineRegime();
-                        currentRegime.set(regime);
-
-                        var chanResult = chanExecutor.processShadow(marketData, regime);
-                        if (chanResult.isPresent()) {
-                            var result = chanResult.get();
-                            shadowSignalCount.incrementAndGet();
-                            handleChanSignal(result, marketData);
-                        }
-
-                        // Feed to ShadowRunners for evolution tracking
-                        if (championManager.hasChampion("dna-strategy")) {
-                            ChanMarketState chanState = toChanMarketState(regime);
-                            chan.ChanPricePoint pricePoint = createSimplePricePoint(close);
-                            championManager.feedMarketData("dna-strategy", marketData, chanState, pricePoint);
-                        }
-
-                        System.out.println("[REST] Kline update: price=" + close + ", regime=" + regime);
+                        processKline(timestamp, open, high, low, close, volume);
+                        System.out.println("[REST] Kline update: price=" + close + ", regime=" + currentRegime.get());
                     }
                 }
             }
@@ -514,25 +522,24 @@ public class EvolvingTradingLauncher {
     }
 
     private void startConnectionHealthCheck() {
-        // Check connection health every 15 seconds
+        // Depth stream health check - every 15 seconds
         wsReconnectScheduler.scheduleAtFixedRate(() -> {
             if (!running.get()) return;
 
             long now = System.currentTimeMillis();
-            long lastUpdate = lastKlineTime.get();
+            long lastDepthUpdate = lastDepthUpdateTime.get();
 
-            if (lastUpdate == 0) {
-                // No data ever received - WebSocket likely not actually connected
+            if (lastDepthUpdate == 0) {
+                // No depth data ever received - WebSocket likely not working
                 if (!useRestFallback) {
-                    System.err.println("[Launcher] No WS data in 15s - enabling REST fallback");
-                    enableRestFallback();
+                    System.err.println("[Launcher] No depth data in 15s - REST fallback active");
                 }
                 if (!restOnly) reconnectWebSocket();
-            } else if ((now - lastUpdate) > 30000) {
-                System.err.println("[Launcher] No WebSocket data for " + (now - lastUpdate) / 1000 + "s - reconnecting...");
+            } else if ((now - lastDepthUpdate) > 30000) {
+                System.err.println("[Launcher] No depth data for " + (now - lastDepthUpdate) / 1000 + "s - reconnecting...");
                 if (!restOnly) reconnectWebSocket();
-            } else if ((now - lastUpdate) > 5000) {
-                System.out.println("[Launcher] WS healthy: last data " + (now - lastUpdate) / 1000 + "s ago");
+            } else if ((now - lastDepthUpdate) > 5000) {
+                System.out.println("[Launcher] Depth WS healthy: last update " + (now - lastDepthUpdate) / 1000 + "s ago");
             }
         }, 15, 15, TimeUnit.SECONDS);
     }
@@ -567,6 +574,17 @@ public class EvolvingTradingLauncher {
     }
 
     private void startBackgroundTasks() {
+        // K-line REST polling - every 3 seconds to catch new klines
+        scheduler.scheduleAtFixedRate(() -> {
+            if (!running.get()) return;
+
+            try {
+                pollLatestKline();
+            } catch (Exception e) {
+                System.err.println("[REST] Kline polling error: " + e.getMessage());
+            }
+        }, 2, 3, TimeUnit.SECONDS);
+
         // Position sync task
         scheduler.scheduleAtFixedRate(() -> {
             try {
@@ -588,27 +606,18 @@ public class EvolvingTradingLauncher {
         // Evolution status task - print every 60 seconds
         scheduler.scheduleAtFixedRate(this::printEvolutionStatus, 60, 60, TimeUnit.SECONDS);
 
-        System.out.println("[Launcher] Background tasks started");
+        System.out.println("[Launcher] Background tasks started (K-line polling enabled)");
     }
 
-    private void handleKlineMessage(String msg) throws Exception {
-        JsonNode json = mapper.readTree(msg);
-        JsonNode kline = json.get("k");
-        if (kline == null) return;
-
-        long timestamp = json.has("E") ? json.get("E").asLong() : System.currentTimeMillis();
-        double open = kline.get("o").asDouble();
-        double high = kline.get("h").asDouble();
-        double low = kline.get("l").asDouble();
-        double close = kline.get("c").asDouble();
-        double volume = kline.get("v").asDouble();
-
+    /**
+     * Process a K-line from any source (REST or WebSocket)
+     */
+    private void processKline(long timestamp, double open, double high, double low, double close, double volume) throws Exception {
         lastPrice.set(close);
+        lastKlineTime.set(timestamp);
 
         // Create and process K-line
-        ChanKLineProcessor.KLine k = new ChanKLineProcessor.KLine(
-            timestamp, open, high, low, close, volume
-        );
+        ChanKLineProcessor.KLine k = new ChanKLineProcessor.KLine(timestamp, open, high, low, close, volume);
         chanProcessor.addKLine(k);
 
         // Create market data
@@ -633,25 +642,125 @@ public class EvolvingTradingLauncher {
         }
     }
 
+    // Price validation constants - symbol-agnostic (works for BTC, ETH, etc.)
+    private static final double MIN_PRICE = 1.0;          // Minimum price threshold
+    private static final double MAX_SPREAD_PERCENT = 0.01; // Max spread as 1% of price
+    private static final double MIN_QTY = 0.00001;        // Minimum quantity threshold
+    private static final double MAX_PRICE_DEVIATION = 0.05; // 5% max price deviation from current best
+
+    // Order book state for depth tracking
+    private final Map<Double, Double> bidLevels = new ConcurrentHashMap<>();
+    private final Map<Double, Double> askLevels = new ConcurrentHashMap<>();
+
     private void handleDepthMessage(String msg) throws Exception {
         JsonNode json = mapper.readTree(msg);
         if (json.has("b") && json.has("a")) {
             var bids = json.get("b");
             var asks = json.get("a");
+            double newBid = 0.0;
+            double newAsk = 0.0;
+            boolean bidValid = false;
+            boolean askValid = false;
+
+            // Process bids - diff update, only changes
             if (bids != null && bids.size() > 0) {
-                bidPrice.set(bids.get(0).get(0).asDouble());
+                for (JsonNode bid : bids) {
+                    double price = bid.get(0).asDouble();
+                    double qty = bid.get(1).asDouble();
+
+                    // Remove if quantity is 0
+                    if (qty == 0) {
+                        bidLevels.remove(price);
+                        continue;
+                    }
+
+                    // Validate price
+                    if (isValidPrice(price, true, qty)) {
+                        bidLevels.put(price, qty);
+                        if (price > newBid) {
+                            newBid = price;
+                            bidValid = true;
+                        }
+                    }
+                }
             }
+
+            // Process asks - diff update, only changes
             if (asks != null && asks.size() > 0) {
-                askPrice.set(asks.get(0).get(0).asDouble());
+                for (JsonNode ask : asks) {
+                    double price = ask.get(0).asDouble();
+                    double qty = ask.get(1).asDouble();
+
+                    // Remove if quantity is 0
+                    if (qty == 0) {
+                        askLevels.remove(price);
+                        continue;
+                    }
+
+                    // Validate price
+                    if (isValidPrice(price, false, qty)) {
+                        askLevels.put(price, qty);
+                        if (price < newAsk || newAsk == 0) {
+                            newAsk = price;
+                            askValid = true;
+                        }
+                    }
+                }
+            }
+
+            // Update best bid/ask
+            if (bidValid) {
+                bidPrice.set(newBid);
+            }
+            if (askValid) {
+                askPrice.set(newAsk);
+            }
+
+            // Update depth update timestamp
+            lastDepthUpdateTime.set(System.currentTimeMillis());
+
+            // Log spread validation (1% max spread)
+            if (bidValid && askValid && newBid > 0 && newAsk > 0) {
+                double spread = newAsk - newBid;
+                double maxSpread = newBid * MAX_SPREAD_PERCENT;
+                if (spread <= 0 || spread > maxSpread) {
+                    System.err.println("[WS] Invalid spread: " + String.format("%.2f", spread) +
+                        " (bid=" + String.format("%.2f", newBid) +
+                        " ask=" + String.format("%.2f", newAsk) +
+                        " max=" + String.format("%.2f", maxSpread) + ") - skipping");
+                }
             }
         }
     }
 
-    private void handleTradeMessage(String msg) throws Exception {
-        JsonNode json = mapper.readTree(msg);
-        if (json.has("p")) {
-            lastPrice.set(json.get("p").asDouble());
+    /**
+     * Validate price based on type (bid or ask)
+     * @param price the price to validate
+     * @param isBid true if bid price, false if ask price
+     * @param qty the quantity to validate
+     * @return true if price is valid
+     */
+    private boolean isValidPrice(double price, boolean isBid, double qty) {
+        // Check minimum price
+        if (price < MIN_PRICE) {
+            return false;
         }
+
+        // Check minimum quantity
+        if (qty < MIN_QTY) {
+            return false;
+        }
+
+        // Check price deviation from current best
+        double currentBest = isBid ? bidPrice.get() : askPrice.get();
+        if (currentBest > 0) {
+            double deviation = Math.abs(price - currentBest) / currentBest;
+            if (deviation > MAX_PRICE_DEVIATION) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private MarketData createMarketData(double price) {
@@ -761,7 +870,25 @@ public class EvolvingTradingLauncher {
             return;
         }
 
-        // Submit order
+        // Use V6 engine if enabled
+        if (v6Enabled && executionEngineV6 != null) {
+            // Create AlphaSignal for V6 using builder
+            CompositeAlphaSignal alphaSignal = CompositeAlphaSignal.builder()
+                .direction(direction)
+                .entryPrice(price)
+                .stopLossPrice(price * 0.995)
+                .takeProfitPrice(price * 1.015)
+                .confidence(confidence)
+                .urgency(0.6)
+                .source("CHAN_STRATEGY")
+                .build();
+            executionEngineV6.onSignal(alphaSignal);
+            System.out.printf("[V6-SIGNAL] %s: %s %.4f @ %.2f (conf=%.2f)%n",
+                tradingMode, direction, quantity, price, confidence);
+            return;
+        }
+
+        // Submit order via old engine
         boolean submitted = executionEngine.submitOrder(order);
         if (submitted) {
             executedCount.incrementAndGet();
