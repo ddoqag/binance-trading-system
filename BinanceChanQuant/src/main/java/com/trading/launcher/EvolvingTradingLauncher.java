@@ -821,8 +821,8 @@ public class EvolvingTradingLauncher {
         PatternSignal signal = result.signal;
         double confidence = result.confidence;
 
-        // Skip low confidence signals
-        if (confidence < 0.5) return;
+        // Skip very low confidence signals
+        if (confidence < 0.35) return;
 
         TradeDirection direction = null;
         if (signal.type == SignalType.BUY_1 || signal.type == SignalType.BUY_2 ||

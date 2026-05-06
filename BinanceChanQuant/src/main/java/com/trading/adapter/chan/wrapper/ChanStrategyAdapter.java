@@ -50,7 +50,7 @@ public abstract class ChanStrategyAdapter implements ChanPatternDetector {
 
     @Override
     public double getMinConfidence() {
-        return 0.5;
+        return 0.0;  // Allow any confidence for paper trading
     }
 
     @Override

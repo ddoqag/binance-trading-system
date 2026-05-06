@@ -12,10 +12,10 @@ public class ChanFeatureToggle {
         ENABLED    // Full trading enabled
     }
 
-    // Default modes
-    private Mode reverseMode = Mode.SHADOW;
-    private Mode trendMode = Mode.SHADOW;
-    private Mode gridMode = Mode.SHADOW;
+    // Default modes - ENABLED for active trading, SHADOW for resonance filter
+    private Mode reverseMode = Mode.ENABLED;
+    private Mode trendMode = Mode.ENABLED;
+    private Mode gridMode = Mode.ENABLED;
     private Mode resonanceMode = Mode.SHADOW;
 
     // Shadow traffic ratio (0.0 - 1.0)

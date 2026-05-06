@@ -53,8 +53,8 @@ public class ChanSignalValidator {
             return ValidationResult.reject("REGIME_INVALID", "Signal not valid for current regime: " + regime);
         }
 
-        // Confidence check
-        if (confidence < 0.5) {
+        // Confidence check - lower threshold for paper trading
+        if (confidence < 0.35) {
             blockedSignals.incrementAndGet();
             return ValidationResult.reject("CONFIDENCE_LOW", "Confidence below threshold: " + confidence);
         }
