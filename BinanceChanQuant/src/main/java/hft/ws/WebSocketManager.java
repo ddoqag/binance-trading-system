@@ -120,6 +120,12 @@ public class WebSocketManager {
         }
     }
 
+    // Price validation constants for ETHUSDT
+    private static final double MIN_PRICE = 1_000;      // ETH price threshold (>1000)
+    private static final double MAX_SPREAD = 100;       // Max allowed spread between bid/ask for ETH
+    private static final double MIN_QTY = 0.001;        // Minimum quantity threshold
+    private static final double MAX_PRICE_DEVIATION = 0.10; // 10% max price deviation from current best
+
     private void handleDepthMessage(String msg) {
         try {
             // Parse JSON depth update
@@ -127,22 +133,30 @@ public class WebSocketManager {
             com.fasterxml.jackson.databind.JsonNode json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(msg);
 
             if (json.has("b") && json.has("a")) {
-                // Parse bids
+                // Parse bids - only accept prices close to current bestBid
                 var bids = json.get("b");
                 if (bids != null && bids.size() > 0) {
-                    var bestBid = bids.get(0);
-                    double bidPrice = bestBid.get(0).asDouble();
-                    double bidQty = bestBid.get(1).asDouble();
-                    orderBook.replaceBids(Collections.singletonList(new OrderBook.PriceLevel(bidPrice, bidQty)));
+                    var bestBidNode = bids.get(0);
+                    double bidPrice = bestBidNode.get(0).asDouble();
+                    double bidQty = bestBidNode.get(1).asDouble();
+
+                    // Validate bid price
+                    if (isValidPrice(bidPrice, true)) {
+                        orderBook.replaceBids(Collections.singletonList(new OrderBook.PriceLevel(bidPrice, bidQty)));
+                    }
                 }
 
-                // Parse asks
+                // Parse asks - only accept prices close to current bestAsk
                 var asks = json.get("a");
                 if (asks != null && asks.size() > 0) {
-                    var bestAsk = asks.get(0);
-                    double askPrice = bestAsk.get(0).asDouble();
-                    double askQty = bestAsk.get(1).asDouble();
-                    orderBook.replaceAsks(Collections.singletonList(new OrderBook.PriceLevel(askPrice, askQty)));
+                    var bestAskNode = asks.get(0);
+                    double askPrice = bestAskNode.get(0).asDouble();
+                    double askQty = bestAskNode.get(1).asDouble();
+
+                    // Validate ask price
+                    if (isValidPrice(askPrice, false)) {
+                        orderBook.replaceAsks(Collections.singletonList(new OrderBook.PriceLevel(askPrice, askQty)));
+                    }
                 }
 
                 // Update OFI
@@ -150,24 +164,66 @@ public class WebSocketManager {
                 ofiCalc.updateDepth(snap.bestBid, snap.bestAsk, snap.bidVolume, snap.askVolume);
                 lastUpdateTime = System.currentTimeMillis();
 
-                System.out.println("[WS] Depth: bid=" + snap.bestBid + " ask=" + snap.bestAsk);
+                // Validate spread before processing
+                if (snap.bestBid > 0 && snap.bestAsk > 0) {
+                    double spread = snap.bestAsk - snap.bestBid;
+                    if (spread > 0 && spread <= MAX_SPREAD) {
+                        System.out.println("[WS] Depth OK: bid=" + snap.bestBid + " ask=" + snap.bestAsk + " spread=" + spread);
 
-                // Fire depth handler
-                if (depthHandler != null && snap.bestBid > 0 && snap.bestAsk > 0) {
-                    double microPrice = OFICalculator.calculateMicroPrice(
-                        snap.bestBid, snap.bestAsk, snap.bidVolume, snap.askVolume
-                    );
-                    depthHandler.accept(new MarketUpdate(
-                        snap.bestBid,
-                        snap.bestAsk,
-                        microPrice,
-                        ofiCalc.getOFI()
-                    ));
+                        // Fire depth handler
+                        if (depthHandler != null) {
+                            double microPrice = OFICalculator.calculateMicroPrice(
+                                snap.bestBid, snap.bestAsk, snap.bidVolume, snap.askVolume
+                            );
+                            depthHandler.accept(new MarketUpdate(
+                                snap.bestBid,
+                                snap.bestAsk,
+                                microPrice,
+                                ofiCalc.getOFI()
+                            ));
+                        }
+                    } else {
+                        System.err.println("[WS] Invalid spread: " + spread + " (bid=" + snap.bestBid + " ask=" + snap.bestAsk + ") - skipping");
+                    }
+                } else {
+                    System.err.println("[WS] Invalid price: bid=" + snap.bestBid + " ask=" + snap.bestAsk + " - skipping");
                 }
             }
         } catch (Exception e) {
             System.err.println("[WS] Depth parse error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Validate price based on type (bid or ask)
+     * @param price the price to validate
+     * @param isBid true if bid price, false if ask price
+     * @return true if price is valid
+     */
+    private boolean isValidPrice(double price, boolean isBid) {
+        // Check minimum price
+        if (price < MIN_PRICE) {
+            return false;
+        }
+
+        // Check minimum quantity
+        // (quantity check is done in the caller)
+
+        // Check price deviation from current best
+        if (isBid && orderBook.getBestBid() > 0) {
+            double deviation = Math.abs(price - orderBook.getBestBid()) / orderBook.getBestBid();
+            if (deviation > MAX_PRICE_DEVIATION) {
+                return false;
+            }
+        }
+        if (!isBid && orderBook.getBestAsk() > 0) {
+            double deviation = Math.abs(price - orderBook.getBestAsk()) / orderBook.getBestAsk();
+            if (deviation > MAX_PRICE_DEVIATION) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void handleTradeMessage(String msg) {

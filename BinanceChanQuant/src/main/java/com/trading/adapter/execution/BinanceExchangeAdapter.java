@@ -38,6 +38,13 @@ public class BinanceExchangeAdapter {
     private volatile double realizedPnl = 0.0;
     private volatile double totalRealizedPnl = 0.0;
 
+    // Balance tracking
+    private volatile double walletBalance = 0.0;
+    private volatile double availableBalance = 0.0;
+
+    // Order update callback for ProductionExchangeAdapter
+    private java.util.function.Consumer<OrderUpdate> orderUpdateCallback;
+
     // Statistics
     private final AtomicLong totalOrders = new AtomicLong(0);
     private final AtomicLong totalFills = new AtomicLong(0);
@@ -402,6 +409,92 @@ public class BinanceExchangeAdapter {
         // Parse account response for positions
         // This is a simplified implementation
         return new PositionInfo[0];
+    }
+
+    /**
+     * Sync balance from Binance exchange
+     */
+    public double syncBalanceFromExchange() {
+        if (paperTrading || client == null) return 0.0;
+
+        try {
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            Object resp = client.account().accountInformation(params);
+            String respStr = resp instanceof String ? (String) resp : resp.toString();
+            JsonNode node = objectMapper.readTree(respStr);
+
+            if (node.has("availableBalance")) {
+                availableBalance = node.get("availableBalance").asDouble();
+            }
+            if (node.has("walletBalance")) {
+                walletBalance = node.get("walletBalance").asDouble();
+            }
+
+            System.out.printf("[BinanceAdapter] Balance synced: available=%.2f USDT%n", availableBalance);
+            return availableBalance;
+        } catch (Exception e) {
+            System.err.println("[BinanceAdapter] Balance sync failed: " + e.getMessage());
+            return 0.0;
+        }
+    }
+
+    /**
+     * Get available balance
+     */
+    public double getAvailableBalance() {
+        return availableBalance;
+    }
+
+    /**
+     * Set leverage for the symbol
+     */
+    public void setLeverage(int leverage) {
+        if (paperTrading || client == null) return;
+
+        try {
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            params.put("symbol", symbol);
+            params.put("leverage", leverage);
+
+            Object resp = client.account().changeInitialLeverage(params);
+            System.out.printf("[BinanceAdapter] Leverage set: %dx for %s%n", leverage, symbol);
+        } catch (Exception e) {
+            System.err.println("[BinanceAdapter] Failed to set leverage: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Set order update callback for ProductionExchangeAdapter
+     */
+    public void setOrderUpdateCallback(java.util.function.Consumer<OrderUpdate> callback) {
+        this.orderUpdateCallback = callback;
+    }
+
+    /**
+     * Trigger order update callback (called from WebSocket handler)
+     */
+    public void onOrderUpdate(String clientOrderId, String status, double filledQty, double avgFillPrice) {
+        if (orderUpdateCallback != null) {
+            OrderUpdate update = new OrderUpdate(clientOrderId, status, filledQty, avgFillPrice);
+            orderUpdateCallback.accept(update);
+        }
+    }
+
+    /**
+     * Order update event for callback
+     */
+    public static class OrderUpdate {
+        public final String clientOrderId;
+        public final String status;
+        public final double filledQty;
+        public final double avgFillPrice;
+
+        public OrderUpdate(String clientOrderId, String status, double filledQty, double avgFillPrice) {
+            this.clientOrderId = clientOrderId;
+            this.status = status;
+            this.filledQty = filledQty;
+            this.avgFillPrice = avgFillPrice;
+        }
     }
 
     // ==================== Getters ====================

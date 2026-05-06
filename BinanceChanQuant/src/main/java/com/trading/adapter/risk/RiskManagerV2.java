@@ -249,7 +249,6 @@ public class RiskManagerV2 implements RiskManager {
 
     public double getNetPosition() { return positionTracker.getNetPosition(); }
 
-    @Override
     public int getConsecutiveLosses() { return consecutiveLosses.get(); }
 
     @Override
@@ -260,11 +259,15 @@ public class RiskManagerV2 implements RiskManager {
         m.dailyTrades = dailyTrades.get();
         m.dailyRejects = dailyRejects.get();
         m.winRate = 0.0;
-        m.equity = equity;
-        m.peakEquity = peakEquity;
-        m.drawdown = getDrawdown();
-        m.consecutiveLosses = consecutiveLosses.get();
         return m;
+    }
+
+    @Override
+    public void resetDailyCounters() {
+        dailyTrades.set(0);
+        dailyRejects.set(0);
+        consecutiveLosses.set(0);
+        lastResetTime.set(System.currentTimeMillis());
     }
 
     @Override
@@ -281,6 +284,18 @@ public class RiskManagerV2 implements RiskManager {
     @Override
     public boolean isCircuitBreakerTriggered() {
         return currentState == RiskState.KILL;
+    }
+
+    @Override
+    public double getSharpeRatio() {
+        // Simplified: return 0 as Sharpe ratio is not tracked
+        return 0.0;
+    }
+
+    @Override
+    public double getMaxDrawdown() {
+        if (peakEquity <= 0) return 0.0;
+        return (peakEquity - equity) / peakEquity;
     }
 
     public int getMaxOrdersPerMinute() { return maxOrdersPerMinute; }
