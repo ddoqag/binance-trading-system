@@ -45,8 +45,8 @@ public class ChampionChallengerManager {
     public void stop() {
         running = false;
         activeRunners.values().forEach(this::stopRunners);
-        scheduler.shutdown();
-        runnerExecutor.shutdown();
+        scheduler.shutdownNow();
+        runnerExecutor.shutdownNow();
         System.out.println("[ChampionChallenger] Manager stopped");
     }
 

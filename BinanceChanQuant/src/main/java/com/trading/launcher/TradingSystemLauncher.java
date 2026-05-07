@@ -359,12 +359,14 @@ public class TradingSystemLauncher {
             .atrPercent(atrPercent)
             .volumeRatio(1.0)
             .timestamp(System.currentTimeMillis())
+            .marketData(data)
             .build();
     }
 
     private void processAlphaPoolSignal(CompositeAlphaSignal signal, int iteration) {
         double score = signal.getScore(null);
-        if (score < 0.3) {
+        System.out.printf("[Launcher] processAlphaPoolSignal: score=%.3f conf=%.2f dir=%s%n", score, signal.getConfidence(), signal.getDirection());
+        if (score < 0.05) {
             return; // Low score, skip
         }
 
@@ -546,6 +548,7 @@ public class TradingSystemLauncher {
     static {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("[ShutdownHook] Caught shutdown signal");
+            // Note: instance may be null, rely on signal handler in run loop
         }));
     }
 }

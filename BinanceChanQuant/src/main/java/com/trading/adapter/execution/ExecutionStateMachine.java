@@ -22,7 +22,11 @@ public class ExecutionStateMachine {
 
     private final RiskManager riskManager;
     private final ScheduledExecutorService scheduler =
-        Executors.newSingleThreadScheduledExecutor();
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            return t;
+        });
 
     // State statistics
     private final ConcurrentHashMap<ExecutionMode, Integer> modeCounts =
@@ -215,6 +219,6 @@ public class ExecutionStateMachine {
     }
 
     public void shutdown() {
-        scheduler.shutdown();
+        scheduler.shutdownNow();
     }
 }

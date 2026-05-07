@@ -4,8 +4,11 @@ import com.trading.domain.signal.CompositeSignal;
 import com.trading.domain.signal.CompositeAlphaSignal;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.ExecutionReport;
+import com.trading.domain.trading.model.Order;
+import com.trading.domain.trading.model.OrderType;
 import com.trading.domain.trading.execution.ExecutionMode;
 import com.trading.domain.market.model.MarketData;
+import com.trading.adapter.execution.BinanceExchangeAdapter;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -33,6 +36,7 @@ public class ExecutionEngineV6 {
     private final DrawdownTracker drawdownTracker;
     private final DrawdownScaler drawdownScaler;
     private final ExchangeAdapter exchangeAdapter;
+    private final BinanceExchangeAdapter binanceAdapter;  // 真实Binance适配器
     private final String symbol;
 
     // Position Synchronizer (Binance 唯一真相源)
@@ -56,6 +60,15 @@ public class ExecutionEngineV6 {
     private volatile long cooldownEndTime = 0;
     private static final long COOLDOWN_MS = 30000;
 
+    // LIQUIDATING超时保护
+    private volatile long liquidatingStartTime = 0;
+    private static final long LIQUIDATING_TIMEOUT_MS = 60000;  // 60秒超时
+    private final AtomicBoolean wsConnected = new AtomicBoolean(false);
+
+    // ========== HFT防御系统 ==========
+    private final V6DefenseWrapper defenseWrapper;  // 防御FSM
+    private final V6DegradeWrapper degradeWrapper;  // 降级管理器
+
     public ExecutionEngineV6(String symbol) {
         this(symbol, 10000.0);
     }
@@ -69,18 +82,23 @@ public class ExecutionEngineV6 {
     }
 
     /**
-     * 完整构造函数（含 PositionSynchronizer）
+     * 使用真实BinanceExchangeAdapter的构造函数
      */
-    public ExecutionEngineV6(String symbol, double initialEquity, ExchangeAdapter adapter, PositionSynchronizer synchronizer) {
+    public ExecutionEngineV6(String symbol, double initialEquity, BinanceExchangeAdapter binanceAdapter, PositionSynchronizer synchronizer) {
         this.symbol = symbol;
         this.initialEquity = initialEquity;
+        this.binanceAdapter = binanceAdapter;
+        this.exchangeAdapter = null;  // 不使用模拟适配器
         this.riskGateway = new RiskGateway();
         this.planner = new ExecutionPlanner();
         this.orderManager = new OrderManager();
         this.drawdownTracker = new DrawdownTracker();
         this.drawdownScaler = new DrawdownScaler();
-        this.exchangeAdapter = adapter;
         this.positionSynchronizer = synchronizer;
+
+        // 初始化防御系统
+        this.defenseWrapper = new V6DefenseWrapper();
+        this.degradeWrapper = new V6DegradeWrapper();
 
         // 注册仓位同步回调
         if (synchronizer != null) {
@@ -93,6 +111,44 @@ public class ExecutionEngineV6 {
             synchronizer.setOnPositionMismatch(reason -> {
                 System.err.printf("[V6] ⚠️ Position mismatch: %s - STOP TRADING%n", reason);
                 positionConsistent.set(false);
+                // 触发防御系统的KILL
+                defenseWrapper.kill();
+            });
+        }
+    }
+
+    /**
+     * 完整构造函数（含 PositionSynchronizer）
+     */
+    public ExecutionEngineV6(String symbol, double initialEquity, ExchangeAdapter adapter, PositionSynchronizer synchronizer) {
+        this.symbol = symbol;
+        this.initialEquity = initialEquity;
+        this.binanceAdapter = null;
+        this.exchangeAdapter = adapter;
+        this.riskGateway = new RiskGateway();
+        this.planner = new ExecutionPlanner();
+        this.orderManager = new OrderManager();
+        this.drawdownTracker = new DrawdownTracker();
+        this.drawdownScaler = new DrawdownScaler();
+        this.positionSynchronizer = synchronizer;
+
+        // 初始化防御系统
+        this.defenseWrapper = new V6DefenseWrapper();
+        this.degradeWrapper = new V6DegradeWrapper();
+
+        // 注册仓位同步回调
+        if (synchronizer != null) {
+            synchronizer.setOnPositionChange(pos -> {
+                System.out.printf("[V6] Position synced: %s%n", pos);
+            });
+            synchronizer.setOnAccountChange(state -> {
+                System.out.printf("[V6] Account synced: equity=%.2f%n", state.getEquity());
+            });
+            synchronizer.setOnPositionMismatch(reason -> {
+                System.err.printf("[V6] ⚠️ Position mismatch: %s - STOP TRADING%n", reason);
+                positionConsistent.set(false);
+                // 触发防御系统的KILL
+                defenseWrapper.kill();
             });
         }
     }
@@ -156,6 +212,36 @@ public class ExecutionEngineV6 {
             return;
         }
 
+        // ========== HFT防御系统检查 ==========
+        // 计算公共变量（避免重复调用）
+        double currentPos = getPosition();
+        boolean isClosing = (currentPos > 0 && signalDir < 0) || (currentPos < 0 && signalDir > 0);
+        double equity = getEquity();
+        double drawdown = drawdownTracker.update(equity);
+
+        // DefenseFSM检查
+        V6DefenseWrapper.DefenseResult defenseResult = defenseWrapper.checkSignal(currentPos, signalDir);
+        if (!defenseResult.allowed) {
+            System.out.printf("[V6] Signal blocked by defense: %s%n", defenseResult.reason);
+            rejectedSignals.incrementAndGet();
+            degradeWrapper.recordError();
+            return;
+        }
+
+        // DegradeManager检查
+        degradeWrapper.updateMetrics(drawdown, wsConnected.get());
+        if (!degradeWrapper.canTrade(isClosing)) {
+            System.out.printf("[V6] Signal blocked by degrade: %s%n", degradeWrapper.getStatus());
+            rejectedSignals.incrementAndGet();
+            degradeWrapper.recordError();
+            return;
+        }
+
+        // 如果DefenseFSM要求立即平仓，调整delta
+        if (defenseResult.needsImmediateClose()) {
+            System.out.printf("[V6] Defense requires immediate close: delta=%.4f%n", defenseResult.adjustedDelta);
+        }
+
         // ========== 风控状态机检查 ==========
         if (isInCooldown.get()) {
             if (System.currentTimeMillis() > cooldownEndTime) {
@@ -171,9 +257,17 @@ public class ExecutionEngineV6 {
 
         // 强制平仓中检查
         if (isLiquidating.get()) {
+            // 检查LIQUIDATING超时
+            if (liquidatingStartTime > 0 &&
+                System.currentTimeMillis() - liquidatingStartTime > LIQUIDATING_TIMEOUT_MS) {
+                System.err.printf("[V6] ⚠️ LIQUIDATING timeout (%.1fs), forcing recovery%n",
+                    (System.currentTimeMillis() - liquidatingStartTime) / 1000.0);
+                isLiquidating.set(false);
+                liquidatingStartTime = 0;
+                positionConsistent.set(false);  // 标记需要重新同步
+            }
+
             if (signalDir != 0) {
-                double currentPos = getPosition();  // 从 PositionSynchronizer 获取真实数据
-                boolean isClosing = (currentPos > 0 && signalDir < 0) || (currentPos < 0 && signalDir > 0);
                 if (!isClosing) {
                     System.out.printf("[V6] Signal blocked: LIQUIDATING (currentPos=%.4f)%n", currentPos);
                     rejectedSignals.incrementAndGet();
@@ -187,7 +281,6 @@ public class ExecutionEngineV6 {
         double rawTarget = signalDir * confidence;
 
         // 4. 风控裁决
-        double currentPos = getPosition();  // 从 PositionSynchronizer 获取真实数据
         Decision decision = riskGateway.evaluate(signal, signalDir, currentPos);
         if (!decision.approved()) {
             rejectedSignals.incrementAndGet();
@@ -204,8 +297,7 @@ public class ExecutionEngineV6 {
         double delta = decision.approvedSize() - totalPosition;
 
         // 6. DrawdownScaler - 根据真实equity缩放仓位
-        double equity = getEquity();  // 从 PositionSynchronizer 获取真实权益
-        double drawdown = drawdownTracker.update(equity);
+        // equity和drawdown已在防御检查时计算
         double scale = drawdownScaler.scale(drawdown);
 
         // 最低保证金检查：如果 equity 低于初始值的 5%，不允许开仓（防止爆仓）
@@ -244,6 +336,18 @@ public class ExecutionEngineV6 {
     }
 
     private void placeOrder(double delta, double price) {
+        double currentPos = getPosition();
+        boolean isAddingToPosition = (currentPos > 0 && delta > 0) || (currentPos < 0 && delta < 0);
+        boolean isClosing = (currentPos > 0 && delta < 0) || (currentPos < 0 && delta > 0);
+
+        // 修复Direction冲突检测：如果有反向持仓，执行平仓而不是开仓
+        if (!isClosing && !isAddingToPosition && Math.abs(currentPos) > 1e-6) {
+            System.out.printf("[V6] ⚠️ Direction conflict: currentPos=%.4f, delta=%.4f - closing position%n",
+                currentPos, delta);
+            delta = -currentPos;  // 完全平仓
+            isClosing = true;
+        }
+
         TradeDirection side = delta > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
         double qty = Math.abs(delta);
 
@@ -281,25 +385,42 @@ public class ExecutionEngineV6 {
             qty = maxQty;
         }
 
-        // 检查仓位方向 - 防止反向加仓（如果是同一方向才下单）
-        double currentPos = getPosition();
-        boolean isAddingToPosition = (currentPos > 0 && delta > 0) || (currentPos < 0 && delta < 0);
-        boolean isClosing = (currentPos > 0 && delta < 0) || (currentPos < 0 && delta > 0);
+        // 使用真实Binance适配器下单
+        if (binanceAdapter != null) {
+            // 平仓单使用CLOSE方向，启用reduceOnly
+            com.trading.domain.trading.model.Order binanceOrder = new com.trading.domain.trading.model.Order(
+                "v6-" + System.nanoTime(),
+                symbol,
+                isClosing ? TradeDirection.CLOSE : side,
+                OrderType.LIMIT,
+                qty,
+                price,
+                "V6",
+                0.5
+            );
 
-        if (!isClosing && !isAddingToPosition && Math.abs(currentPos) > 1e-6) {
-            System.out.printf("[V6] ⚠️ Direction conflict: currentPos=%.4f, delta=%.4f - use reduceOnly%n",
-                currentPos, delta);
-            // 发送 close 指令而不是开仓
-        }
+            ExecutionReport report = binanceAdapter.sendOrder(binanceOrder);
 
-        // 发送到 Binance
-        String orderId = exchangeAdapter.placeOrder(symbol, side, qty, price);
-
-        if (orderId != null) {
-            Order order = new Order(orderId, symbol, side, qty, price);
-            orderManager.addOrder(order);
-            System.out.printf("[V6] Order placed: %s %s %.4f @ %.2f%n",
-                orderId, side, qty, price);
+            if (report != null && report.getStatus() != com.trading.domain.trading.model.OrderStatus.REJECTED) {
+                // 使用内部Order类跟踪
+                Order placedOrder = new Order(report.getOrderId(), symbol, binanceOrder.getSide(), qty, price);
+                orderManager.addOrder(placedOrder);
+                System.out.printf("[V6] Order placed: %s %s %.4f @ %.2f (reduceOnly=%b)%n",
+                    report.getOrderId(), binanceOrder.getSide(), qty, price, isClosing);
+            } else {
+                System.err.printf("[V6] Order rejected: delta=%.4f, price=%.2f%n", delta, price);
+            }
+        } else if (exchangeAdapter != null) {
+            // 使用旧的模拟适配器（兼容模式）
+            String orderId = exchangeAdapter.placeOrder(symbol, side, qty, price);
+            if (orderId != null) {
+                Order order = new Order(orderId, symbol, side, qty, price);
+                orderManager.addOrder(order);
+                System.out.printf("[V6] Order placed (simulated): %s %s %.4f @ %.2f%n",
+                    orderId, side, qty, price);
+            }
+        } else {
+            System.err.printf("[V6] No exchange adapter available%n");
         }
     }
 
@@ -325,10 +446,14 @@ public class ExecutionEngineV6 {
         // 检查LIQUIDATING状态
         if (isLiquidating.get() && Math.abs(currentPos) < 1e-6) {
             isLiquidating.set(false);
+            liquidatingStartTime = 0;  // 重置超时计时
             isInCooldown.set(true);
             cooldownEndTime = System.currentTimeMillis() + COOLDOWN_MS;
             System.out.printf("[V6] LIQUIDATING complete -> COOLDOWN (%.1fs)%n", COOLDOWN_MS / 1000.0);
         }
+
+        // 记录成功交易，更新防御系统
+        degradeWrapper.recordSuccess();
     }
 
     /**
@@ -342,6 +467,51 @@ public class ExecutionEngineV6 {
         }
         System.out.printf("[V6] Account update: balance=%.2f unrealized=%.2f equity=%.2f%n",
             walletBalance, unrealizedPnL, getEquity());
+    }
+
+    // ========== WebSocket状态回调 ==========
+
+    /**
+     * WebSocket断开回调 - 启动LIQUIDATING超时检测
+     */
+    public void onWebSocketDisconnect() {
+        wsConnected.set(false);
+        if (isLiquidating.get()) {
+            // WebSocket断开且处于LIQUIDATING状态，启动超时检测
+            if (liquidatingStartTime == 0) {
+                liquidatingStartTime = System.currentTimeMillis();
+                System.err.printf("[V6] ⚠️ WebSocket disconnected during LIQUIDATING, timeout started%n");
+            }
+        }
+    }
+
+    /**
+     * WebSocket连接回调 - 重置状态
+     */
+    public void onWebSocketConnect() {
+        wsConnected.set(true);
+        // 重置任何正在进行的LIQUIDATING超时
+        if (liquidatingStartTime > 0 && !isLiquidating.get()) {
+            liquidatingStartTime = 0;
+        }
+    }
+
+    /**
+     * 启动强制平仓流程
+     */
+    public void startLiquidation() {
+        if (!isLiquidating.get()) {
+            isLiquidating.set(true);
+            liquidatingStartTime = System.currentTimeMillis();
+            System.out.printf("[V6] ⚠️ LIQUIDATING started (timeout=%.1fs)%n", LIQUIDATING_TIMEOUT_MS / 1000.0);
+        }
+    }
+
+    /**
+     * 获取WebSocket连接状态
+     */
+    public boolean isWebSocketConnected() {
+        return wsConnected.get();
     }
 
     // ========== Getters ==========

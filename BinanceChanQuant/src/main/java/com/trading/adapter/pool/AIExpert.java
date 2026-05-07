@@ -48,7 +48,7 @@ public class AIExpert extends AlphaExpert.BaseAlphaExpert {
                 .direction(direction)
                 .confidence(confidence)
                 .urgency(calculateUrgency(context))
-                .horizonMinutes(30)
+                .horizonMinutes(120)
                 .expectedReturn(calculateExpectedReturn(context, direction))
                 .expectedVolatility(context.getAtrPercent())
                 .entryPrice(context.getCurrentPrice())

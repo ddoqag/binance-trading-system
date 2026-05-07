@@ -84,7 +84,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
-                    <mainClass>com.trading.launcher.TradingSystemLauncher</mainClass>
+                    <mainClass>com.trading.launcher.ChanWebSocketLauncher</mainClass>
                 </configuration>
             </plugin>
             <plugin>
@@ -99,7 +99,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.trading.launcher.TradingSystemLauncher</mainClass>
+                            <mainClass>com.trading.launcher.ChanWebSocketLauncher</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

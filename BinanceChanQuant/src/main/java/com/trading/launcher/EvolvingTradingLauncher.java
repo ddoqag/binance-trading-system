@@ -4,6 +4,9 @@ import com.binance.connector.futures.client.impl.UMFuturesClientImpl;
 import com.binance.connector.futures.client.impl.UMWebsocketClientImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.trading.adapter.pool.AlphaPool;
+import com.trading.adapter.pool.AIExpert;
+import com.trading.adapter.pool.ChanExpert;
 import com.trading.adapter.chan.analyzer.ChanKLineProcessor;
 import com.trading.adapter.chan.config.ChanFeatureToggle;
 import com.trading.adapter.chan.detector.ChanPatternDetector.SignalType;
@@ -29,6 +32,8 @@ import com.trading.domain.signal.AlphaType;
 import com.trading.domain.signal.CompositeAlphaSignal;
 import com.trading.domain.signal.CompositeSignal;
 import com.trading.domain.signal.AlphaSignal;
+import com.trading.domain.signal.MarketContext;
+import com.trading.domain.signal.VolatilityRegime;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderStatus;
@@ -94,6 +99,9 @@ public class EvolvingTradingLauncher {
     private ChanAutoOptimizer chanOptimizer;
 
     private MetaLearner metaLearner;
+    private AlphaPool alphaPool;
+    private AIExpert aiExpert;
+    private ChanExpert chanExpert;
     private PreTradeRiskChecker riskChecker;
     private BinanceExchangeAdapter exchangeAdapter;
     private ExecutionEngine executionEngine;
@@ -240,6 +248,14 @@ public class EvolvingTradingLauncher {
         // 2. Meta-Learner
         metaLearner = MetaLearner.defaults();
         System.out.println("[Launcher] MetaLearner initialized: " + metaLearner.getWeightsString());
+
+        // 2b. AlphaPool and Experts
+        alphaPool = new AlphaPool();
+        aiExpert = new AIExpert(metaLearner);
+        chanExpert = new ChanExpert(chanBridge, chanValidator, chanProcessor, chanToggle);
+        alphaPool.registerExpert(aiExpert);
+        alphaPool.registerExpert(chanExpert);
+        System.out.println("[Launcher] AlphaPool initialized with " + alphaPool.getExpertCount() + " experts");
 
         // 3. Risk checker
         riskChecker = PreTradeRiskChecker.defaults();
@@ -634,6 +650,17 @@ public class EvolvingTradingLauncher {
             handleChanSignal(result, marketData);
         }
 
+        // Generate AI signal via AlphaPool
+        MarketContext aiContext = createMarketContext(marketData, regime);
+        AlphaPool.PoolStatus poolStatus = alphaPool.getStatus();
+        System.out.printf("[Launcher-AI] Pool status: experts=%d active=%d signals=%d%n",
+            poolStatus.getTotalExperts(), poolStatus.getActiveExperts(), poolStatus.getTotalSignalsGenerated());
+        CompositeAlphaSignal aiSignal = alphaPool.generateCompositeSignal(aiContext);
+        if (aiSignal != null) {
+            System.out.printf("[Launcher-AI] Signal: dir=%s conf=%.2f score=%.2f %s%n",
+                aiSignal.getDirection(), aiSignal.getConfidence(), aiSignal.getScore(aiContext), aiSignal.getSource());
+        }
+
         // Feed to ShadowRunners for evolution tracking
         if (championManager.hasChampion("dna-strategy")) {
             ChanMarketState chanState = toChanMarketState(regime);
@@ -774,6 +801,30 @@ public class EvolvingTradingLauncher {
         data.setVolatility(0.01);
         data.setTimestamp(System.currentTimeMillis());
         return data;
+    }
+
+    private MarketContext createMarketContext(MarketData marketData, MarketRegime regime) {
+        // Estimate ATR from volatility (simplified)
+        double atr = marketData.getLastPrice() * marketData.getVolatility();
+        double atrPercent = marketData.getVolatility();
+
+        // Determine volatility regime
+        VolatilityRegime volRegime = VolatilityRegime.MEDIUM;
+        if (atrPercent > 0.05) volRegime = VolatilityRegime.EXTREME;
+        else if (atrPercent > 0.03) volRegime = VolatilityRegime.HIGH;
+        else if (atrPercent > 0.01) volRegime = VolatilityRegime.MEDIUM;
+        else if (atrPercent > 0.005) volRegime = VolatilityRegime.LOW;
+        else volRegime = VolatilityRegime.VERY_LOW;
+
+        return MarketContext.builder()
+            .regime(regime)
+            .currentPrice(marketData.getLastPrice())
+            .atr(atr)
+            .atrPercent(atrPercent)
+            .volatilityRegime(volRegime)
+            .timestamp(marketData.getTimestamp())
+            .marketData(marketData)
+            .build();
     }
 
     private MarketRegime determineRegime() {

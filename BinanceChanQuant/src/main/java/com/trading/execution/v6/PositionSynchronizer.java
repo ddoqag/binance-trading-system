@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * PositionSynchronizer - 仓位同步器（核心模块）
@@ -16,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 2. 解析真实成交方向（解决 onFill 硬编码 LONG 问题）
  * 3. 更新仓位（覆盖，不推导）
  * 4. 更新账户权益（V6 DrawdownScaler 核心依赖）
+ * 5. 健康检查 - 检测数据过期和仓位不一致
  *
  * 架构： Binance(唯一真相) → WebSocket → PositionSynchronizer → PositionManager(只读缓存) → ExecutionEngine
  */
@@ -27,14 +31,31 @@ public class PositionSynchronizer {
     private final AtomicBoolean positionConsistent = new AtomicBoolean(true);
     private final double TOLERANCE = 0.0001;
 
+    // ========== 健康检查 ==========
+    private volatile long lastUpdateTime = 0;
+    private volatile boolean stale = false;
+    private static final long STALE_THRESHOLD_MS = 30000;  // 30秒无更新视为过期
+    private final ScheduledExecutorService healthCheckScheduler;
+
     // 回调：仓位变化时通知
     private java.util.function.Consumer<Position> onPositionChange;
     // 回调：账户变化时通知
     private java.util.function.Consumer<AccountState> onAccountChange;
     // 回调：仓位不一致时触发
     private java.util.function.Consumer<String> onPositionMismatch;
+    // 回调：数据过期时触发
+    private java.util.function.Consumer<Long> onDataStale;
 
-    public PositionSynchronizer() {}
+    public PositionSynchronizer() {
+        // 启动健康检查线程
+        this.healthCheckScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r);
+            t.setDaemon(true);
+            t.setName("PositionSync-HealthCheck");
+            return t;
+        });
+        this.healthCheckScheduler.scheduleAtFixedRate(this::healthCheck, 5, 5, TimeUnit.SECONDS);
+    }
 
     /**
      * 设置仓位变化回调
@@ -55,6 +76,13 @@ public class PositionSynchronizer {
      */
     public void setOnPositionMismatch(java.util.function.Consumer<String> callback) {
         this.onPositionMismatch = callback;
+    }
+
+    /**
+     * 设置数据过期回调（触发警告）
+     */
+    public void setOnDataStale(java.util.function.Consumer<Long> callback) {
+        this.onDataStale = callback;
     }
 
     // ================================
@@ -127,6 +155,10 @@ public class PositionSynchronizer {
         // 更新账户状态
         accountState.update(walletBalance, availableBalance, unrealizedPnL);
 
+        // 更新最后时间戳（健康检查用）
+        lastUpdateTime = System.currentTimeMillis();
+        stale = false;
+
         if (onAccountChange != null) {
             onAccountChange.accept(accountState);
         }
@@ -173,6 +205,10 @@ public class PositionSynchronizer {
         if (onPositionChange != null) {
             onPositionChange.accept(pos);
         }
+
+        // 更新最后时间戳（健康检查用）
+        lastUpdateTime = System.currentTimeMillis();
+        stale = false;
     }
 
     /**
@@ -238,6 +274,55 @@ public class PositionSynchronizer {
 
     public boolean isConsistent() {
         return positionConsistent.get();
+    }
+
+    /**
+     * 健康检查 - 每5秒运行一次
+     * 检测数据是否过期
+     */
+    private void healthCheck() {
+        long now = System.currentTimeMillis();
+        if (lastUpdateTime > 0 && now - lastUpdateTime > STALE_THRESHOLD_MS) {
+            if (!stale) {
+                stale = true;
+                long staleDuration = now - lastUpdateTime;
+                System.err.printf("[PositionSync] ⚠️ Data stale: last update %.1fs ago%n",
+                    staleDuration / 1000.0);
+                if (onDataStale != null) {
+                    onDataStale.accept(staleDuration);
+                }
+            }
+        }
+    }
+
+    /**
+     * 数据是否过期
+     */
+    public boolean isStale() {
+        return stale;
+    }
+
+    /**
+     * 获取最后更新时间
+     */
+    public long getLastUpdateTime() {
+        return lastUpdateTime;
+    }
+
+    /**
+     * 获取距离最后更新的时间（毫秒）
+     */
+    public long getTimeSinceUpdate() {
+        if (lastUpdateTime == 0) return 0;
+        return System.currentTimeMillis() - lastUpdateTime;
+    }
+
+    /**
+     * 清理资源
+     */
+    public void shutdown() {
+        healthCheckScheduler.shutdownNow();
+        System.out.println("[PositionSync] Health check scheduler stopped");
     }
 
     /**

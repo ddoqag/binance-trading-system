@@ -66,7 +66,7 @@ public class BinanceExchangeAdapter {
     private void setProxy() {
         try {
             // In WSL2, 127.0.0.1 refers to WSL2 itself, so use Windows gateway IP
-            String proxyHost = "192.168.16.1";
+            String proxyHost = "127.0.0.1";
             int proxyPort = 7897;
 
             Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
@@ -148,8 +148,15 @@ public class BinanceExchangeAdapter {
         }
 
         try {
-            // Position sync would query account here
-            // For now, return empty - positions are tracked locally
+            // First sync from exchange, then return local position state
+            syncPositionsFromExchange();
+
+            // Return local position state as PositionInfo array
+            if (Math.abs(currentPosition) > 0.0001) {
+                return new PositionInfo[] {
+                    new PositionInfo(symbol, currentPosition, avgEntryPrice, unrealizedPnl, 0)
+                };
+            }
             return new PositionInfo[0];
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Get positions failed: " + e.getMessage());

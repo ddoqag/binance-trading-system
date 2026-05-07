@@ -32,7 +32,11 @@ public class ExecutionEngine {
     private final BlockingQueue<ExecutionReport> reportQueue = new LinkedBlockingQueue<>(1000);
 
     // Threads
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ExecutorService executor = Executors.newFixedThreadPool(4, r -> {
+        Thread t = new Thread(r);
+        t.setDaemon(true);
+        return t;
+    });
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     // Statistics
@@ -88,7 +92,7 @@ public class ExecutionEngine {
 
             stateMachine.shutdown();
             algoEngine.stop();
-            executor.shutdown();
+            executor.shutdownNow();
 
             printStatistics();
 

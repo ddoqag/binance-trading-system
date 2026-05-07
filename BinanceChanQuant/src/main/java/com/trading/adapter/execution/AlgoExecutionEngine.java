@@ -18,7 +18,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AlgoExecutionEngine {
 
     private final ConcurrentHashMap<String, AlgoExecution> activeAlgos = new ConcurrentHashMap<>();
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
+        Thread t = new Thread(r);
+        t.setDaemon(true);
+        return t;
+    });
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     public AlgoExecutionEngine() {
@@ -85,7 +89,7 @@ public class AlgoExecutionEngine {
      */
     public void stop() {
         if (isRunning.compareAndSet(true, false)) {
-            scheduler.shutdown();
+            scheduler.shutdownNow();
             activeAlgos.clear();
             System.out.println("[AlgoExecutionEngine] Stopped");
         }

@@ -67,11 +67,19 @@ public class AlphaPool {
         }
 
         // Parallel signal collection from all active experts
-        List<AlphaSignal> signals = experts.values().parallelStream()
+        List<AlphaSignal> signals = experts.values().stream()
             .filter(AlphaExpert::isActive)
             .map(expert -> {
                 try {
-                    return expert.generate(context);
+                    AlphaSignal sig = expert.generate(context);
+                    if (sig == null) {
+                        System.out.println("[AlphaPool] Expert " + expert.getId() + " returned null");
+                    } else if (sig.getConfidence() <= 0) {
+                        System.out.println("[AlphaPool] Expert " + expert.getId() + " confidence=" + sig.getConfidence());
+                    } else {
+                        System.out.println("[AlphaPool] Expert " + expert.getId() + " sig conf=" + sig.getConfidence() + " dir=" + sig.getDirection());
+                    }
+                    return sig;
                 } catch (Exception e) {
                     System.err.println("[AlphaPool] Expert " + expert.getId() + " failed: " + e.getMessage());
                     return null;
@@ -80,6 +88,8 @@ public class AlphaPool {
             .filter(signal -> signal != null && signal.getConfidence() > 0)
             .collect(Collectors.toList());
 
+        System.out.println("[AlphaPool] Collected " + signals.size() + " signals from experts");
+
         if (signals.isEmpty()) {
             return null;
         }
@@ -87,7 +97,9 @@ public class AlphaPool {
         totalSignalsGenerated.addAndGet(signals.size());
 
         // Fuse signals
-        return fuseSignals(signals, context);
+        CompositeAlphaSignal result = fuseSignals(signals, context);
+        System.out.println("[AlphaPool] fuseSignals returned " + (result != null ? "signal" : "null") + " totalSignalsGenerated=" + totalSignalsGenerated.get());
+        return result;
     }
 
     /**
