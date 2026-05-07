@@ -63,6 +63,9 @@ public class ExecutionEngine {
         // Initialize exchange adapter
         String symbol = "BTCUSDT"; // Default, should be from config
         this.exchangeAdapter = new BinanceExchangeAdapter(symbol, paperTrading, apiKey, apiSecret);
+
+        // Wire up algo engine to use exchange adapter for live trading
+        algoEngine.setExchangeAdapter(exchangeAdapter);
     }
 
     /**
@@ -166,6 +169,17 @@ public class ExecutionEngine {
 
                 // Check if should use algo
                 if (executionPlan.isUseAlgo()) {
+                    // Set algo type from execution plan, not from order's strategy field
+                    routedOrder = new Order(
+                        routedOrder.getOrderId(),
+                        routedOrder.getSymbol(),
+                        routedOrder.getSide(),
+                        routedOrder.getOrderType(),
+                        routedOrder.getQuantity(),
+                        routedOrder.getPrice(),
+                        executionPlan.getAlgoType(), // Use from execution plan
+                        routedOrder.getUrgency()
+                    );
                     algoEngine.startAlgo(routedOrder, marketData);
                 } else {
                     // Direct execution

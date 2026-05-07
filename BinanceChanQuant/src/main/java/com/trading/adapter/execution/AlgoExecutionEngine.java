@@ -24,8 +24,16 @@ public class AlgoExecutionEngine {
         return t;
     });
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
+    private BinanceExchangeAdapter exchangeAdapter;
 
     public AlgoExecutionEngine() {
+    }
+
+    /**
+     * Set exchange adapter for live trading
+     */
+    public void setExchangeAdapter(BinanceExchangeAdapter adapter) {
+        this.exchangeAdapter = adapter;
     }
 
     /**
@@ -46,9 +54,18 @@ public class AlgoExecutionEngine {
         AlgoExecution execution = new AlgoExecution(order, algo, marketData);
         activeAlgos.put(order.getOrderId(), execution);
 
+        // Send first slice immediately, then schedule subsequent slices
         scheduler.submit(() -> {
-            execution.executeSlice();
+            execution.executeSlice(); // First slice immediate
         });
+
+        // Schedule periodic checks for subsequent slices
+        scheduler.scheduleAtFixedRate(() -> {
+            AlgoExecution exec = activeAlgos.get(order.getOrderId());
+            if (exec != null && !exec.isDone() && exec.shouldExecute()) {
+                exec.executeSlice();
+            }
+        }, 1, 1, TimeUnit.SECONDS);
 
         System.out.printf("[AlgoExecutionEngine] Started %s algo for order %s%n",
             algoType, order.getOrderId());
@@ -142,7 +159,7 @@ public class AlgoExecutionEngine {
             this.numSlices = 10;
             this.sliceQuantity = totalQuantity / numSlices;
             this.startTime = System.currentTimeMillis();
-            this.sliceInterval = 60000; // 1 minute
+            this.sliceInterval = 10000; // 10 seconds for live trading (reduced from 60s)
         }
 
         @Override
@@ -154,7 +171,10 @@ public class AlgoExecutionEngine {
             long sliceTime = startTime + (currentSlice * sliceInterval);
             long now = System.currentTimeMillis();
 
-            if (now < sliceTime) {
+            // For live trading, reduce first-slice delay to 5 seconds for faster execution
+            if (currentSlice == 0 && (now - startTime) < 6000) {
+                // Allow immediate first slice for live trading
+            } else if (now < sliceTime) {
                 return null;
             }
 
@@ -164,12 +184,18 @@ public class AlgoExecutionEngine {
             slice.orderType = OrderType.LIMIT;
             slice.timeInForce = 300;
 
-            if (marketData != null) {
-                if (order.getSide() == TradeDirection.LONG) {
-                    slice.price = marketData.getAskPrice() - marketData.getSpread() * 0.1;
-                } else {
-                    slice.price = marketData.getBidPrice() + marketData.getSpread() * 0.1;
-                }
+            // Use order's original price as fallback when marketData is null
+            double referencePrice = order.getPrice();
+            if (marketData != null && marketData.getLastPrice() > 0) {
+                referencePrice = marketData.getLastPrice();
+            }
+
+            // Calculate price: for SHORT orders, place LIMIT sell slightly below reference
+            // The order's price is already set by the AlphaPool signal
+            if (order.getSide() == TradeDirection.LONG) {
+                slice.price = referencePrice; // Buy at reference price
+            } else {
+                slice.price = referencePrice; // Sell at reference price
             }
 
             currentSlice++;
@@ -275,6 +301,23 @@ public class AlgoExecutionEngine {
             if (slice != null) {
                 System.out.printf("[AlgoExecution] Sending slice: %s, qty=%.4f, price=%.2f%n",
                     slice.orderId, slice.quantity, slice.price);
+
+                // Send slice order to exchange - use strategy from original order
+                Order sliceOrder = new Order(
+                    slice.orderId,
+                    order.getSymbol(),
+                    order.getSide(),
+                    slice.orderType,
+                    slice.quantity,
+                    slice.price,
+                    order.getStrategy(),  // Use original order's strategy
+                    order.getUrgency()
+                );
+
+                if (exchangeAdapter != null) {
+                    exchangeAdapter.sendOrder(sliceOrder);
+                }
+
                 lastExecuteTime = System.currentTimeMillis();
             }
         }

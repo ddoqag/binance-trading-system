@@ -197,6 +197,25 @@ public class BinanceExchangeAdapter {
             params.put("symbol", order.getSymbol());
             params.put("side", order.getSide() == TradeDirection.LONG ? "BUY" : "SELL");
 
+            // Set positionSide for hedge mode accounts
+            // LONG orders -> positionSide: LONG, SHORT orders -> positionSide: SHORT
+            // For CLOSE orders, positionSide is determined by which position we're closing
+            String positionSide = null;
+            if (order.getSide() == TradeDirection.LONG) {
+                positionSide = "LONG";
+            } else if (order.getSide() == TradeDirection.SHORT) {
+                positionSide = "SHORT";
+            } else if (order.getSide() == TradeDirection.CLOSE) {
+                // Close order - positionSide should match the position being closed
+                // If we have a long position and want to close it, use LONG
+                // If we have a short position and want to close it, use SHORT
+                // Default to SHORT for close orders as they're typically used to close shorts
+                positionSide = "SHORT";
+            }
+            if (positionSide != null) {
+                params.put("positionSide", positionSide);
+            }
+
             // Map our OrderType to Binance order type
             String binanceType = mapOrderType(order.getOrderType());
             params.put("type", binanceType);
@@ -307,12 +326,14 @@ public class BinanceExchangeAdapter {
     }
 
     private String formatQuantity(double qty) {
-        // Binance requires precision no more than 8 decimals for BTC
-        return String.format("%.4f", qty);
+        // Binance requires quantity precision: round to 3 decimal places (0.001 step)
+        // Round down to ensure we're on a valid step
+        double rounded = Math.floor(qty * 1000) / 1000.0;
+        return String.format("%.3f", rounded);
     }
 
     private String formatPrice(double price) {
-        // Binance requires price precision appropriate for BTC (2 decimals)
+        // Binance requires price precision: 2 decimals for BTCUSDT
         return String.format("%.2f", price);
     }
 
