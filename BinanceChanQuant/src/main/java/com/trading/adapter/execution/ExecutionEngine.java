@@ -534,7 +534,7 @@ public class ExecutionEngine {
         // Have LONG position
         if (currentPos > 0) {
             if (signalDir == TradeDirection.SHORT) {
-                return TradeIntent.CLOSE_LONG;  // Close LONG before SHORT
+                return TradeIntent.EXIT_LONG;  // Close LONG before SHORT
             } else if (signalDir == TradeDirection.LONG) {
                 return TradeIntent.HOLD;  // Don't add to LONG - wait for close
             }
@@ -544,7 +544,7 @@ public class ExecutionEngine {
         // Have SHORT position
         if (currentPos < 0) {
             if (signalDir == TradeDirection.LONG) {
-                return TradeIntent.CLOSE_SHORT;  // Close SHORT before LONG
+                return TradeIntent.EXIT_SHORT;  // Close SHORT before LONG
             } else if (signalDir == TradeDirection.SHORT) {
                 return TradeIntent.HOLD;  // Don't add to SHORT - wait for close
             }

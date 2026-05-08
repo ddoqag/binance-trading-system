@@ -218,9 +218,9 @@ public class PositionLifecycleManager {
      */
     private TradeIntent intentForClose(TradeDirection direction) {
         if (direction == TradeDirection.LONG) {
-            return TradeIntent.CLOSE_LONG;
+            return TradeIntent.EXIT_LONG;
         } else if (direction == TradeDirection.SHORT) {
-            return TradeIntent.CLOSE_SHORT;
+            return TradeIntent.EXIT_SHORT;
         }
         return TradeIntent.HOLD;
     }
@@ -230,7 +230,7 @@ public class PositionLifecycleManager {
      */
     public ExitOrder createExitOrder(TradeIntent intent, PositionState position,
                                      double currentPrice, String symbol) {
-        if (intent == TradeIntent.HOLD || !intent.isClosing()) {
+        if (intent == TradeIntent.HOLD || !intent.isExiting()) {
             return null;
         }
 

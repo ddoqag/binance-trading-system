@@ -120,7 +120,7 @@ public class PositionSignalManager {
                 0.8
             );
 
-        } else if (intent.isClosing()) {
+        } else if (intent.isExiting()) {
             // Closing existing position
             TradeDirection closeDirection = intent.getCloseDirection();
             double qty = Math.abs(currentPosition.getQuantity());

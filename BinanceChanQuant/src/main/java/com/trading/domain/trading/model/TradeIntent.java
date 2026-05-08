@@ -5,47 +5,64 @@ package com.trading.domain.trading.model;
  *
  * Unlike TradeDirection (LONG/SHORT), TradeIntent represents the ACTION to take:
  * - OPEN_LONG: Open new long position
- * - CLOSE_LONG: Close existing long position
  * - OPEN_SHORT: Open new short position
- * - CLOSE_SHORT: Close existing short position
- * - HOLD: No action, continue holding
+ * - REDUCE_LONG: Reduce long position (partial or full, without reversing)
+ * - REDUCE_SHORT: Reduce short position (partial or full, without reversing)
+ * - EXIT_LONG: Fully close long position
+ * - EXIT_SHORT: Fully close short position
+ * - HOLD: No action, continue holding current position
+ * - IGNORE: Signal ignored (regime mismatch or confidence too low)
+ * - PROBE: Small position probe when no clear regime
  *
- * This is the key distinction from "direction-driven" to "intent-driven" trading.
+ * Architecture: signal -> arbiter -> intent -> execution
  */
 public enum TradeIntent {
     /** Open new long position */
     OPEN_LONG,
 
-    /** Close existing long position (exit) */
-    CLOSE_LONG,
-
     /** Open new short position */
     OPEN_SHORT,
 
-    /** Close existing short position (exit) */
-    CLOSE_SHORT,
+    /** Reduce existing long position (partial or full close, no reversal) */
+    REDUCE_LONG,
+
+    /** Reduce existing short position (partial or full close, no reversal) */
+    REDUCE_SHORT,
+
+    /** Fully close long position */
+    EXIT_LONG,
+
+    /** Fully close short position */
+    EXIT_SHORT,
 
     /** No action, continue holding current position */
-    HOLD;
+    HOLD,
+
+    /** Signal ignored (regime conflict or confidence too low) */
+    IGNORE,
+
+    /** Small position probe when no clear regime (AI confidence > 0.8 only) */
+    PROBE;
 
     /**
      * Determine TradeIntent from current position and desired direction
+     * This is the legacy method - prefer using DirectionArbiter for new code
      */
     public static TradeIntent fromPositionAndDirection(double currentPosition, TradeDirection desiredDirection) {
         if (currentPosition > 0) {
             // Have LONG position
             switch (desiredDirection) {
                 case LONG:   return HOLD;
-                case SHORT:  return CLOSE_LONG;  // Close LONG before SHORT
-                case NEUTRAL: return CLOSE_LONG;
+                case SHORT:  return EXIT_LONG;  // Fully exit LONG before SHORT
+                case NEUTRAL: return EXIT_LONG;
                 default: return HOLD;
             }
         } else if (currentPosition < 0) {
             // Have SHORT position
             switch (desiredDirection) {
                 case SHORT:  return HOLD;
-                case LONG:   return CLOSE_SHORT;  // Close SHORT before LONG
-                case NEUTRAL: return CLOSE_SHORT;
+                case LONG:   return EXIT_SHORT;  // Fully exit SHORT before LONG
+                case NEUTRAL: return EXIT_SHORT;
                 default: return HOLD;
             }
         } else {
@@ -67,10 +84,17 @@ public enum TradeIntent {
     }
 
     /**
-     * Check if this intent requires closing a position
+     * Check if this intent requires closing/exiting a position
      */
-    public boolean isClosing() {
-        return this == CLOSE_LONG || this == CLOSE_SHORT;
+    public boolean isExiting() {
+        return this == EXIT_LONG || this == EXIT_SHORT;
+    }
+
+    /**
+     * Check if this intent requires reducing a position (partial close, no reversal)
+     */
+    public boolean isReducing() {
+        return this == REDUCE_LONG || this == REDUCE_SHORT;
     }
 
     /**
@@ -85,8 +109,8 @@ public enum TradeIntent {
      */
     public TradeDirection getCloseDirection() {
         switch (this) {
-            case CLOSE_LONG:  return TradeDirection.LONG;
-            case CLOSE_SHORT: return TradeDirection.SHORT;
+            case EXIT_LONG:  return TradeDirection.LONG;
+            case EXIT_SHORT: return TradeDirection.SHORT;
             default: return TradeDirection.NEUTRAL;
         }
     }
