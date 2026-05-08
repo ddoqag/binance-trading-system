@@ -166,6 +166,50 @@ Total: 1296 bytes
 - AIState @ 312 (40 bytes): direction, confidence, urgency, sizeScale, lastUpdateTs
 - Control Plane @ 1040 (192 bytes)
 
+## Risk Management Architecture
+
+### ATR-Based Risk System (com.trading.domain.trading.model)
+
+**Core Components:**
+- `RiskModel` — Encapsulates all risk parameters with ATR-based stops
+  - `atrStopPrice` — Primary stop based on ATR multiplier
+  - `chandelierExit` — Trailing stop from peak price (highest/lowest)
+  - `takeProfitPrice` — TP based on ATR multiplier
+  - `structureStopPrice` — Market structure break stop
+  - `trailingStopPercent` / `trailingStartPercent` — Trailing activation
+- `RiskModelFactory` — Creates RiskModel from MarketContext
+  - Regime-aware multipliers: EXTREME=3.0x, HIGH=2.5x, MEDIUM=2.0x, LOW=1.5x
+  - Chandelier K adjusted by volatility and trend
+- `PositionState` — Tracks position with peak/lowest prices for trailing
+- `PositionLifecycleManager` — 8-layer exit priority system
+
+### 8-Layer Exit Priority (PositionLifecycleManager)
+
+1. **Liquidation Protection** — Emergency exit near liquidation
+2. **ATR Stop (PRIMARY)** — Market structure stop based on volatility
+3. **Structure Break** — Channel/fractal break exit
+4. **Chandelier Exit** — Trailing stop from peak price
+5. **Alpha Decay** — Signal confidence dropped below threshold
+6. **Time Stop** — Holding timeout
+7. **Catastrophic Stop** — Circuit breaker (% of equity)
+8. **Take Profit** — Optional TP hit
+
+**Default Values:**
+- ATR Stop: 2x ATR
+- Chandelier: 2.5x ATR
+- Max Hold: 30 min
+- Exit Confidence: 0.45
+- Catastrophic: -5%
+
+**Key Principle:** Price-based stops, NOT equity-based.
+
+### PositionSignalManager
+
+Bridge between Entry Alpha and Exit Logic:
+- Creates RiskModel via RiskModelFactory on position entry
+- Tracks position state with RiskModel
+- Determines entry/exit intents from AlphaPool signals
+
 ## Coding Style
 
 - **代码使用英文** — Code in English
@@ -204,4 +248,5 @@ mvn test -Dtest=MetaLearnerTest
 - `com/trading/adapter/learning/MetaLearnerTest.java` - Meta-learner weight optimization
 - `com/trading/adapter/risk/PreTradeRiskCheckerTest.java` - Risk checker TDD tests
 - `com/trading/adapter/execution/ExecutionEngineTest.java` - Execution engine tests
+- `com/trading/domain/trading/model/RiskModelTest.java` - ATR-based risk model tests
 - `com/trading/adapter/chan/*` - Chan theory integration tests
