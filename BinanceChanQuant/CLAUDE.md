@@ -250,3 +250,12 @@ mvn test -Dtest=MetaLearnerTest
 - `com/trading/adapter/execution/ExecutionEngineTest.java` - Execution engine tests
 - `com/trading/domain/trading/model/RiskModelTest.java` - ATR-based risk model tests
 - `com/trading/adapter/chan/*` - Chan theory integration tests
+
+## Git Workflow
+
+**Push to Remote:**
+```bash
+git add <files> && git commit -m "<message>" && git push origin <branch>
+```
+
+**Branch:** `refactor/clean-architecture`
