@@ -8,6 +8,7 @@ import com.trading.config.ConfigUtil;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.OrderStatus;
+import com.trading.domain.trading.model.PositionState;
 import com.trading.domain.trading.model.TradeDirection;
 
 import java.net.InetSocketAddress;
@@ -166,6 +167,58 @@ public class BinanceExchangeAdapter {
 
     // ==================== Private Methods ====================
 
+    /**
+     * Log current account balance for debugging margin issues
+     * 注意：USDT-M futures使用 /fapi/v2/account，字段为 crossWalletBalance, crossUnrealizedPnl
+     */
+    private void logAccountBalance() {
+        try {
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            Object resp = client.account().accountInformation(params);
+            String respStr = resp instanceof String ? (String) resp : resp.toString();
+
+            // Parse balance from response
+            JsonNode node = objectMapper.readTree(respStr);
+
+            // USDT-M futures字段：crossWalletBalance, crossUnrealizedPnl
+            double balance = 0;
+            if (node.has("crossWalletBalance")) {
+                balance = node.get("crossWalletBalance").asDouble();
+            } else if (node.has("crossUnrealizedPnl")) {
+                // 可以用 equity - unrealizedPnl 来推算
+                double unrealizedPnl = node.has("crossUnrealizedPnl") ? node.get("crossUnrealizedPnl").asDouble() : 0;
+                // 如果有totalEquity可以用它减
+                if (node.has("totalCrossUnrealizedPnl")) {
+                    // nothing
+                }
+                balance = unrealizedPnl; // 临时
+            } else if (node.has("totalMarginBalance")) {
+                balance = node.get("totalMarginBalance").asDouble();
+            }
+
+            double unrealizedPnl = 0;
+            if (node.has("crossUnrealizedPnl")) {
+                unrealizedPnl = node.get("crossUnrealizedPnl").asDouble();
+            }
+
+            System.out.printf("[BinanceAdapter] Account balance: %.4f USDT (unrealized PnL: %.4f)%n", balance, unrealizedPnl);
+
+            // Also log positions if any
+            if (node.has("positions")) {
+                for (JsonNode pos : node.get("positions")) {
+                    double amt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
+                    if (Math.abs(amt) > 0.0001) {
+                        String sym = pos.has("symbol") ? pos.get("symbol").asText() : "";
+                        double upnl = pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
+                        System.out.printf("[BinanceAdapter] Existing position: %s amt=%.4f pnl=%.4f%n", sym, amt, upnl);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("[BinanceAdapter] Balance check failed: " + e.getMessage());
+        }
+    }
+
     private ExecutionReport simulateFill(Order order) {
         System.out.printf("[BinanceAdapter] Paper fill: %s %s %.4f @ %.2f%n",
             order.getSide(), order.getOrderType(), order.getQuantity(), order.getPrice());
@@ -193,25 +246,60 @@ public class BinanceExchangeAdapter {
 
     private ExecutionReport sendLiveOrder(Order order) {
         try {
+            // Sync position from exchange before sending order
+            syncPositionsFromExchange();
+
+            // Log account balance to diagnose margin issues
+            logAccountBalance();
+
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             params.put("symbol", order.getSymbol());
             params.put("side", order.getSide() == TradeDirection.LONG ? "BUY" : "SELL");
 
-            // Set positionSide for hedge mode accounts
-            // LONG orders -> positionSide: LONG, SHORT orders -> positionSide: SHORT
-            // For CLOSE orders, positionSide is determined by which position we're closing
+            // Account is in hedge mode (dual-side) - positionSide is required
+            // Get current position to determine correct positionSide
+            double currentPos = this.currentPosition; // Local cache of position
             String positionSide = null;
+            boolean isCloseOrder = false;
+            double orderQty = order.getQuantity();
+
+            // Check if this order would exceed available position in same direction
+            boolean sameDirectionAsPosition = (currentPos > 0 && order.getSide() == TradeDirection.SHORT) ||
+                                              (currentPos < 0 && order.getSide() == TradeDirection.LONG);
+
             if (order.getSide() == TradeDirection.LONG) {
-                positionSide = "LONG";
+                if (currentPos < 0) {
+                    // Has SHORT position, close it with BUY
+                    positionSide = "SHORT";
+                    isCloseOrder = true;
+                    // Quantity should not exceed the short position we're closing
+                    orderQty = Math.min(orderQty, Math.abs(currentPos));
+                } else {
+                    positionSide = "LONG"; // Opening or adding LONG
+                }
             } else if (order.getSide() == TradeDirection.SHORT) {
-                positionSide = "SHORT";
+                if (currentPos > 0) {
+                    // Has LONG position, close it with SELL
+                    positionSide = "LONG";
+                    isCloseOrder = true;
+                    // Quantity should not exceed the long position we're closing
+                    orderQty = Math.min(orderQty, Math.abs(currentPos));
+                } else {
+                    // currentPos < 0 (already SHORT) - should not add to short in same direction
+                    // This would be adding to existing position which uses more margin
+                    if (currentPos < 0) {
+                        System.out.printf("[BinanceAdapter] Skipping SHORT order: already have SHORT position %.4f, would exceed margin%n", currentPos);
+                        return createRejectedReport(order, "Already have SHORT position, cannot add");
+                    }
+                    positionSide = "SHORT"; // Opening new SHORT (currentPos == 0)
+                }
             } else if (order.getSide() == TradeDirection.CLOSE) {
-                // Close order - positionSide should match the position being closed
-                // If we have a long position and want to close it, use LONG
-                // If we have a short position and want to close it, use SHORT
-                // Default to SHORT for close orders as they're typically used to close shorts
-                positionSide = "SHORT";
+                // Closing position - use opposite of current position
+                positionSide = currentPos > 0 ? "SHORT" : "LONG";
+                isCloseOrder = true;
+                orderQty = Math.min(orderQty, Math.abs(currentPos));
             }
+
             if (positionSide != null) {
                 params.put("positionSide", positionSide);
             }
@@ -219,7 +307,7 @@ public class BinanceExchangeAdapter {
             // Map our OrderType to Binance order type
             String binanceType = mapOrderType(order.getOrderType());
             params.put("type", binanceType);
-            params.put("quantity", formatQuantity(order.getQuantity()));
+            params.put("quantity", formatQuantity(orderQty));
 
             // Add type-specific parameters
             if (order.getOrderType() == com.trading.domain.trading.model.OrderType.LIMIT ||
@@ -228,13 +316,22 @@ public class BinanceExchangeAdapter {
                 params.put("timeInForce", "GTC");
             }
 
-            // Add reduceOnly for close orders
-            if (order.getSide() == TradeDirection.CLOSE) {
+            // Add reduceOnly for close orders (when closing in One-Way Mode, not Hedge Mode)
+            // In Hedge Mode with positionSide, reduceOnly is NOT needed
+            if (isCloseOrder && positionSide == null) {
                 params.put("reduceOnly", true);
             }
 
             // Add client order ID for idempotency
             params.put("newClientOrderId", order.getOrderId());
+
+            // Debug: log order parameters
+            System.out.printf("[BinanceAdapter] Sending order: symbol=%s, side=%s, type=%s, qty=%s, price=%s%n",
+                order.getSymbol(),
+                order.getSide() == TradeDirection.LONG ? "BUY" : "SELL",
+                binanceType,
+                formatQuantity(order.getQuantity()),
+                formatPrice(order.getPrice()));
 
             Object resp = client.account().newOrder(params);
 
@@ -299,21 +396,26 @@ public class BinanceExchangeAdapter {
             );
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Order failed: " + e.getMessage());
-            return new ExecutionReport(
-                order.getOrderId(),
-                order.getSymbol(),
-                order.getSide(),
-                order.getOrderType(),
-                order.getQuantity(),
-                order.getPrice(),
-                0,
-                0,
-                OrderStatus.REJECTED,
-                System.currentTimeMillis(),
-                0.0,
-                0.0
-            );
+            return createRejectedReport(order, e.getMessage());
         }
+    }
+
+    private ExecutionReport createRejectedReport(Order order, String reason) {
+        System.err.printf("[BinanceAdapter] Order rejected: %s%n", reason);
+        return new ExecutionReport(
+            order.getOrderId(),
+            order.getSymbol(),
+            order.getSide(),
+            order.getOrderType(),
+            order.getQuantity(),
+            order.getPrice(),
+            0,
+            0,
+            OrderStatus.REJECTED,
+            System.currentTimeMillis(),
+            0.0,
+            0.0
+        );
     }
 
     private String mapOrderType(com.trading.domain.trading.model.OrderType orderType) {
@@ -441,6 +543,7 @@ public class BinanceExchangeAdapter {
 
     /**
      * Sync balance from Binance exchange
+     * 同步账户余额和持仓信息
      */
     public double syncBalanceFromExchange() {
         if (paperTrading || client == null) return 0.0;
@@ -451,17 +554,60 @@ public class BinanceExchangeAdapter {
             String respStr = resp instanceof String ? (String) resp : resp.toString();
             JsonNode node = objectMapper.readTree(respStr);
 
-            if (node.has("availableBalance")) {
-                availableBalance = node.get("availableBalance").asDouble();
+            // Debug: print full response structure
+            System.out.println("[BinanceAdapter] Account response sample: " + respStr.substring(0, Math.min(500, respStr.length())));
+
+            // USDT-M futures字段：crossWalletBalance, crossUnrealizedPnl
+            double walletBal = 0;
+            double availBal = 0;
+            double unrealizedPnL = 0;
+
+            if (node.has("crossWalletBalance")) {
+                walletBal = node.get("crossWalletBalance").asDouble();
+                availBal = walletBal; // 可用余额初值
             }
-            if (node.has("walletBalance")) {
-                walletBalance = node.get("walletBalance").asDouble();
+            if (node.has("crossUnrealizedPnl")) {
+                unrealizedPnL = node.get("crossUnrealizedPnl").asDouble();
             }
 
-            System.out.printf("[BinanceAdapter] Balance synced: available=%.2f USDT%n", availableBalance);
+            // 计算availableBalance：walletBalance - 已用保证金
+            double totalEquity = walletBal + unrealizedPnL;
+            if (node.has("totalCrossUnrealizedPnl")) {
+                // totalEquity 可以直接用
+            }
+
+            System.out.printf("[BinanceAdapter] USDT Balance: wallet=%.4f, unrealizedPnl=%.4f, equity=%.4f%n",
+                walletBal, unrealizedPnL, totalEquity);
+
+            availableBalance = availBal;
+            this.walletBalance = walletBal;
+
+            // Parse positions if any
+            if (node.has("positions")) {
+                for (JsonNode pos : node.get("positions")) {
+                    String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
+                    if (!posSymbol.equalsIgnoreCase(symbol)) continue;
+
+                    double posAmt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
+                    double entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
+                    double posUnrealizedPnL = pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
+                    String marginType = pos.has("isolatedMargin") ? "isolated" : "cross";
+
+                    if (Math.abs(posAmt) > 0.0001) {
+                        System.out.printf("[BinanceAdapter] Position: %s amt=%.4f entry=%.2f pnl=%.2f marginType=%s%n",
+                            posSymbol, posAmt, entryPrice, posUnrealizedPnL, marginType);
+                        this.currentPosition = posAmt;
+                        this.avgEntryPrice = entryPrice;
+                        this.unrealizedPnl = posUnrealizedPnL;
+                    }
+                }
+            }
+
+            System.out.printf("[BinanceAdapter] Balance synced: available=%.4f USDT%n", availableBalance);
             return availableBalance;
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Balance sync failed: " + e.getMessage());
+            e.printStackTrace();
             return 0.0;
         }
     }
@@ -535,6 +681,30 @@ public class BinanceExchangeAdapter {
     public double getAvgEntryPrice() { return avgEntryPrice; }
     public double getUnrealizedPnl() { return unrealizedPnl; }
     public double getTotalRealizedPnl() { return totalRealizedPnl; }
+
+    /**
+     * Get current position state for lifecycle management
+     */
+    public PositionState getPositionState() {
+        // Sync position from exchange before returning state
+        if (!paperTrading) {
+            syncPositionsFromExchange();
+        }
+
+        if (Math.abs(currentPosition) < 0.0001) {
+            return PositionState.empty();
+        }
+        return new PositionState(
+            currentPosition,
+            avgEntryPrice,
+            unrealizedPnl,
+            realizedPnl,
+            System.currentTimeMillis(), // Entry time unknown from adapter
+            unrealizedPnl + walletBalance,
+            walletBalance,
+            ""
+        );
+    }
 
     /**
      * Position information from exchange

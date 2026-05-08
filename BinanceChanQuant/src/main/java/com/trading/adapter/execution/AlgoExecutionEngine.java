@@ -297,6 +297,21 @@ public class AlgoExecutionEngine {
                 return;
             }
 
+            // Check existing position before sending
+            if (exchangeAdapter != null) {
+                double currentPos = exchangeAdapter.getCurrentPosition();
+                TradeDirection desiredDir = order.getSide();
+
+                // If we already have a position in the same direction, stop algo
+                if ((currentPos > 0 && desiredDir == TradeDirection.LONG) ||
+                    (currentPos < 0 && desiredDir == TradeDirection.SHORT)) {
+                    System.out.printf("[AlgoExecution] Stopping %s: already have position %.4f in same direction%n",
+                        order.getStrategy(), currentPos);
+                    stop();
+                    return;
+                }
+            }
+
             Slice slice = algo.calculateNextSlice(marketData);
             if (slice != null) {
                 System.out.printf("[AlgoExecution] Sending slice: %s, qty=%.4f, price=%.2f%n",

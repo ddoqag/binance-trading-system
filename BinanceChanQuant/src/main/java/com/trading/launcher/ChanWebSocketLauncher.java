@@ -24,6 +24,11 @@ import com.trading.domain.signal.VolatilityRegime;
 import com.trading.domain.signal.TrendStrength;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderType;
+import com.trading.domain.trading.model.PositionState;
+import com.trading.domain.trading.model.TradeDirection;
+import com.trading.domain.trading.model.TradeIntent;
+import com.trading.adapter.pool.PositionLifecycleManager;
+import com.trading.adapter.pool.PositionSignalManager;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -96,6 +101,8 @@ public class ChanWebSocketLauncher {
     // Execution components
     private ExecutionEngine executionEngine;
     private PreTradeRiskChecker riskChecker;
+    private PositionLifecycleManager lifecycleManager;
+    private PositionSignalManager positionSignalManager;
 
     // Market context for signal generation
     private MarketContext lastMarketContext;
@@ -171,6 +178,11 @@ public class ChanWebSocketLauncher {
         chanExpert = new ChanExpert(chanBridge, chanValidator, chanProcessor, chanToggle);
         alphaPool.registerExpert(chanExpert);
         System.out.println("[Launcher] AlphaPool initialized with " + alphaPool.getExpertCount() + " experts");
+
+        // Initialize Position Lifecycle Manager
+        lifecycleManager = PositionLifecycleManager.defaults();
+        positionSignalManager = new PositionSignalManager(alphaPool, lifecycleManager);
+        System.out.println("[Launcher] PositionLifecycleManager initialized");
 
         // Initialize Execution Engine
         String apiKey = ConfigUtil.get("api.key");
@@ -469,6 +481,9 @@ public class ChanWebSocketLauncher {
             if (signal != null && signal.getConfidence() > 0.55) {
                 processCompositeSignal(signal);
             }
+
+            // Check position lifecycle (exit conditions)
+            checkPositionLifecycle(context);
         }
 
         // Print status periodically
@@ -643,6 +658,9 @@ public class ChanWebSocketLauncher {
                 if (signal != null && signal.getConfidence() > 0.55) {
                     processCompositeSignal(signal);
                 }
+
+                // Check position lifecycle (exit conditions)
+                checkPositionLifecycle(context);
             }
 
             if (klineCount.get() % 10 == 0) {
@@ -688,6 +706,66 @@ public class ChanWebSocketLauncher {
             System.out.printf("[Launcher] ORDER: %s conf=%.2f score=%.2f %s %.4f @ %.2f%n",
                 signal.getType(), confidence, score, signal.getDirection(), quantity, price);
         }
+    }
+
+    /**
+     * Check position lifecycle and generate exit orders if needed
+     */
+    private void checkPositionLifecycle(MarketContext context) {
+        try {
+            // Get current position state from exchange adapter
+            var exchangeAdapter = executionEngine.getExchangeAdapter();
+            if (exchangeAdapter == null) {
+                System.out.println("[Launcher] LIFECYCLE: no exchange adapter");
+                return;
+            }
+
+            PositionState posState = exchangeAdapter.getPositionState();
+            System.out.printf("[Launcher] LIFECYCLE: posState hasPosition=%s, qty=%.4f%n",
+                posState.hasPosition(), posState.getQuantity());
+            positionSignalManager.updatePosition(posState);
+
+            if (!posState.hasPosition()) {
+                System.out.println("[Launcher] LIFECYCLE: no position to manage");
+                return; // No position to manage
+            }
+
+            // Ask lifecycle manager for intent
+            double signalConfidence = 0.5; // Default confidence
+            TradeDirection signalDirection = null;
+            var signal = alphaPool.generateCompositeSignal(context);
+            if (signal != null) {
+                signalConfidence = signal.getConfidence();
+                signalDirection = signal.getDirection();
+            }
+
+            TradeIntent intent = lifecycleManager.determineIntent(posState, signalConfidence, context, signalDirection);
+            System.out.printf("[Launcher] LIFECYCLE: signalConf=%.2f, signalDir=%s, intent=%s%n",
+                signalConfidence, signalDirection, intent);
+
+            if (intent != TradeIntent.HOLD) {
+                System.out.printf("[Launcher] LIFECYCLE: %s position, executing %s%n",
+                    formatPosition(posState), intent);
+
+                // Create exit order
+                var exitOrder = positionSignalManager.createOrderFromIntent(intent, context, "lifecycle-" + System.currentTimeMillis());
+                if (exitOrder != null) {
+                    executionEngine.submitOrder(exitOrder);
+                    System.out.printf("[Launcher] EXIT ORDER: %s %.4f @ %.2f%n",
+                        intent, exitOrder.getQuantity(), exitOrder.getPrice());
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[Launcher] Lifecycle check failed: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private String formatPosition(PositionState pos) {
+        if (!pos.hasPosition()) {
+            return "EMPTY";
+        }
+        return String.format("%.4f %s @ %.2f", pos.getQuantity(), pos.getDirection(), pos.getEntryPrice());
     }
 
     private MarketRegime determineRegime() {

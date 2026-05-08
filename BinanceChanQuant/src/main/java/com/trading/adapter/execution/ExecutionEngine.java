@@ -300,4 +300,5 @@ public class ExecutionEngine {
     public ExecutionStateMachine getStateMachine() { return stateMachine; }
     public SmartOrderRouter getOrderRouter() { return orderRouter; }
     public AlgoExecutionEngine getAlgoEngine() { return algoEngine; }
+    public BinanceExchangeAdapter getExchangeAdapter() { return exchangeAdapter; }
 }
