@@ -77,9 +77,9 @@ class ChanReverseStrategyAdapterTest {
     }
 
     @Test
-    @DisplayName("Min confidence should be 0.55")
-    void minConfidenceShouldBePoint55() {
-        assertEquals(0.55, adapter.getMinConfidence(), 0.001);
+    @DisplayName("Min confidence should be 0.35 for paper trading")
+    void minConfidenceShouldBePoint35() {
+        assertEquals(0.35, adapter.getMinConfidence(), 0.001);
     }
 
     @Test

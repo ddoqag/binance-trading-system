@@ -9,6 +9,7 @@ import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.trading.model.PositionState;
+import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
 
 import java.net.InetSocketAddress;
@@ -429,7 +430,10 @@ public class BinanceExchangeAdapter {
 
     private String formatQuantity(double qty) {
         // Binance requires quantity precision: round to 3 decimal places (0.001 step)
-        // Round down to ensure we're on a valid step
+        // Ensure minimum 0.001 and proper rounding
+        if (qty < 0.001) {
+            return "0.001"; // Enforce minimum order size
+        }
         double rounded = Math.floor(qty * 1000) / 1000.0;
         return String.format("%.3f", rounded);
     }
@@ -495,24 +499,36 @@ public class BinanceExchangeAdapter {
             String respStr = resp instanceof String ? (String) resp : resp.toString();
             JsonNode node = objectMapper.readTree(respStr);
 
+            boolean positionFound = false;
             if (node.has("positions")) {
                 for (JsonNode pos : node.get("positions")) {
                     String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
                     if (!posSymbol.equalsIgnoreCase(symbol)) continue;
 
+                    positionFound = true;
                     double posAmt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
                     double entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
                     double unrealizedPnL = pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
 
-                    // Only update if position exists
+                    // Always update position (including zero) to ensure cache consistency
+                    this.currentPosition = posAmt;
+                    this.avgEntryPrice = entryPrice;
+                    this.unrealizedPnl = unrealizedPnL;
                     if (Math.abs(posAmt) > 0.0001) {
-                        this.currentPosition = posAmt;
-                        this.avgEntryPrice = entryPrice;
-                        this.unrealizedPnl = unrealizedPnL;
                         System.out.printf("[BinanceAdapter] Position synced: pos=%.4f, entry=%.2f, unrealizedPnl=%.2f%n",
                             currentPosition, avgEntryPrice, unrealizedPnl);
+                    } else {
+                        System.out.printf("[BinanceAdapter] Position closed: pos=%.4f%n", currentPosition);
                     }
                 }
+            }
+
+            // If no position found for our symbol, reset to zero
+            if (!positionFound && Math.abs(this.currentPosition) > 0.0001) {
+                System.out.printf("[BinanceAdapter] Position reset: was %.4f, now 0%n", this.currentPosition);
+                this.currentPosition = 0;
+                this.avgEntryPrice = 0;
+                this.unrealizedPnl = 0;
             }
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Position sync failed: " + e.getMessage());
@@ -684,6 +700,9 @@ public class BinanceExchangeAdapter {
 
     /**
      * Get current position state for lifecycle management
+     *
+     * Note: RiskModel is not available here because we don't have ATR.
+     * The RiskModel should be set by PositionSignalManager when creating the position.
      */
     public PositionState getPositionState() {
         // Sync position from exchange before returning state
@@ -702,8 +721,25 @@ public class BinanceExchangeAdapter {
             System.currentTimeMillis(), // Entry time unknown from adapter
             unrealizedPnl + walletBalance,
             walletBalance,
-            ""
+            "",
+            null,  // RiskModel - set externally
+            avgEntryPrice,  // peakPrice
+            avgEntryPrice   // lowestPrice
         );
+    }
+
+    /**
+     * Set RiskModel for the current position
+     * Called by PositionSignalManager after creating position with ATR context
+     */
+    private RiskModel currentRiskModel;
+
+    public void setRiskModel(RiskModel riskModel) {
+        this.currentRiskModel = riskModel;
+    }
+
+    public RiskModel getRiskModel() {
+        return currentRiskModel;
     }
 
     /**

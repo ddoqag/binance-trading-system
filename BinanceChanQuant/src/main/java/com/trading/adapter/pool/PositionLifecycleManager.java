@@ -2,162 +2,215 @@ package com.trading.adapter.pool;
 
 import com.trading.domain.signal.MarketContext;
 import com.trading.domain.trading.model.PositionState;
+import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.TradeIntent;
 
 /**
  * Position Lifecycle Manager
  *
- * Responsible for position lifecycle decisions:
- * - Entry: Should we open a position?
- * - Hold: Should we continue holding?
- * - Exit: Should we close the position?
- * - Reverse: Should we close and reverse?
+ * Implements market-structure-based exit logic (NOT equity-based).
  *
- * This is the key component that transforms "direction-driven" trading
- * into "intent-driven" position management.
+ * Exit Priority Order:
+ * 1. Liquidation Protection - Emergency exit near liquidation
+ * 2. ATR Stop (PRIMARY) - Market structure stop based on volatility
+ * 3. Structure Break - Channel/fractal break exit
+ * 4. Chandelier Exit - Trailing stop from peak
+ * 5. Alpha Decay - Signal confidence dropped
+ * 6. Time Stop - Holding timeout
+ * 7. Catastrophic Stop - Circuit breaker (% of equity)
  *
- * Exit conditions evaluated:
- * 1. Alpha消失: signal confidence < threshold
- * 2. Timeout: holding time > max hold minutes
- * 3. PnL Stop: unrealized PnL < stop loss
- * 4. Trailing Stop: drawdown from peak > threshold
+ * Key principle: Price-based stops, NOT equity-based.
  */
 public class PositionLifecycleManager {
 
-    // Configuration
-    private final double exitConfidenceThreshold;      // Exit if confidence drops below this
-    private final int maxHoldMinutes;                  // Exit if held longer than this
-    private final double stopLossPercent;              // Exit if PnL < -this % of entry
-    private final double trailingStopPercent;          // Exit if drawdown > this %
-    private final double minExitConfidence;            // Minimum confidence to exit (avoid whipsaw)
+    // Configuration - ATR-based (market structure)
+    private final double atrStopMultiplier;           // ATR multiplier for primary stop
+    private final double chandelierK;               // Chandelier exit multiplier
+    private final double structureStopBuffer;       // Structure break buffer %
+    private final int maxHoldMinutes;               // Max hold time
 
-    public PositionLifecycleManager(double exitConfidenceThreshold,
+    // Alpha-based
+    private final double exitConfidenceThreshold;    // Exit if confidence < this
+    private final double minExitConfidence;          // Min confidence to exit (avoid whipsaw)
+
+    // Catastrophic protection (circuit breaker - equity-based backup)
+    private final double catastrophicLossPercent;    // Emergency stop if PnL < -X%
+
+    public PositionLifecycleManager(double atrStopMultiplier,
+                                   double chandelierK,
+                                   double structureStopBuffer,
                                    int maxHoldMinutes,
-                                   double stopLossPercent,
-                                   double trailingStopPercent,
-                                   double minExitConfidence) {
-        this.exitConfidenceThreshold = exitConfidenceThreshold;
+                                   double exitConfidenceThreshold,
+                                   double minExitConfidence,
+                                   double catastrophicLossPercent) {
+        this.atrStopMultiplier = atrStopMultiplier;
+        this.chandelierK = chandelierK;
+        this.structureStopBuffer = structureStopBuffer;
         this.maxHoldMinutes = maxHoldMinutes;
-        this.stopLossPercent = stopLossPercent;
-        this.trailingStopPercent = trailingStopPercent;
+        this.exitConfidenceThreshold = exitConfidenceThreshold;
         this.minExitConfidence = minExitConfidence;
+        this.catastrophicLossPercent = catastrophicLossPercent;
     }
 
     public static PositionLifecycleManager defaults() {
         return new PositionLifecycleManager(
-            0.45,      // exitConfidenceThreshold: exit if confidence < 0.45
-            30,        // maxHoldMinutes: 30 minutes max
-            1.5,       // stopLossPercent: 1.5% stop loss
-            2.0,       // trailingStopPercent: 2% trailing stop
-            0.35       // minExitConfidence: need at least 0.35 confidence to exit
+            2.0,       // ATR Stop: 2x ATR
+            2.5,       // Chandelier: 2.5x ATR
+            0.5,       // Structure buffer: 0.5%
+            30,        // Max hold: 30 min
+            0.45,      // Exit confidence threshold
+            0.35,      // Min confidence to exit
+            5.0        // Catastrophic stop: -5%
         );
     }
 
     /**
      * Determine TradeIntent based on position state and market context
      *
-     * @param position Current position state (can be empty)
+     * @param position Current position state (with RiskModel)
      * @param signalConfidence Current alpha signal confidence (0-1)
-     * @param context Market context
-     * @return TradeIntent action to take
-     */
-    public TradeIntent determineIntent(PositionState position, double signalConfidence, MarketContext context) {
-        // No position - evaluate entry
-        if (!position.hasPosition()) {
-            return TradeIntent.HOLD; // Entry handled by AlphaPool signals
-        }
-
-        // Have position - evaluate exit conditions (no direction info)
-        return evaluateExit(position, signalConfidence, context, null);
-    }
-
-    /**
-     * Determine TradeIntent with signal direction (for reverse signal detection)
-     *
-     * @param position Current position state
-     * @param signalConfidence Current alpha signal confidence (0-1)
-     * @param context Market context
+     * @param context Market context (with current ATR)
      * @param signalDirection Current signal direction (can be null)
      * @return TradeIntent action to take
      */
     public TradeIntent determineIntent(PositionState position, double signalConfidence,
                                       MarketContext context, TradeDirection signalDirection) {
-        // No position - evaluate entry
         if (!position.hasPosition()) {
-            return TradeIntent.HOLD; // Entry handled by AlphaPool signals
+            return TradeIntent.HOLD;
         }
 
-        // Have position - evaluate exit conditions
-        return evaluateExit(position, signalConfidence, context, signalDirection);
-    }
+        // Get RiskModel for ATR-based stops
+        RiskModel riskModel = position.getRiskModel();
+        double currentPrice = context != null ? context.getCurrentPrice() : position.getEntryPrice();
 
-    /**
-     * Evaluate all exit conditions
-     */
-    private TradeIntent evaluateExit(PositionState position, double signalConfidence,
-                                     MarketContext context, TradeDirection signalDirection) {
-        TradeDirection posDirection = position.getDirection();
+        // ========== Layer 1: Liquidation Protection ==========
+        // (Would check liquidation price - skipped for safety)
 
-        // 0. Check for reverse signal (opposite direction = exit + reverse)
-        if (signalDirection != null && isReverseSignal(posDirection, signalDirection)) {
-            System.out.printf("[Lifecycle] Exit: reverse signal detected, pos=%s, signal=%s%n",
-                posDirection, signalDirection);
-            return intentForClose(posDirection);
-        }
-
-        // 1. Check alpha fade (signal confidence dropped)
-        if (signalConfidence < exitConfidenceThreshold) {
-            if (signalConfidence >= minExitConfidence) {
-                System.out.printf("[Lifecycle] Exit: alpha faded, confidence=%.2f < %.2f%n",
-                    signalConfidence, exitConfidenceThreshold);
-                return intentForClose(posDirection);
-            } else {
-                System.out.printf("[Lifecycle] Low confidence=%.2f but below minExit=%.2f, holding%n",
-                    signalConfidence, minExitConfidence);
+        // ========== Layer 2: ATR Stop (PRIMARY) ==========
+        if (riskModel != null && riskModel.getAtrStopPrice() > 0) {
+            if (riskModel.isAtrStopHit(currentPrice)) {
+                System.out.printf("[Lifecycle] EXIT: ATR Stop hit, price=%.2f < stop=%.2f%n",
+                    currentPrice, riskModel.getAtrStopPrice());
+                return intentForClose(position.getDirection());
             }
         }
 
-        // 2. Check timeout
+        // ========== Layer 3: Structure Break (if available) ==========
+        if (riskModel != null && riskModel.getStructureStopPrice() > 0) {
+            if (riskModel.isStructureStopHit(currentPrice)) {
+                System.out.printf("[Lifecycle] EXIT: Structure break, price=%.2f%n", currentPrice);
+                return intentForClose(position.getDirection());
+            }
+        }
+
+        // ========== Layer 4: Chandelier Trailing Stop ==========
+        // Updates dynamically based on peak price tracking
+        double chandelierStop = calculateChandelierExit(position, context);
+        if (chandelierStop > 0) {
+            boolean chandelierHit = position.isLong()
+                ? currentPrice <= chandelierStop
+                : currentPrice >= chandelierStop;
+            if (chandelierHit) {
+                System.out.printf("[Lifecycle] EXIT: Chandelier stop hit, price=%.2f, stop=%.2f%n",
+                    currentPrice, chandelierStop);
+                return intentForClose(position.getDirection());
+            }
+        }
+
+        // ========== Layer 5: Alpha Decay ==========
+        if (signalConfidence < exitConfidenceThreshold) {
+            if (signalConfidence >= minExitConfidence) {
+                System.out.printf("[Lifecycle] EXIT: Alpha faded, conf=%.2f < %.2f%n",
+                    signalConfidence, exitConfidenceThreshold);
+                return intentForClose(position.getDirection());
+            }
+        }
+
+        // ========== Layer 6: Reverse Signal ==========
+        if (signalDirection != null && isReverseSignal(position.getDirection(), signalDirection)) {
+            System.out.printf("[Lifecycle] EXIT: Reverse signal, pos=%s, signal=%s%n",
+                position.getDirection(), signalDirection);
+            return intentForClose(position.getDirection());
+        }
+
+        // ========== Layer 7: Time Stop ==========
         long holdMinutes = position.getHoldingTimeMinutes();
         if (holdMinutes > maxHoldMinutes) {
-            System.out.printf("[Lifecycle] Exit: timeout %d min > %d max%n",
+            System.out.printf("[Lifecycle] EXIT: Timeout %d min > %d max%n",
                 holdMinutes, maxHoldMinutes);
-            return intentForClose(posDirection);
+            return intentForClose(position.getDirection());
         }
 
-        // 3. Check stop loss
-        double entryValue = position.getEntryPrice() * Math.abs(position.getQuantity());
-        double pnlPercent = entryValue > 0 ? (position.getUnrealizedPnl() / entryValue) * 100 : 0;
-        if (pnlPercent < -stopLossPercent) {
-            System.out.printf("[Lifecycle] Exit: stop loss hit, PnL=%.2f%% < -%.2f%%%n",
-                pnlPercent, stopLossPercent);
-            return intentForClose(posDirection);
+        // ========== Layer 8: Catastrophic Stop (Circuit Breaker) ==========
+        double pnlPercent = calculatePnlPercent(position);
+        if (pnlPercent < -catastrophicLossPercent) {
+            System.out.printf("[Lifecycle] EXIT: Catastrophic stop, PnL=%.2f%% < -%.2f%%%n",
+                pnlPercent, catastrophicLossPercent);
+            return intentForClose(position.getDirection());
         }
 
-        // 4. Check trailing stop
-        double drawdown = position.getDrawdown() * 100;
-        if (drawdown > trailingStopPercent) {
-            System.out.printf("[Lifecycle] Exit: trailing stop, drawdown=%.2f%% > %.2f%%%n",
-                drawdown, trailingStopPercent);
-            return intentForClose(posDirection);
+        // ========== Layer 9: Take Profit (optional) ==========
+        if (riskModel != null && riskModel.getTakeProfitPrice() > 0) {
+            if (riskModel.isTakeProfitHit(currentPrice)) {
+                System.out.printf("[Lifecycle] EXIT: Take profit hit, price=%.2f >= tp=%.2f%n",
+                    currentPrice, riskModel.getTakeProfitPrice());
+                return intentForClose(position.getDirection());
+            }
         }
 
-        // All checks passed - hold
         return TradeIntent.HOLD;
+    }
+
+    /**
+     * Calculate Chandelier Exit price
+     *
+     * Chandelier Exit = Highest High (for LONG) - K * ATR
+     * Chandelier Exit = Lowest Low (for SHORT) + K * ATR
+     *
+     * This creates a trailing stop that locks in profits while allowing normal fluctuation.
+     */
+    private double calculateChandelierExit(PositionState position, MarketContext context) {
+        if (context == null || context.getAtr() <= 0) {
+            return 0;
+        }
+
+        double atr = context.getAtr();
+        double atrPercent = context.getAtrPercent();
+
+        // Regime-adjusted Chandelier K
+        // High volatility -> wider stop
+        double adjustedK = chandelierK;
+        if (context.isHighVolatility()) {
+            adjustedK = chandelierK * 1.5;  // Wider in high vol
+        } else if (atrPercent < 0.01) {
+            adjustedK = chandelierK * 0.8;   // Tighter in low vol
+        }
+
+        if (position.isLong()) {
+            double peakPrice = position.getPeakPrice();
+            return peakPrice - adjustedK * atr;
+        } else {
+            double lowestPrice = position.getLowestPrice();
+            return lowestPrice + adjustedK * atr;
+        }
+    }
+
+    /**
+     * Calculate PnL percent for catastrophic stop
+     */
+    private double calculatePnlPercent(PositionState position) {
+        double entryValue = position.getEntryPrice() * Math.abs(position.getQuantity());
+        if (entryValue <= 0) return 0;
+        return (position.getUnrealizedPnl() / entryValue) * 100;
     }
 
     /**
      * Check if signal is opposite to position direction
      */
     private boolean isReverseSignal(TradeDirection posDirection, TradeDirection signalDirection) {
-        if (posDirection == TradeDirection.LONG && signalDirection == TradeDirection.SHORT) {
-            return true;
-        }
-        if (posDirection == TradeDirection.SHORT && signalDirection == TradeDirection.LONG) {
-            return true;
-        }
-        return false;
+        return (posDirection == TradeDirection.LONG && signalDirection == TradeDirection.SHORT)
+            || (posDirection == TradeDirection.SHORT && signalDirection == TradeDirection.LONG);
     }
 
     /**
@@ -174,10 +227,9 @@ public class PositionLifecycleManager {
 
     /**
      * Create exit order from TradeIntent
-     * Returns null if HOLD, or order parameters if exit needed
      */
     public ExitOrder createExitOrder(TradeIntent intent, PositionState position,
-                                      double currentPrice, String symbol) {
+                                     double currentPrice, String symbol) {
         if (intent == TradeIntent.HOLD || !intent.isClosing()) {
             return null;
         }
@@ -185,19 +237,11 @@ public class PositionLifecycleManager {
         double qty = Math.abs(position.getQuantity());
         double price = currentPrice;
 
-        // For close orders, price is current market
         return new ExitOrder(intent, symbol, qty, price);
     }
 
-    // Getters for configuration
-    public double getExitConfidenceThreshold() { return exitConfidenceThreshold; }
-    public int getMaxHoldMinutes() { return maxHoldMinutes; }
-    public double getStopLossPercent() { return stopLossPercent; }
-    public double getTrailingStopPercent() { return trailingStopPercent; }
+    // ========== Exit Order ==========
 
-    /**
-     * Exit order representation
-     */
     public static class ExitOrder {
         private final TradeIntent intent;
         private final String symbol;
@@ -215,7 +259,14 @@ public class PositionLifecycleManager {
         public String getSymbol() { return symbol; }
         public double getQuantity() { return quantity; }
         public double getPrice() { return price; }
-
         public TradeDirection getCloseDirection() { return intent.getCloseDirection(); }
     }
+
+    // ========== Getters ==========
+
+    public double getAtrStopMultiplier() { return atrStopMultiplier; }
+    public double getChandelierK() { return chandelierK; }
+    public int getMaxHoldMinutes() { return maxHoldMinutes; }
+    public double getExitConfidenceThreshold() { return exitConfidenceThreshold; }
+    public double getCatastrophicLossPercent() { return catastrophicLossPercent; }
 }

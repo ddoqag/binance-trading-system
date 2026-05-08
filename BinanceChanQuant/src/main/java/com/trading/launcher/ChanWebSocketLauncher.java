@@ -685,9 +685,9 @@ public class ChanWebSocketLauncher {
             return;
         }
 
-        // Calculate quantity based on risk
-        double quantity = Math.min(0.01 + confidence * 0.02, riskChecker.getDynamicPositionLimit() * 0.1);
-        if (quantity < 0.001) quantity = 0.001;
+        // Calculate quantity based on risk - smaller position for low balance
+        double quantity = Math.min(0.0005, riskChecker.getDynamicPositionLimit() * 0.05);
+        if (quantity < 0.0001) quantity = 0.0001;
 
         Order order = new Order(
             "ws-" + System.currentTimeMillis(),

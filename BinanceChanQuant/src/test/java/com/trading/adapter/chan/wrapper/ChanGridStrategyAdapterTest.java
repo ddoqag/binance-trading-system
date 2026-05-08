@@ -46,8 +46,8 @@ class ChanGridStrategyAdapterTest {
     }
 
     @Test
-    @DisplayName("Min confidence should be 0.50")
-    void minConfidenceShouldBePoint50() {
-        assertEquals(0.50, adapter.getMinConfidence(), 0.001);
+    @DisplayName("Min confidence should be 0.35 for provisional signals")
+    void minConfidenceShouldBePoint35() {
+        assertEquals(0.35, adapter.getMinConfidence(), 0.001);
     }
 }

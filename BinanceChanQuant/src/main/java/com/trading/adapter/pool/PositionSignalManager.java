@@ -3,6 +3,7 @@ package com.trading.adapter.pool;
 import com.trading.domain.signal.CompositeAlphaSignal;
 import com.trading.domain.signal.MarketContext;
 import com.trading.domain.trading.model.PositionState;
+import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.TradeIntent;
 import com.trading.domain.trading.model.Order;
@@ -15,12 +16,18 @@ import com.trading.domain.trading.model.OrderType;
  * Transforms "direction signals" into "trade intents".
  *
  * This is the bridge between Entry Alpha and Exit Logic.
+ *
+ * Key responsibility:
+ * - Create RiskModel when opening positions (ATR-based stops)
+ * - Track position state with RiskModel
+ * - Determine entry/exit intents
  */
 public class PositionSignalManager {
 
     private final AlphaPool alphaPool;
     private final PositionLifecycleManager lifecycleManager;
     private PositionState currentPosition;
+    private String currentSymbol = "BTCUSDT";
 
     public PositionSignalManager(AlphaPool alphaPool, PositionLifecycleManager lifecycleManager) {
         this.alphaPool = alphaPool;
@@ -43,6 +50,13 @@ public class PositionSignalManager {
     }
 
     /**
+     * Set symbol for trading
+     */
+    public void setSymbol(String symbol) {
+        this.currentSymbol = symbol;
+    }
+
+    /**
      * Determine trade intent based on position and market
      *
      * @param context Market context
@@ -55,8 +69,9 @@ public class PositionSignalManager {
         double signalConfidence = signal != null ? signal.getConfidence() : 0.0;
         TradeDirection desiredDirection = signal != null ? signal.getDirection() : TradeDirection.NEUTRAL;
 
-        // Ask lifecycle manager for intent
-        TradeIntent intent = lifecycleManager.determineIntent(currentPosition, signalConfidence, context);
+        // Ask lifecycle manager for intent (passes signal direction for reverse check)
+        TradeIntent intent = lifecycleManager.determineIntent(
+            currentPosition, signalConfidence, context, desiredDirection);
 
         // If lifecycle says HOLD, check if we should entry
         if (intent == TradeIntent.HOLD && !currentPosition.hasPosition()) {
@@ -83,16 +98,20 @@ public class PositionSignalManager {
             return null;
         }
 
-        String symbol = "BTCUSDT"; // Should be from config
-
         if (intent.isOpening()) {
-            // Opening new position
+            // Opening new position - create RiskModel with ATR-based stops
             TradeDirection direction = intent.getOpenDirection();
             double qty = calculateEntryQuantity(intent, context);
+            RiskModel riskModel = RiskModelFactory.buildRiskModel(price, qty, direction, context);
+
+            System.out.printf("[PositionSignalManager] Created RiskModel: %s%n", riskModel);
+
+            // Store the RiskModel for later use (would need to update PositionState)
+            // For now, the RiskModel is embedded when position is created
 
             return new Order(
                 orderId,
-                symbol,
+                currentSymbol,
                 direction,
                 OrderType.LIMIT,
                 qty,
@@ -100,6 +119,7 @@ public class PositionSignalManager {
                 "POSITION_MANAGER",
                 0.8
             );
+
         } else if (intent.isClosing()) {
             // Closing existing position
             TradeDirection closeDirection = intent.getCloseDirection();
@@ -107,7 +127,7 @@ public class PositionSignalManager {
 
             return new Order(
                 orderId,
-                symbol,
+                currentSymbol,
                 closeDirection,
                 OrderType.LIMIT,
                 qty,
@@ -118,6 +138,18 @@ public class PositionSignalManager {
         }
 
         return null;
+    }
+
+    /**
+     * Create PositionState from entry (includes RiskModel)
+     */
+    public PositionState createPositionFromEntry(double quantity, double price, String orderId, double equity, MarketContext context) {
+        TradeDirection direction = quantity > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
+        RiskModel riskModel = RiskModelFactory.buildRiskModel(price, quantity, direction, context);
+
+        System.out.printf("[PositionSignalManager] Opening position with RiskModel: %s%n", riskModel);
+
+        return PositionState.fromEntry(quantity, price, orderId, equity, riskModel);
     }
 
     /**
@@ -136,23 +168,25 @@ public class PositionSignalManager {
     }
 
     /**
-     * Calculate entry quantity
+     * Calculate entry quantity with volatility adjustment
      */
     private double calculateEntryQuantity(TradeIntent intent, MarketContext context) {
-        // Base quantity from signal
-        double baseQty = 0.01;
+        // Base quantity
+        double baseQty = 0.001;  // Minimum for BTCUSDT
 
-        // Adjust based on volatility
-        if (context.isHighVolatility()) {
-            baseQty *= 0.5;  // Reduce size in high vol
-        } else if (context.isLowVolatility()) {
-            baseQty *= 1.2;  // Increase slightly in low vol
+        // Adjust based on volatility regime
+        if (context != null) {
+            double atrPercent = context.getAtrPercent();
+            if (atrPercent > 0.05) {
+                baseQty *= 0.5;   // Reduce in extreme vol
+            } else if (atrPercent > 0.03) {
+                baseQty *= 0.7;   // Reduce in high vol
+            } else if (atrPercent < 0.01) {
+                baseQty *= 1.0;   // Normal in low vol
+            }
         }
 
-        // Cap at position limit
-        double maxQty = 0.05;  // Should be from risk config
-
-        return Math.min(baseQty, maxQty);
+        return baseQty;
     }
 
     /**
@@ -162,7 +196,10 @@ public class PositionSignalManager {
         if (!pos.hasPosition()) {
             return "EMPTY";
         }
-        return String.format("%.4f %s @ %.2f", pos.getQuantity(), pos.getDirection(), pos.getEntryPrice());
+        String riskInfo = pos.getRiskModel() != null
+            ? String.format(", ATR_Stop=%.2f", pos.getRiskModel().getAtrStopPrice())
+            : "";
+        return String.format("%.4f %s @ %.2f%s", pos.getQuantity(), pos.getDirection(), pos.getEntryPrice(), riskInfo);
     }
 
     // Getters

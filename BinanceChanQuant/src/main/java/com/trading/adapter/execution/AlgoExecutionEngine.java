@@ -297,8 +297,10 @@ public class AlgoExecutionEngine {
                 return;
             }
 
-            // Check existing position before sending
+            // Force sync position before checking
             if (exchangeAdapter != null) {
+                // Sync to get fresh position data
+                exchangeAdapter.syncPositionsFromExchange();
                 double currentPos = exchangeAdapter.getCurrentPosition();
                 TradeDirection desiredDir = order.getSide();
 

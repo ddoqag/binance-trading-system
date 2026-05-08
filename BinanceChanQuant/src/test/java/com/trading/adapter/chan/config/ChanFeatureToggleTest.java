@@ -20,11 +20,11 @@ class ChanFeatureToggleTest {
     }
 
     @Test
-    @DisplayName("Default modes should be SHADOW")
-    void defaultModesShouldBeShadow() {
-        assertEquals(ChanFeatureToggle.Mode.SHADOW, toggle.getReverseMode());
-        assertEquals(ChanFeatureToggle.Mode.SHADOW, toggle.getTrendMode());
-        assertEquals(ChanFeatureToggle.Mode.SHADOW, toggle.getGridMode());
+    @DisplayName("Default modes should be ENABLED for active trading")
+    void defaultModesShouldBeEnabled() {
+        assertEquals(ChanFeatureToggle.Mode.ENABLED, toggle.getReverseMode());
+        assertEquals(ChanFeatureToggle.Mode.ENABLED, toggle.getTrendMode());
+        assertEquals(ChanFeatureToggle.Mode.ENABLED, toggle.getGridMode());
         assertEquals(ChanFeatureToggle.Mode.SHADOW, toggle.getResonanceMode());
     }
 

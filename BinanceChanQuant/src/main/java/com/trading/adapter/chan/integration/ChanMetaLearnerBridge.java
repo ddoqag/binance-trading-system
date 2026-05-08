@@ -42,9 +42,9 @@ public class ChanMetaLearnerBridge {
     // Regime-specific weight adjustments
     private static final double[] REGIME_WEIGHTS = {
         0.0,   // UNKNOWN
-        0.40,  // RANGE (raised for provisional signals)
-        0.35,  // TREND_UP
-        0.35,  // TREND_DOWN
+        0.25,  // RANGE
+        0.40,  // TREND_UP (raised for trend signals)
+        0.40,  // TREND_DOWN (raised for trend signals)
         0.20,  // HIGH_VOL
         0.20   // LOW_VOL
     };
