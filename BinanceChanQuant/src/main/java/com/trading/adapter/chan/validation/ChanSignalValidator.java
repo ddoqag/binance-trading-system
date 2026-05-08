@@ -28,21 +28,32 @@ public class ChanSignalValidator {
     private final AtomicInteger blockedSignals = new AtomicInteger(0);
     private final AtomicLong lastSignalTime = new AtomicLong(0);
 
-    // Rolling window for signal quality
+    // Separate cooldown tracking for shadow vs real signals
+    private final AtomicLong lastShadowSignalTime = new AtomicLong(0);
+    private final AtomicLong lastRealSignalTime = new AtomicLong(0);
+    private final long shadowCooldownMs = 60_000; // 1 minute for shadow
+    private final long realCooldownMs = 300_000;   // 5 minutes for real (AlphaPool)
+
+    // Rolling window for signal quality (real signals only)
     private final RingBuffer<SignalRecord> signalBuffer = new RingBuffer<>(100);
 
     public ChanSignalValidator() {}
 
     /**
      * Validate a Chan signal meets quality thresholds
+     * @param isShadow true if this is a shadow signal (for logging/metrics only)
      */
     public ValidationResult validate(ChanKLineProcessor.KlineContext ctx,
                                    MarketRegime regime,
-                                   double confidence) {
+                                   double confidence,
+                                   boolean isShadow) {
         totalSignals.incrementAndGet();
 
-        // Check cooldown
-        if (System.currentTimeMillis() - lastSignalTime.get() < signalCooldownMs) {
+        // Check cooldown - separate tracking for shadow vs real
+        long cooldownMs = isShadow ? shadowCooldownMs : realCooldownMs;
+        AtomicLong lastTime = isShadow ? lastShadowSignalTime : lastRealSignalTime;
+
+        if (System.currentTimeMillis() - lastTime.get() < cooldownMs) {
             blockedSignals.incrementAndGet();
             return ValidationResult.reject("SIGNAL_COOLDOWN", "Signal in cooldown period");
         }
@@ -76,10 +87,22 @@ public class ChanSignalValidator {
 
         // Record valid signal (provisional if 中枢 not yet complete)
         validSignals.incrementAndGet();
-        lastSignalTime.set(System.currentTimeMillis());
-        signalBuffer.add(new SignalRecord(confidence, regime, !provisionalSignal));
+        lastTime.set(System.currentTimeMillis());
+
+        if (!isShadow) {
+            signalBuffer.add(new SignalRecord(confidence, regime, !provisionalSignal));
+        }
 
         return ValidationResult.accept(confidence);
+    }
+
+    /**
+     * Validate a Chan signal (real signal mode, not shadow)
+     */
+    public ValidationResult validate(ChanKLineProcessor.KlineContext ctx,
+                                   MarketRegime regime,
+                                   double confidence) {
+        return validate(ctx, regime, confidence, false);
     }
 
     /**

@@ -446,43 +446,46 @@ public class BinanceExchangeAdapter {
     private void updateLocalPosition(Order order, double filledQty, double fillPrice) {
         if (filledQty <= 0) return;
 
-        switch (order.getSide()) {
-            case LONG: {
-                double totalCost = currentPosition * avgEntryPrice + filledQty * fillPrice;
-                currentPosition += filledQty;
-                if (currentPosition > 0) {
-                    avgEntryPrice = totalCost / currentPosition;
-                }
-                break;
-            }
-            case SHORT: {
-                currentPosition -= filledQty;
-                // For shorts, entry price tracking is similar
-                if (currentPosition < 0) {
-                    double totalCost = Math.abs(currentPosition) * avgEntryPrice + filledQty * fillPrice;
-                    currentPosition = -(Math.abs(currentPosition) + filledQty);
-                    avgEntryPrice = totalCost / Math.abs(currentPosition);
-                }
-                break;
-            }
-            case CLOSE: {
-                // Reduce position
-                if (currentPosition > 0) {
-                    realizedPnl = filledQty * (avgEntryPrice - fillPrice);
-                    currentPosition -= filledQty;
-                } else if (currentPosition < 0) {
-                    realizedPnl = filledQty * (fillPrice - avgEntryPrice);
+        // Phase 2: Only update local position for paper trading
+        // For live trading, position is synced ONLY from Binance USER_DATA stream
+        if (paperTrading) {
+            switch (order.getSide()) {
+                case LONG: {
+                    double totalCost = currentPosition * avgEntryPrice + filledQty * fillPrice;
                     currentPosition += filledQty;
+                    if (currentPosition > 0) {
+                        avgEntryPrice = totalCost / currentPosition;
+                    }
+                    break;
                 }
-                totalRealizedPnl += realizedPnl;
-                if (Math.abs(currentPosition) < 0.0001) {
-                    currentPosition = 0;
-                    avgEntryPrice = 0;
+                case SHORT: {
+                    currentPosition -= filledQty;
+                    if (currentPosition < 0) {
+                        double totalCost = Math.abs(currentPosition) * avgEntryPrice + filledQty * fillPrice;
+                        currentPosition = -(Math.abs(currentPosition) + filledQty);
+                        avgEntryPrice = totalCost / Math.abs(currentPosition);
+                    }
+                    break;
                 }
-                break;
+                case CLOSE: {
+                    if (currentPosition > 0) {
+                        realizedPnl = filledQty * (avgEntryPrice - fillPrice);
+                        currentPosition -= filledQty;
+                    } else if (currentPosition < 0) {
+                        realizedPnl = filledQty * (fillPrice - avgEntryPrice);
+                        currentPosition += filledQty;
+                    }
+                    totalRealizedPnl += realizedPnl;
+                    if (Math.abs(currentPosition) < 0.0001) {
+                        currentPosition = 0;
+                        avgEntryPrice = 0;
+                    }
+                    break;
+                }
+                default: break;
             }
-            default: break;
         }
+        // For live trading: position is only updated via syncPositionsFromExchange() from USER_DATA
     }
 
     /**

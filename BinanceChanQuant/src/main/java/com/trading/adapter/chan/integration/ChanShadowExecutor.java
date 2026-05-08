@@ -64,10 +64,10 @@ public class ChanShadowExecutor {
 
         ChanMetaLearnerBridge.ChanSignalResult result = chanResult.get();
 
-        // Validate signal
+        // Validate signal (shadow mode - separate cooldown tracking)
         ChanKLineProcessor.KlineContext ctx = metaLearnerBridge.getProcessor().getCurrentContext();
         ChanSignalValidator.ValidationResult validation =
-            validator.validate(ctx, regime, result.confidence);
+            validator.validate(ctx, regime, result.confidence, true);
 
         ShadowSignalRecord record = new ShadowSignalRecord(
             "UNKNOWN",

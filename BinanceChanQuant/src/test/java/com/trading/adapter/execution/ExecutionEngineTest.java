@@ -33,6 +33,8 @@ class ExecutionEngineTest {
     void setUp() {
         riskChecker = PreTradeRiskChecker.defaults();
         engine = new ExecutionEngine(riskChecker);
+        // Disable signal cooldown for unit tests
+        engine.setSignalCooldownMs(0, 0);
     }
 
     @AfterEach
@@ -96,11 +98,13 @@ class ExecutionEngineTest {
     void multipleOrdersShouldBeQueued() {
         engine.start();
 
-        // Submit multiple small orders
+        // Submit multiple small orders for DIFFERENT symbols
+        // Note: Same symbol will be blocked by duplicate TWAP prevention
+        String[] symbols = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "DOGEUSDT"};
         for (int i = 0; i < 5; i++) {
-            Order order = createOrder("BTCUSDT", TradeDirection.LONG, 0.1, 50000);
+            Order order = createOrder(symbols[i], TradeDirection.LONG, 0.1, 50000);
             boolean accepted = engine.submitOrder(order);
-            assertTrue(accepted, "Order " + i + " should be accepted");
+            assertTrue(accepted, "Order " + i + " should be accepted for symbol " + symbols[i]);
         }
 
         engine.stop();

@@ -13,6 +13,12 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
+
+import com.trading.domain.trading.model.TradeDirection;
+import com.trading.domain.trading.model.TradeIntent;
+import com.trading.domain.market.model.MarketData;
 
 /**
  * Execution Engine
@@ -43,6 +49,16 @@ public class ExecutionEngine {
     private final AtomicLong totalOrders = new AtomicLong(0);
     private final AtomicLong filledOrders = new AtomicLong(0);
     private final AtomicLong rejectedOrders = new AtomicLong(0);
+
+    // Active execution tracking - prevents duplicate TWAP for same symbol
+    private final ConcurrentHashMap<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
+
+    // Signal cooldown tracking
+    private final ConcurrentHashMap<String, SignalHistory> signalHistory = new ConcurrentHashMap<>();
+
+    // Configurable cooldown times (in ms)
+    private long sameDirectionCooldownMs = 5 * 60 * 1000;  // 5 min default
+    private long reverseDirectionCooldownMs = 15 * 60 * 1000; // 15 min default
 
     /**
      * Constructor for paper trading mode
@@ -111,6 +127,32 @@ public class ExecutionEngine {
             return false;
         }
 
+        // ===== Phase 1: Signal Cooldown Check =====
+        if (shouldIgnoreSignal(order.getSide())) {
+            return false;
+        }
+
+        // ===== Phase 1: Direction Filter Check =====
+        MarketData marketData = getCurrentMarketData();
+        if (!shouldExecuteDirection(order, marketData)) {
+            return false;
+        }
+
+        // ===== Phase 3: Position Intent Check =====
+        TradeIntent intent = determinePositionIntent(order);
+        if (intent == TradeIntent.HOLD) {
+            System.out.printf("[ExecutionEngine] Intent HOLD: signal=%s, position=%s, ignoring%n",
+                order.getSide(), getCurrentPositionStr());
+            return false;
+        }
+
+        // ===== Phase 1: Duplicate TWAP Prevention =====
+        String symbol = order.getSymbol();
+        if (hasActiveExecution(symbol)) {
+            System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring%n", symbol);
+            return false;
+        }
+
         // Pre-trade risk check
         if (riskManager != null) {
             RiskCheckResult result = riskManager.preTradeCheck(order);
@@ -169,6 +211,13 @@ public class ExecutionEngine {
 
                 // Check if should use algo
                 if (executionPlan.isUseAlgo()) {
+                    // Phase 1: Check for duplicate TWAP before starting
+                    if (hasActiveExecution(routedOrder.getSymbol())) {
+                        System.out.printf("[ExecutionEngine] TWAP already active for %s, skipping%n",
+                            routedOrder.getSymbol());
+                        continue;
+                    }
+
                     // Set algo type from execution plan, not from order's strategy field
                     routedOrder = new Order(
                         routedOrder.getOrderId(),
@@ -181,6 +230,8 @@ public class ExecutionEngine {
                         routedOrder.getUrgency()
                     );
                     algoEngine.startAlgo(routedOrder, marketData);
+                    activeExecutions.put(routedOrder.getSymbol(),
+                        new ActiveExecution(routedOrder.getOrderId(), routedOrder.getSymbol()));
                 } else {
                     // Direct execution
                     sendOrderDirect(routedOrder, routed.getExchange());
@@ -244,6 +295,20 @@ public class ExecutionEngine {
             report.getSide(),
             report.getFilledQuantity(),
             report.getAvgFillPrice());
+
+        // Phase 1: Remove from active executions when completed
+        String symbol = report.getSymbol();
+        ActiveExecution exec = activeExecutions.get(symbol);
+        if (exec != null) {
+            com.trading.domain.trading.model.OrderStatus status = report.getStatus();
+            if (status == com.trading.domain.trading.model.OrderStatus.FILLED ||
+                status == com.trading.domain.trading.model.OrderStatus.CANCELLED ||
+                status == com.trading.domain.trading.model.OrderStatus.REJECTED ||
+                status == com.trading.domain.trading.model.OrderStatus.EXPIRED) {
+                activeExecutions.remove(symbol);
+                System.out.printf("[ExecutionEngine] Execution completed for %s: %s%n", symbol, status);
+            }
+        }
     }
 
     /**
@@ -301,4 +366,201 @@ public class ExecutionEngine {
     public SmartOrderRouter getOrderRouter() { return orderRouter; }
     public AlgoExecutionEngine getAlgoEngine() { return algoEngine; }
     public BinanceExchangeAdapter getExchangeAdapter() { return exchangeAdapter; }
+
+    /**
+     * Configure signal cooldown times (for testing)
+     * @param sameDirCooldownMs same direction cooldown in ms (default 5 min)
+     * @param reverseDirCooldownMs reverse direction cooldown in ms (default 15 min)
+     */
+    public void setSignalCooldownMs(long sameDirCooldownMs, long reverseDirCooldownMs) {
+        this.sameDirectionCooldownMs = sameDirCooldownMs;
+        this.reverseDirectionCooldownMs = reverseDirCooldownMs;
+    }
+
+    // ========== Phase 1: Duplicate TWAP Prevention ==========
+
+    /**
+     * Active execution tracking - prevents duplicate TWAP
+     */
+    public static class ActiveExecution {
+        public final String orderId;
+        public final String symbol;
+        public final long startTime;
+        public volatile boolean completed = false;
+        public long slicesSent = 0;
+        public long slicesFilled = 0;
+        public double filledQuantity = 0;
+
+        public ActiveExecution(String orderId, String symbol) {
+            this.orderId = orderId;
+            this.symbol = symbol;
+            this.startTime = System.currentTimeMillis();
+        }
+
+        public void onSliceSent() { slicesSent++; }
+        public void onFill(double qty) { slicesFilled++; filledQuantity += qty; }
+        public void markDone() { completed = true; }
+        public long getAgeMs() { return System.currentTimeMillis() - startTime; }
+    }
+
+    /**
+     * Signal history for cooldown tracking
+     */
+    private static class SignalHistory {
+        public TradeDirection lastDirection;
+        public long lastSignalTime;
+        public long lastReverseSignalTime;
+
+        public boolean isCooldownActive(TradeDirection newDir, long now, long sameDirCooldown, long reverseDirCooldown) {
+            if (lastDirection == newDir && (now - lastSignalTime) < sameDirCooldown) {
+                return true; // same-direction cooldown
+            }
+            if (lastDirection != null && lastDirection != newDir &&
+                (now - lastReverseSignalTime) < reverseDirCooldown) {
+                return true; // reverse-direction cooldown
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Check if signal should be ignored due to cooldown
+     */
+    private boolean shouldIgnoreSignal(TradeDirection direction) {
+        String symbol = "BTCUSDT";
+        long now = System.currentTimeMillis();
+        SignalHistory history = signalHistory.computeIfAbsent(symbol, k -> new SignalHistory());
+
+        if (history.isCooldownActive(direction, now, sameDirectionCooldownMs, reverseDirectionCooldownMs)) {
+            System.out.printf("[ExecutionEngine] Signal cooldown: dir=%s lastDir=%s%n",
+                direction, history.lastDirection);
+            return true;
+        }
+
+        if (direction != history.lastDirection) {
+            history.lastReverseSignalTime = now;
+        }
+        history.lastDirection = direction;
+        history.lastSignalTime = now;
+        return false;
+    }
+
+    /**
+     * Direction filter: validate signal direction matches market direction
+     * LONG signal → only execute if market is UP
+     * SHORT signal → only execute if market is DOWN
+     */
+    private boolean shouldExecuteDirection(Order order, MarketData marketData) {
+        if (marketData == null) {
+            return true; // No market data, allow execution
+        }
+
+        TradeDirection signalDir = order.getSide();
+        MarketDirection marketDir = calculateMarketDirection(marketData);
+
+        boolean aligned = (signalDir == TradeDirection.LONG && marketDir == MarketDirection.UP) ||
+                         (signalDir == TradeDirection.SHORT && marketDir == MarketDirection.DOWN);
+
+        if (!aligned) {
+            System.out.printf("[ExecutionEngine] REJECTED: signal=%s market=%s direction mismatch%n",
+                signalDir, marketDir);
+            rejectedOrders.incrementAndGet();
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Calculate market direction from price data
+     */
+    private MarketDirection calculateMarketDirection(MarketData marketData) {
+        double lastPrice = marketData.getLastPrice();
+        double bidPrice = marketData.getBidPrice();
+        double askPrice = marketData.getAskPrice();
+
+        if (lastPrice <= 0 || bidPrice <= 0 || askPrice <= 0) {
+            return MarketDirection.UNKNOWN;
+        }
+
+        double midPrice = (bidPrice + askPrice) / 2;
+        double deviation = (lastPrice - midPrice) / midPrice;
+
+        if (deviation > 0.001) {
+            return MarketDirection.UP;
+        } else if (deviation < -0.001) {
+            return MarketDirection.DOWN;
+        }
+        return MarketDirection.STABLE;
+    }
+
+    /**
+     * Market direction enum
+     */
+    public enum MarketDirection {
+        UP, DOWN, STABLE, UNKNOWN
+    }
+
+    /**
+     * Check if there's already an active execution for this symbol
+     */
+    private boolean hasActiveExecution(String symbol) {
+        return activeExecutions.containsKey(symbol);
+    }
+
+    // ========== Phase 3: Position Intent Logic ==========
+
+    /**
+     * Determine position intent based on signal direction and current position
+     * This implements the core rule: don't fight existing position
+     */
+    private TradeIntent determinePositionIntent(Order order) {
+        double currentPos = 0.0;
+        if (exchangeAdapter != null) {
+            currentPos = exchangeAdapter.getCurrentPosition();
+        }
+
+        TradeDirection signalDir = order.getSide();
+
+        // No position - can only OPEN or HOLD
+        if (Math.abs(currentPos) < 0.0001) {
+            if (signalDir == TradeDirection.LONG) {
+                return TradeIntent.OPEN_LONG;
+            } else if (signalDir == TradeDirection.SHORT) {
+                return TradeIntent.OPEN_SHORT;
+            }
+            return TradeIntent.HOLD;
+        }
+
+        // Have LONG position
+        if (currentPos > 0) {
+            if (signalDir == TradeDirection.SHORT) {
+                return TradeIntent.CLOSE_LONG;  // Close LONG before SHORT
+            } else if (signalDir == TradeDirection.LONG) {
+                return TradeIntent.HOLD;  // Don't add to LONG - wait for close
+            }
+            return TradeIntent.HOLD;
+        }
+
+        // Have SHORT position
+        if (currentPos < 0) {
+            if (signalDir == TradeDirection.LONG) {
+                return TradeIntent.CLOSE_SHORT;  // Close SHORT before LONG
+            } else if (signalDir == TradeDirection.SHORT) {
+                return TradeIntent.HOLD;  // Don't add to SHORT - wait for close
+            }
+            return TradeIntent.HOLD;
+        }
+
+        return TradeIntent.HOLD;
+    }
+
+    /**
+     * Get current position as string for logging
+     */
+    private String getCurrentPositionStr() {
+        if (exchangeAdapter == null) {
+            return "N/A";
+        }
+        return String.format("%.4f", exchangeAdapter.getCurrentPosition());
+    }
 }
