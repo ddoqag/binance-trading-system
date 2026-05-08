@@ -130,7 +130,8 @@ public class ChanAlphaSignal extends AlphaSignal {
 
         @Override
         public ChanAlphaSignal build() {
-            signal.type = AlphaType.valueOf("CHAN_" + signal.chanSignalType);
+            // Chan signals always map to CHAN_TREND type (chanSignalType is used for display only)
+            signal.type = AlphaType.CHAN_TREND;
             return super.build();
         }
     }
