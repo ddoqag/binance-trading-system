@@ -53,6 +53,14 @@ public class ChanKLineProcessor {
      * Add K-line to window and update all Chan components
      */
     public void addKLine(KLine kline) {
+        // Validate K-line data - reject obviously corrupted data
+        if (kline == null || kline.high < kline.low ||
+            kline.high > kline.close * 1.1 || kline.low < kline.close * 0.9 ||
+            (kline.high - kline.low) > kline.close * 0.05) {
+            // Range > 5% of price is suspicious for 1m candle - skip
+            return;
+        }
+
         klineWindow.add(kline);
 
         // Maintain window size
@@ -166,6 +174,10 @@ public class ChanKLineProcessor {
                     double dd = Math.min(b1.low, b3.low);
 
                     currentZhongshu = new Zhongshu(zg, zd, gg, dd, b1.startTime, b3.endTime);
+                    // FIX: Limit zhongshuHistory size to prevent memory growth
+                    if (zhongshuHistory.size() >= 10) {
+                        zhongshuHistory.remove(0);
+                    }
                     zhongshuHistory.add(currentZhongshu);
                 }
             }
@@ -348,16 +360,18 @@ public class ChanKLineProcessor {
     // ========== Helper Methods ==========
 
     private KLine fromMarketData(MarketData data) {
-        // MarketData uses bid/ask/lastPrice, not open/high/low/close
-        // Use lastPrice as reference, construct synthetic OHLC
+        // FIX: Use lastPrice as a single price point for simplicity
+        // Note: For proper K-line synthesis, would need actual OHLC data from exchange
+        // This simplified version preserves lastPrice for fenxing detection
         double price = data.getLastPrice();
         double spread = data.getSpread();
+        double halfSpread = spread / 2;
         return new KLine(
             System.currentTimeMillis(),
-            price - spread/2,  // open (mid - half spread)
-            price + spread/2,  // high (mid + half spread)
-            price - spread/2,  // low (mid - half spread)
-            price,             // close (mid)
+            price - halfSpread,  // open
+            price + halfSpread,  // high
+            price - halfSpread,  // low
+            price,               // close
             data.getVolume()
         );
     }

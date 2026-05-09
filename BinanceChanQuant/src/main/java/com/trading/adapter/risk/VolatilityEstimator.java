@@ -51,8 +51,10 @@ public class VolatilityEstimator {
         lastPrice = close;
 
         // Update ATR with Wilder's smoothing
-        if (atr == 0) {
-            atr = tr;
+        // FIX: For first N periods, use simple average instead of single TR as ATR
+        if (dataCount < DEFAULT_PERIOD) {
+            // Accumulate TR for simple average calculation
+            atr = (atr * (dataCount - 1) + tr) / dataCount;
         } else {
             atr = (atr * (DEFAULT_PERIOD - 1) + tr) / DEFAULT_PERIOD;
         }
@@ -157,7 +159,8 @@ public class VolatilityEstimator {
 
         double sum = 0;
         for (int i = DEFAULT_PERIOD; i < DEFAULT_PERIOD * 2; i++) {
-            double tr = highPrices[i] - lowPrices[i];
+            // FIX: Use full TR calculation including gap from previous close
+            double tr = calculateTR(highPrices[i], lowPrices[i], closePrices[i]);
             sum += tr;
         }
         return sum / DEFAULT_PERIOD;

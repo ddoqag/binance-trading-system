@@ -49,6 +49,9 @@ public class PreTradeRiskChecker implements RiskManager {
     private volatile double dynamicPositionLimit = 10.0;
     private volatile double volatilityScaleFactor = 1.0;
 
+    // Drawdown-aware scaling
+    private final DrawdownScaler drawdownScaler = new DrawdownScaler();
+
     public PreTradeRiskChecker(double maxPosition, double maxDailyLoss,
                                int maxOrdersPerMinute, double maxOrderValue,
                                double maxDrawdown,
@@ -61,8 +64,9 @@ public class PreTradeRiskChecker implements RiskManager {
         this.volatilityEstimator = volatilityEstimator;
 
         this.orderCircuitBreaker = CircuitBreaker.defaults();
-        this.positionCircuitBreaker = new CircuitBreaker(3, 2, 60000, 2);
-        this.lossCircuitBreaker = new CircuitBreaker(5, 3, 120000, 2);
+        // FIX: Relaxed circuit breaker thresholds for more robust trading
+        this.positionCircuitBreaker = new CircuitBreaker(3, 3, 60000, 2);
+        this.lossCircuitBreaker = new CircuitBreaker(5, 5, 120000, 2);
     }
 
     public static PreTradeRiskChecker defaults() {
@@ -97,31 +101,38 @@ public class PreTradeRiskChecker implements RiskManager {
             return RiskCheckResult.reject("Order value exceeds maximum: " + orderValue + " > " + maxOrderValue, "ORDER_VALUE_EXCEEDS_MAX");
         }
 
-        // Position limit check (use dynamic limit based on volatility)
+        // Calculate drawdown first (used for multiple checks)
+        Double equity = currentEquity.get();
+        double drawdown = 0.0;
+        if (equity > 0 && peakEquity.get() > 0) {
+            drawdown = (peakEquity.get() - equity) / peakEquity.get();
+        }
+
+        // Drawdown check - block if too high
+        if (drawdownScaler.isBlocked(drawdown)) {
+            dailyRejects.incrementAndGet();
+            return RiskCheckResult.reject("Trading blocked: drawdown " + (drawdown * 100) + "% exceeds limit", "DRAWDOWN_BLOCKED");
+        }
+
+        // Position limit check (use dynamic limit based on volatility AND drawdown)
         String symbol = order.getSymbol();
         double currentPosition = positions.getOrDefault(symbol, 0.0);
         double newPosition = calculateNewPosition(symbol, order);
-        double effectiveLimit = dynamicPositionLimit;
+
+        // Apply both volatility and drawdown scaling
+        double ddScale = drawdownScaler.scale(drawdown);
+        // FIX: Ensure minimum scale factor of 0.3 to prevent complete trading halt during high volatility
+        double effectiveLimit = dynamicPositionLimit * Math.max(volatilityScaleFactor, 0.3) * ddScale;
 
         if (Math.abs(newPosition) > effectiveLimit) {
             dailyRejects.incrementAndGet();
-            return RiskCheckResult.reject("Position limit exceeded: " + newPosition + " > " + effectiveLimit + " (vol-scale=" + String.format("%.2f", volatilityScaleFactor) + ")", "POSITION_LIMIT_EXCEEDED");
+            return RiskCheckResult.reject("Position limit exceeded: " + newPosition + " > " + effectiveLimit + " (vol=" + String.format("%.2f", volatilityScaleFactor) + " dd=" + String.format("%.2f", ddScale) + ")", "POSITION_LIMIT_EXCEEDED");
         }
 
         // Position circuit breaker
         if (!positionCircuitBreaker.allowRequest()) {
             dailyRejects.incrementAndGet();
             return RiskCheckResult.reject("Position circuit breaker is open", "POSITION_CIRCUIT_OPEN");
-        }
-
-        // Drawdown check
-        Double equity = currentEquity.get();
-        if (equity > 0 && peakEquity.get() > 0) {
-            double drawdown = (peakEquity.get() - equity) / peakEquity.get();
-            if (drawdown > maxDrawdown) {
-                dailyRejects.incrementAndGet();
-                return RiskCheckResult.reject("Drawdown limit exceeded: " + (drawdown * 100) + "% > " + (maxDrawdown * 100) + "%", "DRAWDOWN_LIMIT_EXCEEDED");
-            }
         }
 
         // Daily loss check
@@ -283,6 +294,23 @@ public class PreTradeRiskChecker implements RiskManager {
         return ordersThisMinute.get() < maxOrdersPerMinute;
     }
 
+    // FIX: Added interval tracking for per-symbol minimum time between orders
+    private final ConcurrentHashMap<String, Long> lastOrderTime = new ConcurrentHashMap<>();
+    private static final long MIN_ORDER_INTERVAL_MS = 1_000; // 1 second minimum
+
+    /**
+     * Check minimum interval between orders for the same symbol
+     */
+    private boolean checkMinInterval(String symbol) {
+        long now = System.currentTimeMillis();
+        long lastTime = lastOrderTime.getOrDefault(symbol, 0L);
+        if (now - lastTime < MIN_ORDER_INTERVAL_MS) {
+            return false;
+        }
+        lastOrderTime.put(symbol, now);
+        return true;
+    }
+
     private void resetOrderCountIfNeeded() {
         long now = System.currentTimeMillis();
         if (now - lastResetTime.get() > 60_000) {
@@ -307,18 +335,39 @@ public class PreTradeRiskChecker implements RiskManager {
         }
     }
 
+    /**
+     * FIX: Updated to track equity properly based on PnL from execution reports.
+     * Note: currentPrice parameter is only used for initial equity establishment,
+     * not as a running equity value. Real equity should come from execution PnL.
+     */
     private void updateEquity(double currentPrice) {
+        // Only initialize equity once with a reasonable starting value
         currentEquity.updateAndGet(v -> {
             if (v == 0) {
-                return currentPrice;
+                // Initialize with a default paper trading balance if no valid price
+                return currentPrice > 0 ? currentPrice : 10000.0;
             }
-            return v;
+            return v; // Keep existing equity - rely on PnL updates for changes
         });
 
         peakEquity.updateAndGet(v -> {
             Double current = currentEquity.get();
             return (v == 0 || current > v) ? current : v;
         });
+    }
+
+    /**
+     * Update equity based on PnL from execution report
+     * This is the proper way to update equity after fills
+     */
+    public void updateEquityWithPnL(double pnl) {
+        if (pnl != 0) {
+            currentEquity.updateAndGet(v -> v + pnl);
+            peakEquity.updateAndGet(v -> {
+                Double current = currentEquity.get();
+                return (current > v) ? current : v;
+            });
+        }
     }
 
     // Getters for testing

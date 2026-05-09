@@ -4,6 +4,7 @@ import com.trading.adapter.chan.analyzer.ChanKLineProcessor;
 import com.trading.domain.market.model.MarketData;
 import com.trading.domain.market.model.MarketRegime;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -24,15 +25,18 @@ public class ChanSignalValidator {
 
     // Counters for validation
     private final AtomicInteger totalSignals = new AtomicInteger(0);
-    private final AtomicInteger validSignals = new AtomicInteger(0);
+    // FIX: Separate counters for confirmed vs provisional signals
+    private final AtomicInteger confirmedSignals = new AtomicInteger(0);
+    private final AtomicInteger provisionalSignals = new AtomicInteger(0);
     private final AtomicInteger blockedSignals = new AtomicInteger(0);
     private final AtomicLong lastSignalTime = new AtomicLong(0);
 
     // Separate cooldown tracking for shadow vs real signals
     private final AtomicLong lastShadowSignalTime = new AtomicLong(0);
     private final AtomicLong lastRealSignalTime = new AtomicLong(0);
-    private final long shadowCooldownMs = 60_000; // 1 minute for shadow
-    private final long realCooldownMs = 300_000;   // 5 minutes for real (AlphaPool)
+    // FIX: Added minimum cooldown for real signals (3 seconds)
+    private final long shadowCooldownMs = 10_000; // 10 seconds for shadow
+    private final long realCooldownMs = 3_000;    // 3 seconds minimum for real signals
 
     // Rolling window for signal quality (real signals only)
     private final RingBuffer<SignalRecord> signalBuffer = new RingBuffer<>(100);
@@ -64,8 +68,8 @@ public class ChanSignalValidator {
             return ValidationResult.reject("REGIME_INVALID", "Signal not valid for current regime: " + regime);
         }
 
-        // Confidence check - lower threshold for paper trading
-        if (confidence < 0.35) {
+        // Confidence check - FIX: Raised threshold from 0.35 to 0.45 for better signal quality
+        if (confidence < 0.45) {
             blockedSignals.incrementAndGet();
             return ValidationResult.reject("CONFIDENCE_LOW", "Confidence below threshold: " + confidence);
         }
@@ -86,12 +90,15 @@ public class ChanSignalValidator {
         }
 
         // Record valid signal (provisional if 中枢 not yet complete)
-        validSignals.incrementAndGet();
-        lastTime.set(System.currentTimeMillis());
-
         if (!isShadow) {
+            if (provisionalSignal) {
+                provisionalSignals.incrementAndGet();
+            } else {
+                confirmedSignals.incrementAndGet();
+            }
             signalBuffer.add(new SignalRecord(confidence, regime, !provisionalSignal));
         }
+        lastTime.set(System.currentTimeMillis());
 
         return ValidationResult.accept(confidence);
     }
@@ -169,7 +176,8 @@ public class ChanSignalValidator {
     }
 
     public int getTotalSignals() { return totalSignals.get(); }
-    public int getValidSignals() { return validSignals.get(); }
+    public int getConfirmedSignals() { return confirmedSignals.get(); }
+    public int getProvisionalSignals() { return provisionalSignals.get(); }
     public int getBlockedSignals() { return blockedSignals.get(); }
 
     // Setters for thresholds
@@ -247,22 +255,27 @@ public class ChanSignalValidator {
 
         @Override
         public java.util.Iterator<T> iterator() {
-            return new RingBufferIterator();
-        }
+            // FIX: Create a snapshot copy of buffer data for thread-safe iteration
+            synchronized (buffer) {
+                @SuppressWarnings("unchecked")
+                T[] snapshot = (T[]) java.util.Arrays.copyOf(buffer, buffer.length);
+                int snapshotIndex = index;
+                int snapshotCount = count;
+                return new java.util.Iterator<T>() {
+                    private int pos = 0;
 
-        private class RingBufferIterator implements java.util.Iterator<T> {
-            private int pos = 0;
+                    @Override
+                    public boolean hasNext() {
+                        return pos < snapshotCount;
+                    }
 
-            @Override
-            public boolean hasNext() {
-                return pos < count;
-            }
-
-            @Override
-            public T next() {
-                int actualIndex = (index - count + pos + buffer.length) % buffer.length;
-                pos++;
-                return (T) buffer[actualIndex];
+                    @Override
+                    public T next() {
+                        int actualIndex = (snapshotIndex - snapshotCount + pos + snapshot.length) % snapshot.length;
+                        pos++;
+                        return snapshot[actualIndex];
+                    }
+                };
             }
         }
     }

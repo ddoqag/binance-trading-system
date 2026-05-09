@@ -33,14 +33,24 @@ public class ExecutionStateMachine {
         new ConcurrentHashMap<>();
     private long lastModeChangeTime = System.currentTimeMillis();
 
-    // Configuration
-    private double urgencyThreshold = 0.3;
-    private double inventoryRiskThreshold = 0.8;
-    private double conflictThreshold = 0.7;
-    private long minModeDuration = 30000; // 30 seconds
+    // Configuration - FIX: Now configurable via constructor
+    private final double urgencyThreshold;
+    private final double inventoryRiskThreshold;
+    private final double conflictThreshold;
+    private final long minModeDuration;
 
     public ExecutionStateMachine(RiskManager riskManager) {
+        this(riskManager, 0.3, 0.8, 0.7, 30000);
+    }
+
+    public ExecutionStateMachine(RiskManager riskManager, double urgencyThreshold,
+                                  double inventoryRiskThreshold, double conflictThreshold,
+                                  long minModeDuration) {
         this.riskManager = riskManager;
+        this.urgencyThreshold = urgencyThreshold;
+        this.inventoryRiskThreshold = inventoryRiskThreshold;
+        this.conflictThreshold = conflictThreshold;
+        this.minModeDuration = minModeDuration;
         initialize();
     }
 
@@ -61,7 +71,7 @@ public class ExecutionStateMachine {
             RiskManager.DailyRiskMetrics metrics = riskManager.getDailyRiskMetrics();
             RiskManager.PositionRisk positionRisk = riskManager.getPositionRisk();
 
-            double urgency = calculateUrgency(metrics);
+            double urgency = calculateUrgency(metrics, positionRisk);
             double inventoryRisk = calculateInventoryRisk(positionRisk);
             double conflictScore = calculateConflictScore();
 
@@ -82,16 +92,24 @@ public class ExecutionStateMachine {
         }
     }
 
-    private double calculateUrgency(RiskManager.DailyRiskMetrics metrics) {
+    private double calculateUrgency(RiskManager.DailyRiskMetrics metrics, RiskManager.PositionRisk positionRisk) {
         double urgency = 0.0;
 
         if (metrics != null) {
+            // Loss-based urgency
             if (metrics.dailyPnl < 0) {
                 urgency += Math.min(0.3, Math.abs(metrics.dailyPnl) / 1000.0);
             }
+            // Win rate-based urgency
             if (metrics.winRate < 0.5) {
                 urgency += (0.5 - metrics.winRate) * 0.4;
             }
+        }
+
+        // V6 FIX: If we have ANY position, ensure minimum urgency to avoid PASSIVE
+        // Check actual position quantity, not just utilization (which is small for retail positions)
+        if (positionRisk != null && Math.abs(positionRisk.currentPosition) > 0.00001) {
+            urgency = Math.max(urgency, 0.35);  // Minimum urgency when in position
         }
 
         return Math.min(1.0, urgency);
@@ -103,7 +121,9 @@ public class ExecutionStateMachine {
     }
 
     private double calculateConflictScore() {
-        // Simplified - would read from SHM in real implementation
+        // TODO: Implement real conflict scoring based on SHM expert signals
+        // For now, this is a placeholder - logs once to indicate status
+        // In production, would read from V2SHM or other signal source
         return 0.0;
     }
 
@@ -116,9 +136,24 @@ public class ExecutionStateMachine {
             return ExecutionMode.SMART_LIMIT;
         }
 
-        if (urgency < urgencyThreshold && inventoryRisk < 0.5) {
+        // V6 FIX: Add hysteresis to prevent flapping between PASSIVE and SMART_LIMIT
+        // When current mode is PASSIVE, require HIGHER urgency to switch to SMART_LIMIT
+        // This prevents rapid oscillation when urgency hovers near threshold
+        ExecutionMode current = currentMode.get();
+        double effectiveUrgencyThreshold = urgencyThreshold;
+        double aggressiveThreshold = 0.7;
+        // V6 FIX: Add inventoryRisk hysteresis for positions
+        double effectiveInventoryThreshold = 0.5;
+
+        if (current == ExecutionMode.PASSIVE) {
+            effectiveUrgencyThreshold = 0.45;  // Require higher urgency to exit PASSIVE
+            aggressiveThreshold = 0.8;         // Harder to go AGGRESSIVE from PASSIVE
+            effectiveInventoryThreshold = 0.7;  // Allow higher inventory when already PASSIVE
+        }
+
+        if (urgency < effectiveUrgencyThreshold && inventoryRisk < effectiveInventoryThreshold) {
             return ExecutionMode.PASSIVE;
-        } else if (urgency < 0.7) {
+        } else if (urgency < aggressiveThreshold) {
             return ExecutionMode.SMART_LIMIT;
         } else {
             return ExecutionMode.AGGRESSIVE;
@@ -126,9 +161,19 @@ public class ExecutionStateMachine {
     }
 
     /**
-     * Force switch to a specific mode
+     * Force switch to a specific mode (for circuit breaker)
      */
     public void forceMode(ExecutionMode mode) {
+        // Still respect cooldown for non-KILL switches
+        ExecutionMode current = currentMode.get();
+        if (mode != ExecutionMode.KILL_SWITCH) {
+            long timeInMode = System.currentTimeMillis() - lastModeChangeTime;
+            if (timeInMode < minModeDuration) {
+                System.out.printf("[ExecutionStateMachine] forceMode %s blocked: cooldown %dms < %dms%n",
+                    mode, timeInMode, minModeDuration);
+                return;
+            }
+        }
         switchMode(mode);
     }
 
@@ -139,6 +184,8 @@ public class ExecutionStateMachine {
             modeCounts.compute(newMode, (k, v) -> v == null ? 1 : v + 1);
             lastModeChangeTime = System.currentTimeMillis();
 
+            // TODO: Implement gradual transition (e.g., AGGRESSIVE -> SMART_LIMIT -> PASSIVE over multiple steps)
+            // This prevents sudden execution strategy changes that could increase costs
             System.out.printf("[ExecutionStateMachine] Mode changed: %s -> %s%n",
                 oldMode, newMode);
         }

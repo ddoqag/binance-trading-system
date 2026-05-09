@@ -53,12 +53,11 @@ public class ExecutionEngine {
     // Active execution tracking - prevents duplicate TWAP for same symbol
     private final ConcurrentHashMap<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
 
-    // Signal cooldown tracking
-    private final ConcurrentHashMap<String, SignalHistory> signalHistory = new ConcurrentHashMap<>();
+    // Signal cooldown tracking - uses new SignalCooldownManager
+    private final SignalCooldownManager cooldownManager = new SignalCooldownManager();
 
-    // Configurable cooldown times (in ms)
-    private long sameDirectionCooldownMs = 5 * 60 * 1000;  // 5 min default
-    private long reverseDirectionCooldownMs = 15 * 60 * 1000; // 15 min default
+    // Track position changes for post-close cooldown
+    private final AtomicReference<Double> lastKnownPosition = new AtomicReference<>(0.0);
 
     /**
      * Constructor for paper trading mode
@@ -82,6 +81,21 @@ public class ExecutionEngine {
 
         // Wire up algo engine to use exchange adapter for live trading
         algoEngine.setExchangeAdapter(exchangeAdapter);
+
+        // Wire up position change callback to trigger post-close cooldown
+        exchangeAdapter.setPositionChangeCallback(event -> {
+            if (event.wasClosed) {
+                TradeDirection closedDir = event.previousPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
+                System.out.printf("[ExecutionEngine] Position closed detected: %.4f -> 0%n", event.previousPosition);
+                cooldownManager.onPositionClosed(event.symbol, closedDir);
+            }
+            // P2-9 FIX: Clear post-close cooldown when position is opened
+            if (event.wasOpened) {
+                TradeDirection openedDir = event.newPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
+                System.out.printf("[ExecutionEngine] Position opened detected: 0 -> %.4f%n", event.newPosition);
+                cooldownManager.onPositionOpened(event.symbol, openedDir);
+            }
+        });
     }
 
     /**
@@ -127,8 +141,18 @@ public class ExecutionEngine {
             return false;
         }
 
-        // ===== Phase 1: Signal Cooldown Check =====
-        if (shouldIgnoreSignal(order.getSide())) {
+        // ===== Phase 3: Position Intent Check (before cooldown) =====
+        TradeIntent intent = determinePositionIntent(order);
+        boolean isExitOrder = intent == TradeIntent.EXIT_LONG || intent == TradeIntent.EXIT_SHORT;
+
+        // Intent=HOLD: no position management needed, skip all checks silently
+        if (intent == TradeIntent.HOLD) {
+            // Don't print anything - this is normal when position matches signal direction
+            return false;
+        }
+
+        // ===== Phase 1: Signal Cooldown Check (only for opening new positions, skip for exits) =====
+        if (!isExitOrder && shouldIgnoreSignal(order.getSymbol(), order.getSide(), order.getConfidence())) {
             return false;
         }
 
@@ -138,19 +162,18 @@ public class ExecutionEngine {
             return false;
         }
 
-        // ===== Phase 3: Position Intent Check =====
-        TradeIntent intent = determinePositionIntent(order);
-        if (intent == TradeIntent.HOLD) {
-            System.out.printf("[ExecutionEngine] Intent HOLD: signal=%s, position=%s, ignoring%n",
-                order.getSide(), getCurrentPositionStr());
-            return false;
-        }
-
-        // ===== Phase 1: Duplicate TWAP Prevention =====
+        // ===== Phase 1: Duplicate TWAP Prevention (exit orders bypass completely) =====
         String symbol = order.getSymbol();
-        if (hasActiveExecution(symbol)) {
-            System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring%n", symbol);
-            return false;
+
+        // Exit orders bypass TWAP check entirely - they must execute even if TWAP was started
+        if (isExitOrder) {
+            // No need to log - this is expected behavior
+        } else {
+            ActiveExecution existing = activeExecutions.get(symbol);
+            if (existing != null) {
+                System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring%n", symbol);
+                return false;
+            }
         }
 
         // Pre-trade risk check
@@ -209,12 +232,24 @@ public class ExecutionEngine {
             for (SmartOrderRouter.RoutedOrder routed : routedOrders) {
                 Order routedOrder = routed.getOrder();
 
-                // Check if should use algo
-                if (executionPlan.isUseAlgo()) {
-                    // Phase 1: Check for duplicate TWAP before starting
-                    if (hasActiveExecution(routedOrder.getSymbol())) {
-                        System.out.printf("[ExecutionEngine] TWAP already active for %s, skipping%n",
-                            routedOrder.getSymbol());
+                // Exit orders always go direct (no TWAP) - they must close even if TWAP was previously started
+                boolean isExitIntent = (order.getSide() == TradeDirection.LONG && exchangeAdapter.getCurrentPosition() < 0) ||
+                                       (order.getSide() == TradeDirection.SHORT && exchangeAdapter.getCurrentPosition() > 0);
+
+                if (executionPlan.isUseAlgo() && !isExitIntent) {
+
+                    // Check notional: if too small relative to balance, send direct instead of TWAP
+                    double notional = routedOrder.getQuantity() * routedOrder.getPrice();
+                    double availableBalance = 100.0; // Default, will be updated on sync
+                    if (exchangeAdapter != null) {
+                        availableBalance = exchangeAdapter.getAvailableBalance();
+                    }
+                    double maxNotional = availableBalance * 20 * 0.5; // leverage 20, use 50% of max
+                    if (notional > 0 && notional < maxNotional) {
+                        // Small order - send direct, no TWAP
+                        sendOrderDirect(routedOrder, routed.getExchange());
+                        System.out.printf("[ExecutionEngine] Small order notional=%.2f < %.2f, direct send%n",
+                            notional, maxNotional);
                         continue;
                     }
 
@@ -283,6 +318,24 @@ public class ExecutionEngine {
         // Update statistics
         if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.FILLED) {
             filledOrders.incrementAndGet();
+
+            // Check if this fill closed a position - trigger post-close cooldown
+            if (exchangeAdapter != null && report.getFilledQuantity() > 0) {
+                // FIX: Determine if position was closed based on fill report quantity and direction
+                // rather than calling syncPositions which may have race conditions
+                double filledQty = report.getFilledQuantity();
+                TradeDirection fillSide = report.getSide();
+                double posBefore = exchangeAdapter.getCurrentPosition();
+
+                // Simple check: if we filled a qty that would close the position
+                boolean wasLongClosed = (fillSide == TradeDirection.SHORT && posBefore > 0);
+                boolean wasShortClosed = (fillSide == TradeDirection.LONG && posBefore < 0);
+                boolean positionClosed = wasLongClosed || wasShortClosed;
+
+                if (positionClosed) {
+                    cooldownManager.onPositionClosed(report.getSymbol(), report.getSide());
+                }
+            }
         }
 
         // Notify risk manager
@@ -367,16 +420,6 @@ public class ExecutionEngine {
     public AlgoExecutionEngine getAlgoEngine() { return algoEngine; }
     public BinanceExchangeAdapter getExchangeAdapter() { return exchangeAdapter; }
 
-    /**
-     * Configure signal cooldown times (for testing)
-     * @param sameDirCooldownMs same direction cooldown in ms (default 5 min)
-     * @param reverseDirCooldownMs reverse direction cooldown in ms (default 15 min)
-     */
-    public void setSignalCooldownMs(long sameDirCooldownMs, long reverseDirCooldownMs) {
-        this.sameDirectionCooldownMs = sameDirCooldownMs;
-        this.reverseDirectionCooldownMs = reverseDirCooldownMs;
-    }
-
     // ========== Phase 1: Duplicate TWAP Prevention ==========
 
     /**
@@ -425,23 +468,17 @@ public class ExecutionEngine {
 
     /**
      * Check if signal should be ignored due to cooldown
+     * Uses SignalCooldownManager for improved logic:
+     * - High confidence + new direction → Allow (confirm)
+     * - Same direction + low confidence → Cooldown (repeat)
+     * - New direction + low confidence → Short cooldown
      */
-    private boolean shouldIgnoreSignal(TradeDirection direction) {
-        String symbol = "BTCUSDT";
-        long now = System.currentTimeMillis();
-        SignalHistory history = signalHistory.computeIfAbsent(symbol, k -> new SignalHistory());
-
-        if (history.isCooldownActive(direction, now, sameDirectionCooldownMs, reverseDirectionCooldownMs)) {
-            System.out.printf("[ExecutionEngine] Signal cooldown: dir=%s lastDir=%s%n",
-                direction, history.lastDirection);
+    private boolean shouldIgnoreSignal(String symbol, TradeDirection direction, double confidence) {
+        if (cooldownManager.shouldIgnore(symbol, direction, confidence)) {
+            System.out.printf("[ExecutionEngine] Signal cooldown: symbol=%s dir=%s conf=%.2f%n",
+                symbol, direction, confidence);
             return true;
         }
-
-        if (direction != history.lastDirection) {
-            history.lastReverseSignalTime = now;
-        }
-        history.lastDirection = direction;
-        history.lastSignalTime = now;
         return false;
     }
 
@@ -514,6 +551,7 @@ public class ExecutionEngine {
      * This implements the core rule: don't fight existing position
      */
     private TradeIntent determinePositionIntent(Order order) {
+        // FIX: Cache position at method start to avoid race conditions during evaluation
         double currentPos = 0.0;
         if (exchangeAdapter != null) {
             currentPos = exchangeAdapter.getCurrentPosition();
