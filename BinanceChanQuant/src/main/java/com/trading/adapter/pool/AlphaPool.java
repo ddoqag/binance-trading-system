@@ -6,6 +6,7 @@ import com.trading.domain.signal.AlphaType;
 import com.trading.domain.signal.CompositeAlphaSignal;
 import com.trading.domain.signal.MarketContext;
 import com.trading.domain.trading.model.TradeDirection;
+import com.trading.domain.market.model.MarketRegime;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -245,6 +246,15 @@ public class AlphaPool {
         if (context != null && context.isTrendMarket()) {
             for (AlphaSignal conflict : conflicts) {
                 if (conflict.getType() == AlphaType.TREND_FOLLOWING || conflict.getType() == AlphaType.CHAN_TREND) {
+                    // P2优化：逆势信号校验
+                    // 如果Chan信号方向与大级别趋势相反，需要额外确认
+                    if (conflict.getType() == AlphaType.CHAN_TREND) {
+                        boolean counterTrend = isCounterTrendDirection(conflict.getDirection(), context);
+                        if (counterTrend && !hasSufficientConfidence(conflict, best)) {
+                            // 逆势但置信度不够高，继续检查其他选项
+                            continue;
+                        }
+                    }
                     return conflict;
                 }
             }
@@ -261,6 +271,33 @@ public class AlphaPool {
 
         // Strategy 4: Return highest confidence signal
         return best.getConfidence() >= conflicts.get(0).getConfidence() ? best : conflicts.get(0);
+    }
+
+    /**
+     * Check if signal direction is counter to the primary trend
+     */
+    private static boolean isCounterTrendDirection(TradeDirection signalDir, MarketContext context) {
+        if (context == null) return false;
+
+        // TREND_DOWN市场中，方向LONG是逆势
+        if (context.getRegime() == com.trading.domain.market.model.MarketRegime.TREND_DOWN) {
+            return signalDir == TradeDirection.LONG;
+        }
+        // TREND_UP市场中，方向SHORT是逆势
+        if (context.getRegime() == com.trading.domain.market.model.MarketRegime.TREND_UP) {
+            return signalDir == TradeDirection.SHORT;
+        }
+        return false;
+    }
+
+    /**
+     * Check if Chan signal has sufficient confidence to override counter-trend filter
+     * Chan信号需要显著高于AI信号才能逆势入场
+     */
+    private static boolean hasSufficientConfidence(AlphaSignal chanSignal, AlphaSignal aiSignal) {
+        double confGap = chanSignal.getConfidence() - aiSignal.getConfidence();
+        // Chan需要比AI高至少0.25才能逆势入场（从0.6到0.85差距=0.25）
+        return confGap >= 0.25;
     }
 
     /**

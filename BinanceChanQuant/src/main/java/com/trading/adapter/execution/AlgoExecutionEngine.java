@@ -224,12 +224,18 @@ public class AlgoExecutionEngine {
                 referencePrice = marketData.getLastPrice();
             }
 
-            // Calculate price: for SHORT orders, place LIMIT sell slightly below reference
-            // The order's price is already set by the AlphaPool signal
+            // Calculate price: use opponent price for immediate fill (Taker strategy)
+            // LONG (开多): use ask to take from seller immediately
+            // SHORT (开空): use bid to take from buyer immediately
+            // This ensures fill despite network delay
             if (order.getSide() == TradeDirection.LONG) {
-                slice.price = referencePrice; // Buy at reference price
+                // 开多：追卖一价(ask)，立即吃单成交
+                slice.price = (marketData != null && marketData.getAskPrice() > 0)
+                    ? marketData.getAskPrice() : referencePrice;
             } else {
-                slice.price = referencePrice; // Sell at reference price
+                // 开空：追买一价(bid)，立即吃单成交
+                slice.price = (marketData != null && marketData.getBidPrice() > 0)
+                    ? marketData.getBidPrice() : referencePrice;
             }
 
             currentSlice++;
@@ -388,6 +394,10 @@ public class AlgoExecutionEngine {
                         }
                     } else if (report != null) {
                         consecutiveFailures = 0;
+                        // Track fill to determine when TWAP is done
+                        if (report.getStatus() == OrderStatus.FILLED) {
+                            updateFill(report.getFilledQuantity(), report.getAvgFillPrice());
+                        }
                     }
                 }
 
