@@ -56,6 +56,11 @@ public class BinanceExchangeAdapter {
     private volatile double walletBalance = 0.0;
     private volatile double availableBalance = 0.0;
 
+    // Market price tracking (updated from trade updates)
+    private volatile double lastTradePrice = 0.0;
+    private volatile double bestBidPrice = 0.0;
+    private volatile double bestAskPrice = 0.0;
+
     // Balance cache to reduce API calls
     private volatile long lastBalanceSyncTime = 0;
     private static final long BALANCE_CACHE_TTL_MS = 30_000; // 30 seconds
@@ -291,6 +296,14 @@ public class BinanceExchangeAdapter {
             order.getSide(), order.getOrderType(), order.getQuantity(), order.getPrice());
 
         totalFills.incrementAndGet();
+
+        // Update market price from paper fill
+        this.lastTradePrice = order.getPrice();
+        if (order.getSide() == TradeDirection.LONG) {
+            this.bestAskPrice = order.getPrice();
+        } else {
+            this.bestBidPrice = order.getPrice();
+        }
 
         // Update local position for paper trading
         updateLocalPosition(order, order.getQuantity(), order.getPrice());
@@ -833,12 +846,27 @@ public class BinanceExchangeAdapter {
 
     /**
      * Trigger order update callback (called from WebSocket handler)
+     * Also updates lastTradePrice for market data tracking
      */
     public void onOrderUpdate(String clientOrderId, String status, double filledQty, double avgFillPrice) {
+        // Update last trade price from fill
+        if (filledQty > 0 && avgFillPrice > 0) {
+            this.lastTradePrice = avgFillPrice;
+        }
         if (orderUpdateCallback != null) {
             OrderUpdate update = new OrderUpdate(clientOrderId, status, filledQty, avgFillPrice);
             orderUpdateCallback.accept(update);
         }
+    }
+
+    /**
+     * Update market prices from WebSocket or REST polling
+     * Call this to keep bid/ask/last prices fresh for direction filtering
+     */
+    public void updateMarketPrice(double lastPrice, double bid, double ask) {
+        if (lastPrice > 0) this.lastTradePrice = lastPrice;
+        if (bid > 0) this.bestBidPrice = bid;
+        if (ask > 0) this.bestAskPrice = ask;
     }
 
     /**
@@ -887,6 +915,12 @@ public class BinanceExchangeAdapter {
     public double getAvgEntryPrice() { return avgEntryPrice; }
     public double getUnrealizedPnl() { return unrealizedPnl; }
     public double getTotalRealizedPnl() { return totalRealizedPnl; }
+    public String getSymbol() { return symbol; }
+
+    // Market price getters - updated from trade updates
+    public double getLastPrice() { return lastTradePrice; }
+    public double getBidPrice() { return bestBidPrice; }
+    public double getAskPrice() { return bestAskPrice; }
 
     /**
      * Get current position state for lifecycle management

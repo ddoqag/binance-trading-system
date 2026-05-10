@@ -421,11 +421,30 @@ public class ExecutionEngine {
     }
 
     /**
-     * Get current market data (placeholder)
+     * Get current market data from exchange adapter
+     * In live mode: uses last trade price from Binance adapter
+     * In paper mode: uses simulated price from paper fill
      */
     private MarketData getCurrentMarketData() {
-        // In real implementation, this would get from shared memory or cache
-        return null;
+        if (exchangeAdapter == null) {
+            return null;
+        }
+        // Get latest price from exchange adapter
+        double lastPrice = exchangeAdapter.getLastPrice();
+        double bidPrice = exchangeAdapter.getBidPrice();
+        double askPrice = exchangeAdapter.getAskPrice();
+
+        if (lastPrice <= 0 && bidPrice <= 0 && askPrice <= 0) {
+            return null; // No valid market data
+        }
+
+        MarketData data = new MarketData();
+        data.setSymbol(exchangeAdapter.getSymbol());
+        data.setLastPrice(lastPrice > 0 ? lastPrice : (bidPrice > 0 ? bidPrice : 0));
+        data.setBidPrice(bidPrice);
+        data.setAskPrice(askPrice);
+        data.setTimestamp(System.currentTimeMillis());
+        return data;
     }
 
     /**
