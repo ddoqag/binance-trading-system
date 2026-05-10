@@ -53,6 +53,9 @@ public class ExecutionEngine {
     // Active execution tracking - prevents duplicate TWAP for same symbol
     private final ConcurrentHashMap<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
 
+    // Map algo order ID to symbol for listener callback
+    private final ConcurrentHashMap<String, String> algoOrderToSymbol = new ConcurrentHashMap<>();
+
     // Signal cooldown tracking - uses new SignalCooldownManager
     private final SignalCooldownManager cooldownManager = new SignalCooldownManager();
 
@@ -81,6 +84,21 @@ public class ExecutionEngine {
 
         // Wire up algo engine to use exchange adapter for live trading
         algoEngine.setExchangeAdapter(exchangeAdapter);
+
+        // Register as listener for algo completion events to clean up activeExecutions
+        algoEngine.addListener(new AlgoExecutionListener() {
+            @Override
+            public void onAlgoCompleted(String orderId, String symbol, AlgoCompletionReason reason) {
+                String mappedSymbol = algoOrderToSymbol.remove(orderId);
+                if (mappedSymbol != null) {
+                    activeExecutions.remove(mappedSymbol);
+                } else {
+                    activeExecutions.remove(symbol);
+                }
+                System.out.printf("[ExecutionEngine] Algo completed: orderId=%s symbol=%s reason=%s%n",
+                    orderId, symbol, reason);
+            }
+        });
 
         // Wire up position change callback to trigger post-close cooldown
         exchangeAdapter.setPositionChangeCallback(event -> {
@@ -152,7 +170,11 @@ public class ExecutionEngine {
         }
 
         // ===== Phase 1: Signal Cooldown Check (only for opening new positions, skip for exits) =====
-        if (!isExitOrder && shouldIgnoreSignal(order.getSymbol(), order.getSide(), order.getConfidence())) {
+        double currentPos = 0.0;
+        if (exchangeAdapter != null) {
+            currentPos = exchangeAdapter.getCurrentPosition();
+        }
+        if (!isExitOrder && shouldIgnoreSignalWithPosition(order.getSymbol(), order.getSide(), order.getConfidence(), currentPos)) {
             return false;
         }
 
@@ -171,7 +193,8 @@ public class ExecutionEngine {
         } else {
             ActiveExecution existing = activeExecutions.get(symbol);
             if (existing != null) {
-                System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring%n", symbol);
+                System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring (started %d ms ago)%n",
+                    symbol, existing.getAgeMs());
                 return false;
             }
         }
@@ -267,6 +290,7 @@ public class ExecutionEngine {
                     algoEngine.startAlgo(routedOrder, marketData);
                     activeExecutions.put(routedOrder.getSymbol(),
                         new ActiveExecution(routedOrder.getOrderId(), routedOrder.getSymbol()));
+                    algoOrderToSymbol.put(routedOrder.getOrderId(), routedOrder.getSymbol());
                 } else {
                     // Direct execution
                     sendOrderDirect(routedOrder, routed.getExchange());
@@ -477,6 +501,19 @@ public class ExecutionEngine {
         if (cooldownManager.shouldIgnore(symbol, direction, confidence)) {
             System.out.printf("[ExecutionEngine] Signal cooldown: symbol=%s dir=%s conf=%.2f%n",
                 symbol, direction, confidence);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Check signal cooldown with position awareness.
+     * When flat (position≈0), post-close cooldown doesn't block new entries.
+     */
+    private boolean shouldIgnoreSignalWithPosition(String symbol, TradeDirection direction, double confidence, double currentPosition) {
+        if (cooldownManager.shouldIgnoreWithPosition(symbol, direction, confidence, currentPosition)) {
+            System.out.printf("[ExecutionEngine] Signal cooldown: symbol=%s dir=%s conf=%.2f pos=%.4f%n",
+                symbol, direction, confidence, currentPosition);
             return true;
         }
         return false;

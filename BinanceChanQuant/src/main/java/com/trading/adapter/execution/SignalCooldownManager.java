@@ -53,22 +53,39 @@ public class SignalCooldownManager {
      * @return true if signal should be ignored, false if allowed
      */
     public boolean shouldIgnore(String symbol, TradeDirection direction, double confidence) {
+        return shouldIgnoreWithPosition(symbol, direction, confidence, 0.0);
+    }
+
+    /**
+     * Check if signal should be ignored due to cooldown, considering current position.
+     * When position is 0 (flat), post-close cooldown does NOT block new entries.
+     * @param direction new signal direction
+     * @param confidence signal confidence (0-1)
+     * @param currentPosition current position size (positive=long, negative=short, 0=flat)
+     * @return true if signal should be ignored, false if allowed
+     */
+    public boolean shouldIgnoreWithPosition(String symbol, TradeDirection direction, double confidence, double currentPosition) {
         long now = System.currentTimeMillis();
         SignalHistory h = history.computeIfAbsent(symbol, k -> new SignalHistory());
 
         boolean isNewDirection = h.lastDirection.get() != direction;
         boolean isHighConfidence = confidence >= highConfidenceThreshold;
 
-        // Case 0: Post-close cooldown - right after closing a position, don't re-open same direction
-        long lastCloseTime = h.lastCloseTime.get();
-        if (lastCloseTime > 0 && now - lastCloseTime < postCloseCooldown.toMillis()) {
-            TradeDirection lastClosedDir = h.lastClosedDirection.get();
-            if (lastClosedDir == direction) {
-                System.out.printf("[SignalCooldown] Post-close cooldown: just closed %s, ignoring %s for %ds%n",
-                    lastClosedDir, direction, (postCloseCooldown.toMillis() - (now - lastCloseTime)) / 1000);
-                return true;
+        // Case 0: Post-close cooldown - only blocks if we have a position to add to
+        // When flat (currentPosition=0), allow new entries even if same direction as closed
+        if (Math.abs(currentPosition) > 0.0001) {
+            // We have a position - post-close cooldown applies to prevent adding
+            long lastCloseTime = h.lastCloseTime.get();
+            if (lastCloseTime > 0 && now - lastCloseTime < postCloseCooldown.toMillis()) {
+                TradeDirection lastClosedDir = h.lastClosedDirection.get();
+                if (lastClosedDir == direction) {
+                    System.out.printf("[SignalCooldown] Post-close cooldown: pos=%.4f, just closed %s, ignoring %s for %ds%n",
+                        currentPosition, lastClosedDir, direction, (postCloseCooldown.toMillis() - (now - lastCloseTime)) / 1000);
+                    return true;
+                }
             }
         }
+        // When flat (currentPosition≈0), skip post-close cooldown - allow new entries
 
         // Case 1: New direction + high confidence → Allow (confirm signal)
         if (isNewDirection && isHighConfidence) {

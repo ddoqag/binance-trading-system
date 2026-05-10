@@ -51,7 +51,8 @@ public class ChanMetaLearnerBridge {
 
     public ChanMetaLearnerBridge(ChanFeatureToggle toggle, int windowSize) {
         this.featureToggle = toggle;
-        ChanKLineProcessor processor = new ChanKLineProcessor(windowSize, 0.7, 0.001);
+        // Lowered fenxingThreshold from 0.001 to 0.0001 for more sensitive pattern detection
+        ChanKLineProcessor processor = new ChanKLineProcessor(windowSize, 0.7, 0.0001);
 
         this.reverseAdapter = new ChanReverseStrategyAdapter(toggle, processor);
         this.trendAdapter = new ChanTrendStrategyAdapter(toggle, processor);
@@ -77,6 +78,15 @@ public class ChanMetaLearnerBridge {
         // Re-determine regime based on current context (since K-line was just added)
         regime = determineRegimeFromContext(ctx);
 
+        // P2-8 DEBUG: Log context state when Zhongshu exists
+        if (ctx != null && ctx.zhongshu != null) {
+            System.out.printf("[ChanMetaLearner] Zhongshu: ZG=%.2f ZD=%.2f, lastBi=%s, lastFenxing=%s, regime=%s%n",
+                ctx.zhongshu.zg, ctx.zhongshu.zd,
+                ctx.lastBi != null ? ctx.lastBi.direction + "@" + ctx.lastBi.low : "null",
+                ctx.lastFenxing != null ? ctx.lastFenxing.type + "@" + ctx.lastFenxing.price : "null",
+                regime);
+        }
+
         ChanStrategyAdapter adapter = selectAdapter(regime);
         if (adapter == null) {
             log.debug("generateSignal: no adapter for regime={}", regime);
@@ -90,6 +100,12 @@ public class ChanMetaLearnerBridge {
 
         PatternSignal signal = adapter.detect(ctx, regime);
 
+        // P2-8 DEBUG: Log signal detection result with regime
+        if (ctx != null && ctx.zhongshu != null) {
+            System.out.printf("[ChanMetaLearner] detect() result: hasSignal=%s, type=%s, confidence=%.2f, minConf=%.2f, regime=%s%n",
+                signal.hasSignal(), signal.type, signal.confidence, adapter.getMinConfidence(), regime);
+        }
+
         if (!signal.hasSignal()) {
             log.debug("generateSignal: no signal hasSignal=false for regime={}", regime);
             return Optional.empty();
@@ -102,7 +118,9 @@ public class ChanMetaLearnerBridge {
 
         // Apply resonance filter - only filter in ENABLED mode, not SHADOW
         double resonanceMultiplier = 1.0;
-        if (resonanceAdapter.isStrategyEnabled()) {
+        if (featureToggle.isResonanceActive() &&
+            featureToggle.getResonanceMode() == ChanFeatureToggle.Mode.ENABLED) {
+            // Only apply resonance filtering in ENABLED mode, not SHADOW
             ResonanceResult resonance = resonanceAdapter.checkResonance(
                 adapter.getSignalType(), ctx, regime
             );
@@ -110,22 +128,23 @@ public class ChanMetaLearnerBridge {
             if (resonance.hasResonance) {
                 resonanceMultiplier = resonance.strength;
                 log.debug("Resonance: {} level, strength={}", resonance.level, resonance.strength);
-            } else if (featureToggle.isResonanceActive() &&
-                       featureToggle.getResonanceMode() == ChanFeatureToggle.Mode.ENABLED) {
-                // Only filter signals when resonance is in ENABLED mode, not SHADOW
+            } else {
+                // No resonance in ENABLED mode - filter signal
                 log.debug("No resonance - signal filtered");
                 return Optional.empty();
             }
-            // In SHADOW mode, allow signals through even without resonance
         }
+        // In SHADOW mode or when resonance is disabled, allow signals through without filtering
 
         double dynamicWeight = calculateDynamicWeight(regime);
 
+        // P2-8 FIX: confidence should be raw signal confidence, not weighted
+        // dynamicWeight is used separately in signal fusion, not to reduce confidence
         return Optional.of(new ChanSignalResult(
             signal,
-            adapter.getSignalType(),
-            dynamicWeight * resonanceMultiplier,
-            adapter.getSignalSource()
+            signal.type,  // Use actual detected signal type, not adapter's fixed type
+            signal.confidence,
+            adapter.getSignalSource() + ":" + signal.type.name()
         ));
     }
 
@@ -146,7 +165,7 @@ public class ChanMetaLearnerBridge {
     /**
      * Determine regime from current context (after K-line processed)
      */
-    private MarketRegime determineRegimeFromContext(KlineContext ctx) {
+    public MarketRegime determineRegimeFromContext(KlineContext ctx) {
         if (ctx == null || ctx.zhongshu == null) {
             if (ctx != null && ctx.lastFenxing != null) {
                 return ctx.lastFenxing.type == Fenxing.Type.TOP
