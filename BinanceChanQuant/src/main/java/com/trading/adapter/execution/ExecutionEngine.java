@@ -357,7 +357,13 @@ public class ExecutionEngine {
                 boolean positionClosed = wasLongClosed || wasShortClosed;
 
                 if (positionClosed) {
-                    cooldownManager.onPositionClosed(report.getSymbol(), report.getSide());
+                    // Use getOpposite() for cleaner semantics: order side is opposite of closed position
+                    // SELL (SHORT order) closes LONG position → getOpposite() = LONG
+                    // BUY (LONG order) closes SHORT position → getOpposite() = SHORT
+                    TradeDirection closedDirection = report.getSide().getOpposite();
+                    cooldownManager.onPositionClosed(report.getSymbol(), closedDirection);
+                    System.out.printf("[ExecutionEngine] Position closed: orderSide=%s, closedPosition=%s%n",
+                        report.getSide(), closedDirection);
                 }
             }
         }
