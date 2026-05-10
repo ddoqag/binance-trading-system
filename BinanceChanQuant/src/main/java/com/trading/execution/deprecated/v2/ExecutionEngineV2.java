@@ -10,12 +10,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Execution Engine V2 - Main orchestrator for signal-based execution
  *
- * Key improvements over V1:
- * 1. Signal-aware mode decision (uses confidence + urgency directly)
- * 2. First-order forced opening (opens position when flat + good signal)
- * 3. TTL + auto-cancel/resubmit (prevents pending order pile-up)
- * 4. Dynamic order parameters (slippage based on volatility)
+ * @deprecated 保留作为参考 - 使用 com.trading.adapter.execution.ExecutionEngine 替代
+ * V2版本遗留代码,不再维护
  */
+@Deprecated
 public class ExecutionEngineV2 {
 
     private final ExecutionStateMachineV2 stateMachine;

@@ -43,14 +43,20 @@ class ChanKLineProcessorTest {
     @DisplayName("Should detect top fenxing pattern")
     void shouldDetectTopFenxing() {
         long baseTime = System.currentTimeMillis();
-        processor.addKLine(new KLine(baseTime, 100, 105, 98, 102, 1000));
-        processor.addKLine(new KLine(baseTime + 1000, 102, 107, 101, 105, 1100));
-        processor.addKLine(new KLine(baseTime + 2000, 105, 115, 104, 112, 1200));  // K3 - TOP
-        processor.addKLine(new KLine(baseTime + 3000, 112, 113, 108, 110, 1100));
-        processor.addKLine(new KLine(baseTime + 4000, 110, 112, 106, 108, 1000));
+        // K3 must be the HIGHEST among K1-K5 for TOP fenxing
+        // Range must be < 5% of close to pass the filter
+        processor.addKLine(new KLine(baseTime, 100, 103, 99, 102, 1000));       // high=103
+        processor.addKLine(new KLine(baseTime + 1000, 102, 104, 100, 103, 1100)); // high=104
+        processor.addKLine(new KLine(baseTime + 2000, 103, 106, 101, 104, 1200)); // K3 - TOP, high=106 (strictly highest!)
+        processor.addKLine(new KLine(baseTime + 3000, 104, 105, 101, 103, 1100)); // high=105
+        processor.addKLine(new KLine(baseTime + 4000, 103, 104, 100, 102, 1000)); // high=104
+
+        // Check if K-lines passed the filter
+        int recentCount = processor.getCurrentContext().recentKlines.size();
+        assertEquals(5, recentCount, "All 5 K-lines should pass the range filter");
 
         List<Fenxing> fenxingList = processor.getFenxingList();
-        assertFalse(fenxingList.isEmpty());
+        assertFalse(fenxingList.isEmpty(), "Fenxing list should not be empty for TOP pattern");
 
         // Should have top fenxing
         boolean hasTop = fenxingList.stream()
@@ -138,11 +144,11 @@ class ChanKLineProcessorTest {
     void shouldReturnValidContext() {
         long baseTime = System.currentTimeMillis();
 
-        // Add some K-lines
+        // Add K-lines with smaller ranges (< 5% of close) to pass the range filter
         for (int i = 0; i < 10; i++) {
             processor.addKLine(new KLine(
                 baseTime + i * 1000,
-                100 + i, 105 + i, 95 + i, 100 + i,
+                100 + i, 103 + i, 98 + i, 101 + i,  // range=5, close*0.05=5.05 → OK
                 1000
             ));
         }
@@ -188,13 +194,13 @@ class ChanKLineProcessorTest {
     void klineContextShouldContainAllComponents() {
         long baseTime = System.currentTimeMillis();
 
-        // Create enough data for full context
+        // Create enough data for full context with small ranges (< 5% of close)
         for (int i = 0; i < 30; i++) {
-            double trend = Math.sin(i * 0.3) * 10;
+            double trend = Math.sin(i * 0.3) * 5;
             double price = 100 + trend;
             processor.addKLine(new KLine(
                 baseTime + i * 1000,
-                price - 1, price + 3, price - 2, price + 2,
+                price - 0.5, price + 1.5, price - 1, price + 0.5,  // range=2.5, < 5% of ~100
                 1000
             ));
         }

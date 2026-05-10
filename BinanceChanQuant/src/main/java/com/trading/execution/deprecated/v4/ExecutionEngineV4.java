@@ -15,6 +15,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * ExecutionEngine V4 - Signal-driven paradigm (机构级正确范式)
  *
+ * @deprecated 保留作为参考 - 使用 com.trading.adapter.execution.ExecutionEngine 替代
+ * V4版本遗留代码,不再维护
+ *
  * 核心原则：
  * 1. 方向只能来自 Signal（AlphaPool），Execution 绝对不能反向
  * 2. Strategy = 执行风格，不是决策脑
@@ -23,6 +26,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 架构：
  * Signal → RiskGateway → ExecutionPlanner → OrderRouter → Fill → PnLAttribution
  */
+@Deprecated
 public class ExecutionEngineV4 {
 
     private final RiskGateway riskGateway;

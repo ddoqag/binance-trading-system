@@ -3,7 +3,9 @@ package com.trading.adapter.execution;
 import com.trading.domain.trading.execution.ExecutionMode;
 import com.trading.domain.trading.execution.ExecutionPlan;
 import com.trading.domain.trading.model.Order;
+import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.risk.RiskManager;
+import com.trading.domain.signal.AlphaType;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -38,6 +40,15 @@ public class ExecutionStateMachine {
     private final double inventoryRiskThreshold;
     private final double conflictThreshold;
     private final long minModeDuration;
+
+    // Conflict scoring based on SHM expert signals
+    // Tracks recent signal directions to detect conflicts
+    private final ConcurrentHashMap<AlphaType, TradeDirection> expertDirections =
+        new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<AlphaType, Double> expertConfidences =
+        new ConcurrentHashMap<>();
+    private long lastConflictCheck = 0;
+    private static final long CONFLICT_CHECK_INTERVAL = 5000; // Check every 5s
 
     public ExecutionStateMachine(RiskManager riskManager) {
         this(riskManager, 0.3, 0.8, 0.7, 60000); // Default 60s minimum mode duration
@@ -125,10 +136,69 @@ public class ExecutionStateMachine {
     }
 
     private double calculateConflictScore() {
-        // TODO: Implement real conflict scoring based on SHM expert signals
-        // For now, this is a placeholder - logs once to indicate status
-        // In production, would read from V2SHM or other signal source
-        return 0.0;
+        // Rate limit conflict checks to avoid excessive computation
+        long now = System.currentTimeMillis();
+        if (now - lastConflictCheck < CONFLICT_CHECK_INTERVAL) {
+            return 0.0; // Return neutral if checked recently
+        }
+        lastConflictCheck = now;
+
+        // Calculate conflict score based on expert signal directions
+        // High conflict = different experts suggesting opposite directions
+        if (expertDirections.isEmpty() || expertConfidences.isEmpty()) {
+            return 0.0; // No data yet
+        }
+
+        double maxConflict = 0.0;
+        AlphaType[] expertTypes = expertDirections.keySet().toArray(new AlphaType[0]);
+
+        for (int i = 0; i < expertTypes.length; i++) {
+            for (int j = i + 1; j < expertTypes.length; j++) {
+                AlphaType type1 = expertTypes[i];
+                AlphaType type2 = expertTypes[j];
+
+                TradeDirection dir1 = expertDirections.get(type1);
+                TradeDirection dir2 = expertDirections.get(type2);
+                Double conf1 = expertConfidences.get(type1);
+                Double conf2 = expertConfidences.get(type2);
+
+                // Both directions must be known
+                if (dir1 == null || dir2 == null || conf1 == null || conf2 == null) {
+                    continue;
+                }
+
+                // Calculate direction conflict (opposite directions = high conflict)
+                double directionConflict = (dir1 != dir2) ? 1.0 : 0.0;
+
+                // Weighted by confidence - high confidence experts in conflict = higher score
+                double conflictWeight = (conf1 + conf2) / 2.0;
+                double conflictScore = directionConflict * conflictWeight;
+
+                maxConflict = Math.max(maxConflict, conflictScore);
+            }
+        }
+
+        return Math.min(1.0, maxConflict);
+    }
+
+    /**
+     * Update expert signal for conflict tracking
+     * Called by AlphaPool when generating composite signals
+     */
+    public void updateExpertSignal(AlphaType expertType, TradeDirection direction, double confidence) {
+        if (expertType == null || direction == null) {
+            return;
+        }
+        expertDirections.put(expertType, direction);
+        expertConfidences.put(expertType, confidence);
+    }
+
+    /**
+     * Clear all expert signals (called on reset)
+     */
+    public void clearExpertSignals() {
+        expertDirections.clear();
+        expertConfidences.clear();
     }
 
     private ExecutionMode decideMode(double urgency, double inventoryRisk, double conflictScore) {
@@ -191,7 +261,62 @@ public class ExecutionStateMachine {
         switchMode(mode);
     }
 
+    // Gradual transition state
+    private final AtomicReference<ExecutionMode> targetMode =
+        new AtomicReference<>(ExecutionMode.SMART_LIMIT);
+    private int consecutiveDeEscalations = 0;
+    private static final int DE_ESCALATION_THRESHOLD = 3; // Require 3 consecutive checks to de-escalate
+
     private void switchMode(ExecutionMode newMode) {
+        ExecutionMode oldMode = currentMode.get();
+        ExecutionMode currentTarget = targetMode.get();
+
+        if (oldMode != newMode) {
+            // Implement gradual transition: must go through intermediate modes
+            // AGGRESSIVE -> SMART_LIMIT -> PASSIVE (no direct jump)
+            if (shouldGraduallyTransition(oldMode, newMode)) {
+                ExecutionMode intermediate = getIntermediateMode(oldMode, newMode);
+                if (intermediate != null && intermediate != oldMode) {
+                    performModeSwitch(intermediate);
+                    targetMode.set(newMode);
+                    return;
+                }
+            }
+
+            performModeSwitch(newMode);
+            targetMode.set(newMode);
+            consecutiveDeEscalations = 0;
+        }
+    }
+
+    /**
+     * Determine if we should use gradual transition
+     */
+    private boolean shouldGraduallyTransition(ExecutionMode from, ExecutionMode to) {
+        // Only apply gradual transition for de-escalation (going more passive)
+        if (from == ExecutionMode.AGGRESSIVE && to == ExecutionMode.PASSIVE) {
+            return true;
+        }
+        if (from == ExecutionMode.SMART_LIMIT && to == ExecutionMode.PASSIVE) {
+            // Count consecutive de-escalation attempts
+            consecutiveDeEscalations++;
+            return consecutiveDeEscalations < DE_ESCALATION_THRESHOLD;
+        }
+        return false;
+    }
+
+    /**
+     * Get intermediate mode for gradual transition
+     */
+    private ExecutionMode getIntermediateMode(ExecutionMode from, ExecutionMode to) {
+        // AGGRESSIVE -> PASSIVE goes through SMART_LIMIT
+        if (from == ExecutionMode.AGGRESSIVE && to == ExecutionMode.PASSIVE) {
+            return ExecutionMode.SMART_LIMIT;
+        }
+        return to; // Default to target
+    }
+
+    private void performModeSwitch(ExecutionMode newMode) {
         ExecutionMode oldMode = currentMode.getAndSet(newMode);
 
         if (oldMode != newMode) {

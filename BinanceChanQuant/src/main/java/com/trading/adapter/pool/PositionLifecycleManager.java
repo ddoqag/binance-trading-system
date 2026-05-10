@@ -55,12 +55,12 @@ public class PositionLifecycleManager {
 
     public static PositionLifecycleManager defaults() {
         return new PositionLifecycleManager(
-            2.0,       // ATR Stop: 2x ATR
-            2.5,       // Chandelier: 2.5x ATR
+            2.5,       // ATR Stop: 2.5x ATR (wider to avoid premature stops)
+            3.0,       // Chandelier: 3.0x ATR (wider to let winners run)
             0.5,       // Structure buffer: 0.5%
-            30,        // Max hold: 30 min
-            0.45,      // Exit confidence threshold
-            0.35,      // Min confidence to exit
+            45,        // Max hold: 45 min (longer to capture trends)
+            0.40,      // Exit confidence threshold (lower to exit faster)
+            0.30,      // Min confidence to exit
             5.0        // Catastrophic stop: -5%
         );
     }

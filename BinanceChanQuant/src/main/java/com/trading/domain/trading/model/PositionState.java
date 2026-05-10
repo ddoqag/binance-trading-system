@@ -107,12 +107,10 @@ public class PositionState {
 
     /** Update with new PnL and track peak/lowest prices */
     public PositionState withUnrealizedPnl(double newUnrealizedPnl, double currentEquity, double currentPrice) {
-        double newPeakPrice = isLong()
-            ? Math.max(peakPrice, currentPrice)
-            : Math.min(lowestPrice, currentPrice);
-        double newLowestPrice = isLong()
-            ? Math.min(lowestPrice, currentPrice)
-            : Math.max(peakPrice, currentPrice);
+        // For LONG: peakPrice=highest, lowestPrice=lowest
+        // For SHORT: peakPrice=highest (unfavorable), lowestPrice=lowest (favorable)
+        double newPeakPrice = Math.max(peakPrice, currentPrice);
+        double newLowestPrice = Math.min(lowestPrice, currentPrice);
 
         return new PositionState(
             quantity,

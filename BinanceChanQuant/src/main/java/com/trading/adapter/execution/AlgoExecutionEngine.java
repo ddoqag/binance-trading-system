@@ -358,6 +358,32 @@ public class AlgoExecutionEngine {
                     stop();
                     return;
                 }
+
+                // P1 FIX: Check margin sufficiency before sending slice
+                // Force sync balance to get fresh data (margin check fails without this)
+                exchangeAdapter.syncBalanceFromExchange();
+                double availableBalance = exchangeAdapter.getAvailableBalance();
+                double leverage = 10.0; // Default from config
+                double price = order.getPrice() > 0 ? order.getPrice() : 80000.0;
+                double sliceQty = order.getQuantity() / 10.0; // TWAP splits into 10 slices
+                double requiredMargin = sliceQty * price / leverage;
+
+                // Only reject if balance is confirmed insufficient (not just un-synced)
+                if (availableBalance > 0.01 && availableBalance < requiredMargin * 1.2) { // 20% buffer for margin
+                    System.out.printf("[AlgoExecution] Insufficient margin for slice: required=%.4f, available=%.4f%n",
+                        requiredMargin, availableBalance);
+                    consecutiveFailures++;
+                    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                        System.out.printf("[AlgoExecution] Stopping TWAP: insufficient margin%n");
+                        if (completionNotified.compareAndSet(false, true)) {
+                            notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.FAILED);
+                        }
+                        stop();
+                        return;
+                    }
+                    // Skip this slice, will retry next interval
+                    return;
+                }
             }
 
             Slice slice = algo.calculateNextSlice(marketData);

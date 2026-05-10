@@ -43,4 +43,13 @@ public class Order {
     public long getCreateTime() { return createTime; }
     public OrderStatus getStatus() { return status; }
     public void setStatus(OrderStatus status) { this.status = status; }
+
+    /**
+     * Check if this is a reduce-only / exit order
+     * Exit orders should always be allowed even in KILL_SWITCH mode
+     */
+    public boolean isReduceOnly() {
+        // Orders with MAX_urgency (1.0) are exit orders created by PositionLifecycleManager
+        return urgency >= 1.0 && quantity > 0;
+    }
 }

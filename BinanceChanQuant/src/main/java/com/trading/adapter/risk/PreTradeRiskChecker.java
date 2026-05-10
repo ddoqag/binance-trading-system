@@ -49,8 +49,14 @@ public class PreTradeRiskChecker implements RiskManager {
     private volatile double dynamicPositionLimit = 10.0;
     private volatile double volatilityScaleFactor = 1.0;
 
+    // Balance threshold for new positions (don't open if balance too low)
+    private static final double MIN_BALANCE_FOR_NEW_POSITION = 10.0;
+
     // Drawdown-aware scaling
     private final DrawdownScaler drawdownScaler = new DrawdownScaler();
+
+    // Current available balance (updated from exchange)
+    private volatile double availableBalance = 0.0;
 
     public PreTradeRiskChecker(double maxPosition, double maxDailyLoss,
                                int maxOrdersPerMinute, double maxOrderValue,
@@ -76,6 +82,14 @@ public class PreTradeRiskChecker implements RiskManager {
 
     @Override
     public RiskCheckResult preTradeCheck(Order order) {
+        // Emergency exit orders (reduce-only / close position) should ALWAYS be allowed
+        // even when system is in KILL_SWITCH or circuit breaker is open
+        if (order.isReduceOnly()) {
+            // Reset rate limit counters for exit orders to prevent self-blocking
+            ordersThisMinute.incrementAndGet();
+            return RiskCheckResult.allow();
+        }
+
         // Circuit breaker check
         if (!orderCircuitBreaker.allowRequest()) {
             dailyRejects.incrementAndGet();
@@ -92,6 +106,19 @@ public class PreTradeRiskChecker implements RiskManager {
         if (!checkRateLimit()) {
             dailyRejects.incrementAndGet();
             return RiskCheckResult.reject("Rate limit exceeded", "RATE_LIMIT_EXCEEDED");
+        }
+
+        // Balance check - don't open new positions if balance too low
+        // Exit orders (reduce-only) bypass this check
+        if (availableBalance > 0 && availableBalance < MIN_BALANCE_FOR_NEW_POSITION) {
+            // Only block new positions (non-reduce-only orders)
+            if (!order.isReduceOnly()) {
+                dailyRejects.incrementAndGet();
+                return RiskCheckResult.reject(
+                    "Balance too low for new position: " + String.format("%.4f", availableBalance) + " < " + MIN_BALANCE_FOR_NEW_POSITION + " USDT",
+                    "BALANCE_TOO_LOW"
+                );
+            }
         }
 
         // Order value check
@@ -265,7 +292,25 @@ public class PreTradeRiskChecker implements RiskManager {
         dynamicPositionLimit = maxPosition * Math.min(volatilityScaleFactor, 2.0);
 
         // Update equity with current price
-        updateEquity(price);
+    }
+
+    /**
+     * Update available balance from exchange adapter
+     * Called when balance is synced from Binance
+     */
+    public void updateBalance(double balance) {
+        this.availableBalance = balance;
+        if (balance > 0 && balance < MIN_BALANCE_FOR_NEW_POSITION) {
+            System.out.printf("[PreTradeRiskChecker] WARNING: Low balance alert: %.4f USDT (min: %.1f)%n",
+                balance, MIN_BALANCE_FOR_NEW_POSITION);
+        }
+    }
+
+    /**
+     * Get current available balance
+     */
+    public double getAvailableBalance() {
+        return availableBalance;
     }
 
     /**
@@ -287,6 +332,89 @@ public class PreTradeRiskChecker implements RiskManager {
      */
     public VolatilityEstimator getVolatilityEstimator() {
         return volatilityEstimator;
+    }
+
+    /**
+     * Check if circuit breakers should auto-recover based on profit
+     * Called when position is profitable - may allow recovery from KILL_SWITCH
+     */
+    public boolean shouldAttemptRecovery(double unrealizedPnl, double entryEquity) {
+        // Only attempt recovery if we have profit
+        if (unrealizedPnl <= 0 || entryEquity <= 0) {
+            return false;
+        }
+
+        // Calculate profit ratio
+        double profitRatio = unrealizedPnl / entryEquity;
+
+        // Auto-recovery thresholds:
+        // 1% profit → can recover from loss circuit
+        // 2% profit → can recover from order circuit
+        // 3% profit → can recover from position circuit
+        boolean lossRecoverable = profitRatio >= 0.01;
+        boolean orderRecoverable = profitRatio >= 0.02;
+        boolean positionRecoverable = profitRatio >= 0.03;
+
+        boolean shouldRecover = (lossCircuitBreaker.isOpen() && lossRecoverable) ||
+                                 (orderCircuitBreaker.isOpen() && orderRecoverable) ||
+                                 (positionCircuitBreaker.isOpen() && positionRecoverable);
+
+        if (shouldRecover) {
+            System.out.printf("[PreTradeRiskChecker] Recovery check: profit=%.4f (%.1f%%), recovering circuits%n",
+                unrealizedPnl, profitRatio * 100);
+        }
+
+        return shouldRecover;
+    }
+
+    /**
+     * Manually reset circuit breakers (for recovery after profit)
+     * Returns true if any circuit was reset
+     */
+    public boolean resetCircuitBreakers() {
+        boolean anyReset = false;
+
+        if (lossCircuitBreaker.isOpen()) {
+            lossCircuitBreaker.forceState(CircuitBreaker.State.CLOSED);
+            System.out.println("[PreTradeRiskChecker] Loss circuit breaker reset");
+            anyReset = true;
+        }
+
+        if (orderCircuitBreaker.isOpen()) {
+            orderCircuitBreaker.forceState(CircuitBreaker.State.CLOSED);
+            System.out.println("[PreTradeRiskChecker] Order circuit breaker reset");
+            anyReset = true;
+        }
+
+        if (positionCircuitBreaker.isOpen()) {
+            positionCircuitBreaker.forceState(CircuitBreaker.State.CLOSED);
+            System.out.println("[PreTradeRiskChecker] Position circuit breaker reset");
+            anyReset = true;
+        }
+
+        if (anyReset) {
+            consecutiveLosses.set(0);
+            System.out.println("[PreTradeRiskChecker] All circuit breakers reset, trading resumed");
+        }
+
+        return anyReset;
+    }
+
+    /**
+     * Check if trading is allowed (all circuits closed)
+     */
+    public boolean isTradingAllowed() {
+        return !isCircuitBreakerTriggered();
+    }
+
+    /**
+     * Get circuit breaker states for monitoring
+     */
+    public String getCircuitBreakerStatus() {
+        return String.format("Order=%s, Position=%s, Loss=%s",
+            orderCircuitBreaker.getState(),
+            positionCircuitBreaker.getState(),
+            lossCircuitBreaker.getState());
     }
 
     private boolean checkRateLimit() {

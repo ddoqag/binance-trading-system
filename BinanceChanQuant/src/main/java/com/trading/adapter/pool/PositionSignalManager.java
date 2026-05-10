@@ -37,8 +37,25 @@ public class PositionSignalManager {
 
     /**
      * Update current position state
+     * Preserves RiskModel if the new position doesn't have one
      */
     public void updatePosition(PositionState position) {
+        // Preserve existing RiskModel if new position doesn't have one
+        if (position != null && position.getRiskModel() == null && currentPosition.hasPosition()) {
+            position = new PositionState(
+                position.getQuantity(),
+                position.getEntryPrice(),
+                position.getUnrealizedPnl(),
+                position.getRealizedPnl(),
+                position.getEntryTime(),
+                position.getPeakEquity(),
+                position.getEntryEquity(),
+                position.getOrderId(),
+                currentPosition.getRiskModel(),  // Preserve existing RiskModel
+                position.getPeakPrice(),
+                position.getLowestPrice()
+            );
+        }
         this.currentPosition = position;
     }
 

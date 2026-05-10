@@ -140,7 +140,10 @@ public class BinanceExchangeAdapter {
             System.out.println("[BinanceAdapter] Position mode detected: " + positionMode);
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Failed to detect position mode: " + e.getMessage());
-            this.positionMode = PositionMode.ONE_WAY; // Default to One-Way for safety
+            // Default to HEDGE for safety - HEDGE requires positionSide which is safer
+            // If we default to ONE_WAY and account is HEDGE, orders will be rejected
+            this.positionMode = PositionMode.HEDGE;
+            System.err.println("[BinanceAdapter] Defaulting to HEDGE mode for safety");
         }
     }
 
@@ -758,6 +761,13 @@ public class BinanceExchangeAdapter {
             if (node.has("crossWalletBalance")) {
                 walletBal = node.get("crossWalletBalance").asDouble();
                 availBal = walletBal; // 可用余额初值
+            } else if (node.has("totalCrossWalletBalance")) {
+                walletBal = node.get("totalCrossWalletBalance").asDouble();
+                availBal = walletBal;
+            }
+            // 直接使用API返回的availableBalance字段（如果存在）
+            if (node.has("availableBalance")) {
+                availBal = node.get("availableBalance").asDouble();
             }
             if (node.has("crossUnrealizedPnl")) {
                 unrealizedPnL = node.get("crossUnrealizedPnl").asDouble();

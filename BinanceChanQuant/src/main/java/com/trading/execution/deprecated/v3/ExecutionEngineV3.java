@@ -26,15 +26,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * ExecutionEngine V3 - 融合V2 + 演化交易功能
  *
- * V3 = V2 + StrategyRouter + ChampionChallenger + PluginHotSwap
+ * @deprecated 保留作为参考 - 使用 com.trading.adapter.execution.ExecutionEngine 替代
+ * V3版本遗留代码,不再维护
  *
- * 关键改进：
- * 1. 策略方向由策略自己决定（不再固定映射）
- * 2. MetaLearner权重通过StrategyRouter选择策略
- * 3. Champion-Challenger自动优胜劣汰
- * 4. 影子跑单验证新策略
- * 5. 插件热更新
+ * V3 = V2 + StrategyRouter + ChampionChallenger + PluginHotSwap
  */
+@Deprecated
 public class ExecutionEngineV3 {
 
     // V2 核心组件

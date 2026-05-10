@@ -17,6 +17,9 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * ExecutionEngine V6 - 实盘级架构
  *
+ * @deprecated 保留作为参考 - 使用 com.trading.adapter.execution.ExecutionEngine 替代
+ * V6版本遗留代码,不再维护
+ *
  * 核心升级：
  * 1. PositionSynchronizer - Binance为唯一仓位真相源
  * 2. DrawdownScaler - 根据回撤自动缩放仓位
@@ -28,6 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Binance User Data Stream → PositionSynchronizer → PositionManager(只读)
  * Signal → RiskGateway → DrawdownScaler → OrderManager → ExchangeAdapter
  */
+@Deprecated
 public class ExecutionEngineV6 {
 
     private final RiskGateway riskGateway;

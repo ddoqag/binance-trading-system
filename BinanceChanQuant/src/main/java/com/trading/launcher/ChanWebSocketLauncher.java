@@ -50,6 +50,7 @@ public class ChanWebSocketLauncher {
 
     private static final String SYMBOL;
     private static final int MAX_KLINES = 120;
+    private static final String KLINE_INTERVAL = "15m";  // 缠论用15分钟线，避免1分钟噪音
 
     // Connection settings
     private static final int INITIAL_RECONNECT_DELAY_MS = 1000;
@@ -115,6 +116,13 @@ public class ChanWebSocketLauncher {
 
     // Market context for signal generation
     private MarketContext lastMarketContext;
+
+    // 5-minute K-line tracking for faster stop detection
+    private final java.util.concurrent.ConcurrentLinkedQueue<ChanKLineProcessor.KLine> kline5mQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private volatile double lowerTimeframeAtr = 0;
+    private volatile double lowerTimeframeSupport = 0;
+    private volatile double lowerTimeframeResistance = 0;
+    private static final int LOWER_KLINE_COUNT = 20; // 20 * 5min = ~100min of data
 
     static {
         String symbol = ConfigUtil.get("symbol");
@@ -385,10 +393,10 @@ public class ChanWebSocketLauncher {
                 System.out.println("[Launcher] Proxy not set for REST client: " + e.getMessage());
             }
 
-            // Request 500 1-minute K-lines from the past
+            // Request 500 historical K-lines (15m interval for Chan theory)
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             params.put("symbol", SYMBOL);
-            params.put("interval", "1m");
+            params.put("interval", KLINE_INTERVAL);
             params.put("limit", 500);
 
             Object response = restClient.market().klines(params);
@@ -474,8 +482,11 @@ public class ChanWebSocketLauncher {
 
             String symbolLower = SYMBOL.toLowerCase();
 
-            // Subscribe to Kline/Candlestick stream (1m interval)
+            // Subscribe to Kline/Candlestick stream (15m interval)
             subscribeKlineStream(symbolLower);
+
+            // Subscribe to 5-minute K-line for faster stop detection (区间套)
+            subscribeKlineStream5m(symbolLower);
 
             // Subscribe to depth stream
             subscribeDepthStream(symbolLower);
@@ -524,7 +535,7 @@ public class ChanWebSocketLauncher {
     private void subscribeKlineStream(String symbolLower) {
         try {
             // Use 3-param klineStream which internally uses noop callbacks
-            wsClient.klineStream(symbolLower, "1m", new com.binance.connector.futures.client.utils.WebSocketCallback() {
+            wsClient.klineStream(symbolLower, KLINE_INTERVAL, new com.binance.connector.futures.client.utils.WebSocketCallback() {
                 @Override
                 public void onReceive(String msg) {
                     if (msg == null || msg.isEmpty()) {
@@ -540,6 +551,34 @@ public class ChanWebSocketLauncher {
         } catch (Exception e) {
             System.err.println("[Launcher] Kline subscription failed: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * Subscribe to 5-minute K-line stream for faster stop detection (区间套)
+     * 5分钟线用于:
+     * 1. 更快速的价格结构判断
+     * 2. 次级别支撑/阻力位检测
+     * 3. 入场提前确认
+     */
+    private void subscribeKlineStream5m(String symbolLower) {
+        try {
+            wsClient.klineStream(symbolLower, "5m", new com.binance.connector.futures.client.utils.WebSocketCallback() {
+                @Override
+                public void onReceive(String msg) {
+                    if (msg == null || msg.isEmpty()) {
+                        return;
+                    }
+                    try {
+                        handleKline5mMessage(msg);
+                    } catch (Exception e) {
+                        System.err.println("[5mKline] Parse error: " + e.getMessage());
+                    }
+                }
+            });
+            System.out.println("[Launcher] 5min K-line stream subscribed for stop detection");
+        } catch (Exception e) {
+            System.err.println("[Launcher] 5m Kline subscription failed: " + e.getMessage());
         }
     }
 
@@ -690,6 +729,67 @@ public class ChanWebSocketLauncher {
         }
     }
 
+    /**
+     * Handle 5-minute K-line for faster stop detection (区间套)
+     * Updates:
+     * - lowerTimeframeAtr: 5min ATR for volatility-based stops
+     * - lowerTimeframeSupport: 5min recent low for LONG stops
+     * - lowerTimeframeResistance: 5min recent high for SHORT stops
+     */
+    private void handleKline5mMessage(String msg) throws Exception {
+        JsonNode json = mapper.readTree(msg);
+        JsonNode kline = json.get("k");
+        if (kline == null) return;
+
+        long timestamp = json.has("E") ? json.get("E").asLong() : System.currentTimeMillis();
+        double open = kline.get("o").asDouble();
+        double high = kline.get("h").asDouble();
+        double low = kline.get("l").asDouble();
+        double close = kline.get("c").asDouble();
+        double volume = kline.get("v").asDouble();
+
+        // Add to 5min queue
+        ChanKLineProcessor.KLine k5m = new ChanKLineProcessor.KLine(timestamp, open, high, low, close, volume);
+        kline5mQueue.add(k5m);
+
+        // Keep only recent 5min klines
+        while (kline5mQueue.size() > LOWER_KLINE_COUNT) {
+            kline5mQueue.poll();
+        }
+
+        // Calculate 5min ATR
+        if (kline5mQueue.size() >= 14) {
+            double sum = 0;
+            Object[] arr = kline5mQueue.toArray();
+            for (int i = arr.length - 14; i < arr.length; i++) {
+                ChanKLineProcessor.KLine k = (ChanKLineProcessor.KLine) arr[i];
+                sum += (k.high - k.low);
+            }
+            lowerTimeframeAtr = sum / 14;
+        }
+
+        // Calculate 5min support/resistance (recent lows/highs)
+        if (kline5mQueue.size() >= 5) {
+            double minLow = Double.MAX_VALUE;
+            double maxHigh = 0;
+            Object[] arr = kline5mQueue.toArray();
+            int startIdx = Math.max(0, arr.length - 5);
+            for (int i = startIdx; i < arr.length; i++) {
+                ChanKLineProcessor.KLine k = (ChanKLineProcessor.KLine) arr[i];
+                if (k.low < minLow) minLow = k.low;
+                if (k.high > maxHigh) maxHigh = k.high;
+            }
+            lowerTimeframeSupport = minLow;
+            lowerTimeframeResistance = maxHigh;
+        }
+
+        // Log every 20 messages to avoid spam
+        if (messageCount.get() % 20 == 0) {
+            System.out.printf("[5mKline] ATR=%.2f, Support=%.2f, Resistance=%.2f%n",
+                lowerTimeframeAtr, lowerTimeframeSupport, lowerTimeframeResistance);
+        }
+    }
+
     private MarketData createMarketData(double price) {
         MarketData data = new MarketData();
         data.setSymbol(SYMBOL);
@@ -765,7 +865,7 @@ public class ChanWebSocketLauncher {
         try {
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             params.put("symbol", SYMBOL);
-            params.put("interval", "1m");
+            params.put("interval", KLINE_INTERVAL);
             params.put("limit", 1);
 
             Object response = restClient.market().klines(params);
@@ -935,6 +1035,51 @@ public class ChanWebSocketLauncher {
             if (!posState.hasPosition()) {
                 System.out.println("[Launcher] LIFECYCLE: no position to manage");
                 return; // No position to manage
+            }
+
+            // ========== P0: 5分钟支撑/阻力检查 (区间套快速止损) ==========
+            double currentPrice = lastPrice;
+            if (currentPrice <= 0 && context != null) {
+                currentPrice = context.getCurrentPrice();
+            }
+
+            if (currentPrice > 0) {
+                if (posState.isLong() && lowerTimeframeSupport > 0 && currentPrice < lowerTimeframeSupport) {
+                    // Price跌破5min支撑，立即止损
+                    System.out.printf("[Lifecycle][5m快速止损] LONG position: price=%.2f < 5min_support=%.2f%n",
+                        currentPrice, lowerTimeframeSupport);
+                    // Create MARKET exit order directly
+                    Order exitOrder = new Order(
+                        "5m-stop-" + System.currentTimeMillis(),
+                        SYMBOL,
+                        TradeDirection.SHORT, // 平多
+                        OrderType.MARKET,
+                        Math.abs(posState.getQuantity()),
+                        currentPrice,
+                        "5m_stop",
+                        1.0
+                    );
+                    executionEngine.submitOrder(exitOrder);
+                    return;
+                }
+                if (posState.isShort() && lowerTimeframeResistance > 0 && currentPrice > lowerTimeframeResistance) {
+                    // Price突破5min阻力，立即止损
+                    System.out.printf("[Lifecycle][5m快速止损] SHORT position: price=%.2f > 5min_resistance=%.2f%n",
+                        currentPrice, lowerTimeframeResistance);
+                    // Create MARKET exit order directly
+                    Order exitOrder = new Order(
+                        "5m-stop-" + System.currentTimeMillis(),
+                        SYMBOL,
+                        TradeDirection.LONG, // 平空
+                        OrderType.MARKET,
+                        Math.abs(posState.getQuantity()),
+                        currentPrice,
+                        "5m_stop",
+                        1.0
+                    );
+                    executionEngine.submitOrder(exitOrder);
+                    return;
+                }
             }
 
             // Ask lifecycle manager for intent

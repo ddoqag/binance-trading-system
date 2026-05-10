@@ -53,6 +53,9 @@ public class ExecutionEngine {
     // Active execution tracking - prevents duplicate TWAP for same symbol
     private final ConcurrentHashMap<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
 
+    // Max age for active executions - stale entries older than this are cleaned up
+    private static final long MAX_EXECUTION_AGE_MS = 300000; // 5 minutes
+
     // Map algo order ID to symbol for listener callback
     private final ConcurrentHashMap<String, String> algoOrderToSymbol = new ConcurrentHashMap<>();
 
@@ -193,9 +196,16 @@ public class ExecutionEngine {
         } else {
             ActiveExecution existing = activeExecutions.get(symbol);
             if (existing != null) {
-                System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring (started %d ms ago)%n",
-                    symbol, existing.getAgeMs());
-                return false;
+                // Check if execution is stale and should be cleaned up
+                if (existing.getAgeMs() > MAX_EXECUTION_AGE_MS) {
+                    activeExecutions.remove(symbol);
+                    System.out.printf("[ExecutionEngine] Removed stale execution for %s (age=%dms)%n",
+                        symbol, existing.getAgeMs());
+                } else {
+                    System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring (started %d ms ago)%n",
+                        symbol, existing.getAgeMs());
+                    return false;
+                }
             }
         }
 
@@ -305,14 +315,49 @@ public class ExecutionEngine {
 
     /**
      * Send order directly to exchange (via Binance adapter)
+     * For opening orders: use opponent price (ask for LONG, bid for SHORT)
+     * This ensures immediate fill by taking the opposite side (Taker strategy)
+     * - LONG (开多): use ask (卖一) to take seller's price
+     * - SHORT (开空): use bid (买一) to take buyer's price
      */
     private void sendOrderDirect(Order order, String exchange) {
-        System.out.printf("[ExecutionEngine] Sending order %s to %s: %s %s %.4f @ %.2f%n",
+        // Adjust price using opponent side for immediate fill
+        double adjustedPrice = order.getPrice();
+        if (!order.isReduceOnly()) {
+            // Opening order: use opponent price for immediate fill
+            // LONG (开多): use ask price to immediately take from seller
+            // SHORT (开空): use bid price to immediately take from buyer
+            double bidPrice = exchangeAdapter.getBidPrice();
+            double askPrice = exchangeAdapter.getAskPrice();
+
+            if (order.getSide() == TradeDirection.LONG && askPrice > 0) {
+                // 开多：追卖一价(ask)，立即吃单成交
+                adjustedPrice = askPrice;
+            } else if (order.getSide() == TradeDirection.SHORT && bidPrice > 0) {
+                // 开空：追买一价(bid)，立即吃单成交
+                adjustedPrice = bidPrice;
+            }
+        }
+
+        System.out.printf("[ExecutionEngine] Sending order %s to %s: %s %s %.4f @ %.2f (adjusted from %.2f)%n",
             order.getOrderId(), exchange, order.getSide(),
-            order.getOrderType(), order.getQuantity(), order.getPrice());
+            order.getOrderType(), order.getQuantity(), adjustedPrice, order.getPrice());
+
+        // Create order with adjusted price
+        Order adjustedOrder = new Order(
+            order.getOrderId(),
+            order.getSymbol(),
+            order.getSide(),
+            order.getOrderType(),
+            order.getQuantity(),
+            adjustedPrice,
+            order.getStrategy(),
+            order.getUrgency()
+        );
+        adjustedOrder.setConfidence(order.getConfidence());
 
         // Use Binance adapter for live trading, or simulate for paper mode
-        ExecutionReport report = exchangeAdapter.sendOrder(order);
+        ExecutionReport report = exchangeAdapter.sendOrder(adjustedOrder);
         if (report != null) {
             reportQueue.offer(report);
         }

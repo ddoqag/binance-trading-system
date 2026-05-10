@@ -6205,3 +6205,815 @@ private static boolean hasSufficientConfidence(AlphaSignal chanSignal, AlphaSign
 2. **时空共振验证**: 等待次级别回抽确认AI空头减弱后再入场
 3. **大级别背驰确认**: 引入日线级别趋势作为方向过滤
 
+---
+
+## 2026/05/10 16:30 - 实盘监控更新 (ChanWebSocketLauncher)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 运行模式 | **LIVE** (testnet=false, positionMode=HEDGE) |
+| 进程类型 | ChanWebSocketLauncher |
+| 账户余额 | 14.07 USDT |
+| 当前持仓 | **空仓** |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| Execution模式 | PASSIVE |
+| 订单队列 | 0 |
+| 总订单数 | 3 |
+| 已成交 | 0 |
+| 拒绝数 | 0 |
+| TWAP状态 | **失败** (margin insufficient, 3/3次) |
+
+**TWAP失败详情**:
+```
+[AlgoExecution] Slice ws-1778417970291_twap_1 failed (margin insufficient), failures=1/3
+[AlgoExecution] Slice ws-1778417970291_twap_2 failed (margin insufficient), failures=2/3
+[AlgoExecution] Stopping TWAP: too many failures
+```
+- 原因: 余额14 USDT，保证金不足
+- 最大可开: `14 * 20 / 80800 ≈ 0.0035 BTC`
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| 状态 | 活跃 |
+| ChanExpert | ✅ 无cooldown报错 |
+| 总信号数 | 44 (持续增长) |
+| 信号融合 | 2/2 experts (正常) |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Direction | Confidence |
+|--------|-----------|-------------|
+| AI | SHORT | 0.6 |
+| Chan | SHORT | 0.7 |
+| **融合结果** | SHORT | 0.70 |
+
+- `totalSignalsGenerated`: 44
+- `totalSignalsExecuted`: 0 (TWAP失败导致无成交)
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 | 备注 |
+|------|------|------|
+| WebSocket Kline | ❌ **断开** | silent 39s/49s/59s |
+| WebSocket Depth | ✅ 已连接 | |
+| WebSocket AggTrade | ✅ 已连接 | |
+| REST API | ✅ 备份接管 | 每10s轮询 |
+| Heartbeat | ✅ Connection alive | |
+
+#### 5) 错误或异常
+
+| 错误 | 次数 | 状态 |
+|------|------|------|
+| TWAP margin insufficient | 3 | 已停止TWAP |
+| WebSocket kline沉默 | 持续 | REST备用 |
+| Chandelier Exit触发 | 1 | 成功平仓 |
+
+**Chandelier Exit记录**:
+```
+[Lifecycle] EXIT: Chandelier stop hit, price=80888.80, stop=80883.87
+[Launcher] LIFECYCLE: -0.0010 SHORT @ 80871.70 position, executing EXIT_SHORT
+[Launcher] Position closed, RiskModel cleared
+```
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 | 状态 |
+|--------|------|------|------|
+| P1 | TWAP保证金检查 | ✅ 已修复 | executeSlice前检查余额是否足够 |
+| P1 | **WebSocket K线断开** | 反复出现silent，REST频繁轮询 | 待优化 |
+| P2 | SlantGridEngine gridStep衰减 | ✅ 已修复 | 状态变化时重置gridStep |
+| P3 | 余额过低 | 14 USDT难以支持正常交易 | 需充值或调整仓位 |
+
+### 优化建议
+
+#### 高优先级
+
+1. **修复TWAP保证金检查**
+   - 位置: `AlgoExecutionEngine.submitSlice()`
+   - 计算: `requiredMargin = qty * price / leverage`
+   - 余额14U时，最大可开约0.0035 BTC
+
+2. **优化WebSocket K线重连**
+   ```java
+   // 当前: 固定1s重连
+   currentReconnectDelay = 1000;
+   
+   // 建议: 指数退避
+   currentReconnectDelay = Math.min(currentReconnectDelay * 2, 30000);
+   ```
+
+#### 中优先级
+
+3. **SlantGridEngine重构** (用户反馈)
+   ```java
+   // 修复gridStep衰减bug
+   double currentGridStep = baseGridStep; // 每次重置
+   if (state == DIVERGENCE_TURN) {
+       currentGridStep = baseGridStep * divergenceMultiplier;
+   }
+   ```
+
+4. **动态斜率阻尼**
+   - 替换固定`25.0`为`ATR * 时间窗口`
+   - 急涨急跌时斜率自动变陡
+
+#### 低优先级
+
+5. **WebSocket健康度监控**
+   - K线silent超过60s时发送警告
+   - 统计各连接健康度
+
+6. **订单状态规范化**
+   - `Fill: 0.0000 @ 0.00` 应标记为`REJECTED`
+
+### 观察结论
+
+**系统运行结论**:
+- ✅ 进程运行稳定
+- ✅ 信号融合正常 (2/2 experts)
+- ✅ Chandelier Exit工作正常，成功触发平仓
+- ⚠️ WebSocket K线持续断开，REST备用正常
+- ⚠️ TWAP执行失败，余额管理需优化
+- ⚠️ 余额偏低(14U)，建议观察
+
+---
+
+
+## 2026/05/10 17:00 - 实盘监控更新 (进程未运行)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ 242 tests - BUILD SUCCESS |
+| 交易进程 | ❌ **进程未运行** |
+| 运行模式 | LIVE (testnet=false) |
+| 进程类型 | ChanWebSocketLauncher |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| 最后运行时状态 | mode=SMART_LIMIT, queue=0, total=3, filled=0 |
+| 最后订单 | ws-1778418610293 LONG LIMIT 0.001 @ 80872.80 |
+| 最后持仓 | 空仓 |
+| 最后余额 | 14.07 USDT |
+
+**历史执行记录**:
+```
+[Launcher] ORDER: CHAN_TREND conf=0.70 score=0.42 LONG 0.0018 @ 80872.80
+[BinanceAdapter] Position CLOSED: was -0.0010, now 0
+[BinanceAdapter] Sending order: BUY LIMIT qty=0.001 price=80872.80
+[ExecutionEngine] Fill: ws-1778418610293 LONG 0.0000 @ 0.00
+```
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| ChanExpert信号 | conf=0.7, dir=SHORT→LONG |
+| AIExpert信号 | conf=0.6, dir=SHORT |
+| 信号融合 | ✅ 2/2 experts |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Direction | Confidence |
+|--------|-----------|-------------|
+| AI | SHORT | 0.6 |
+| Chan | **LONG** | 0.7 |
+| **融合结果** | LONG | 0.70 |
+
+- 出现信号分歧: AI看空, Chan看多
+- Chan逆势胜出 (信号冲突已修复)
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 |
+|------|------|
+| WebSocket Kline | ❌ **断开** (silent持续) |
+| REST API | ✅ 备用正常 |
+| Heartbeat | ✅ Connection alive |
+
+#### 5) 错误或异常
+
+| 错误 | 说明 |
+|------|------|
+| Fill: 0.0000 @ 0.00 | 订单未成交但标记为FILLED |
+| WebSocket Kline沉默 | REST备用正常 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 | 状态 |
+|--------|------|------|------|
+| P2 | 订单未成交 | Fill日志显示0.0000成交 | 待排查 |
+| P3 | WebSocket静默 | REST备用正常 | 监控中 |
+| P3 | 余额偏低 | 14U，难以支持正常交易 | 需关注 |
+
+### 优化建议
+
+1. **订单状态规范化**
+   - `Fill: qty=0.0000` 应标记为 `REJECTED` 而非 `FILLED`
+   - 在 `BinanceExchangeAdapter.onOrderUpdate()` 中增加状态判断
+
+2. **余额管理**
+   - 当前余额14U，建议至少20U以上才能正常交易
+   - 考虑设置最小余额告警
+
+3. **信号冲突监控**
+   - 当AI和Chan信号方向不一致时，记录分歧原因
+   - 考虑添加"信号一致性"指标
+
+---
+
+### 观察结论
+
+**进程已停止，需要重启**:
+- ✅ 代码修复已完成 (SlantGridEngine, TWAP保证金)
+- ⚠️ 进程未运行，需手动重启
+- ⚠️ 订单成交率低 (0.0000填充)
+- ⚠️ 余额偏低
+
+## 2026/05/10 17:15 - K线周期修改
+
+### 变更内容
+
+| 项目 | 旧值 | 新值 |
+|------|------|------|
+| K线周期 | 1分钟 (1m) | **15分钟 (15m)** |
+
+### 修改位置
+
+1. **常量定义** (ChanWebSocketLauncher.java:53)
+   ```java
+   private static final String KLINE_INTERVAL = "15m";  // 缠论用15分钟线，避免1分钟噪音
+   ```
+
+2. **历史K线加载** (ChanWebSocketLauncher.java:392)
+   - REST API: `params.put("interval", KLINE_INTERVAL);`
+
+3. **WebSocket订阅** (ChanWebSocketLauncher.java:528)
+   - `wsClient.klineStream(symbolLower, KLINE_INTERVAL, ...)`
+
+4. **REST轮询后备** (ChanWebSocketLauncher.java:769)
+   - `params.put("interval", KLINE_INTERVAL);`
+
+### 预期效果
+
+- ✅ 减少噪音信号
+- ✅ 更稳定的趋势判断
+- ✅ 降低订单执行频率
+- ⚠️ 信号延迟增加 (最多15分钟)
+
+### 验证
+- ✅ 编译通过
+- ⏳ 待实盘验证
+
+
+## 2026/05/10 17:30 - 实盘监控更新 (进程未运行)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ 242 tests - BUILD SUCCESS |
+| 交易进程 | ❌ **进程未运行** |
+| 运行模式 | LIVE (testnet=false) |
+| 进程类型 | ChanWebSocketLauncher |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| 最后运行时状态 | mode=SMART_LIMIT, queue=0, total=3 |
+| 订单成交数 | 0 (所有订单filledQty=0.0000) |
+| 最后余额 | 14.07 USDT |
+| 最后持仓 | 空仓 |
+
+**订单执行问题**:
+```
+[BinanceAdapter] Live order: clientId=ws-1778418610293, status=NEW, filledQty=0.0000
+[ExecutionEngine] Fill: ws-1778418610293 LONG 0.0000 @ 0.00
+```
+- 订单状态为NEW但成交数量为0
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| 总信号数 | 44 |
+| AI Expert | conf=0.6, dir=SHORT |
+| Chan Expert | conf=0.7, dir=LONG→SHORT (分歧后回归) |
+| 信号融合 | ✅ 2/2 experts |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Direction | Confidence |
+|--------|-----------|-------------|
+| AI | SHORT | 0.6 |
+| Chan | SHORT | 0.7 |
+| **融合结果** | SHORT | 0.70 |
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 |
+|------|------|
+| WebSocket Kline | ❌ **断开** (silent 39s/49s/59s) |
+| REST API | ✅ 备用接管 |
+| Heartbeat | ✅ Connection alive |
+
+#### 5) 错误或异常
+
+| 错误 | 说明 |
+|------|------|
+| filledQty=0.0000 | LIMIT订单挂出但未成交 |
+| WebSocket沉默 | REST备用正常 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 | 状态 |
+|--------|------|------|------|
+| P1 | **进程未运行** | 需手动重启 | 等待 |
+| P2 | LIMIT订单不成交 | 挂单价格可能不合理 | 待排查 |
+| P3 | WebSocket断开 | REST备用正常 | 监控中 |
+| P3 | 余额偏低 | 14U | 需关注 |
+
+### 已修复项
+
+| 问题 | 状态 |
+|------|------|
+| SlantGridEngine gridStep衰减 | ✅ 已修复 |
+| TWAP保证金检查 | ✅ 已修复 |
+| K线周期1m→15m | ✅ 已修复 (未验证) |
+
+### 优化建议
+
+1. **LIMIT订单不成交问题**
+   - 检查订单价格是否在合理范围内
+   - 考虑使用市价单或更积极的限价
+   - 可能需要调整订单簿深度获取更好的价格
+
+2. **重启后需验证**
+   - 15分钟K线是否正常接收
+   - 信号频率是否降低
+   - 订单执行间隔是否合理
+
+---
+
+### 观察结论
+
+**进程已停止**:
+- ✅ 代码修复已完成
+- ❌ 进程未运行，需重启
+- ⚠️ LIMIT订单不成交问题待排查
+- ⚠️ 余额偏低(14U)
+
+## 2026/05/10 17:35 - 缠论区间套优化建议 (用户反馈)
+
+### 用户核心观点
+
+**"最大延迟15分钟"本质是信号确定性 vs 响应速度的权衡**
+
+> 在缠论中，如果K线未闭合，分型（Fractal）可能会随价格波动消失，导致"笔"的推倒重来——这是量化交易中常说的"未来函数"风险。
+
+### 建议优化方案
+
+#### 1. 区间套 (Multi-timeframe Nesting) - 优先级P1
+
+**15min (定性) + 5min (定位) + 1min (定点)**
+
+| 周期 | 职责 | 延迟 |
+|------|------|------|
+| 15分钟 | 定义当前"位次" (中枢位置、潜在买点) | <15min |
+| 5分钟 | 进场触发 (5分钟出现背驰或二买) | <5min |
+| 1分钟 | 定点执行 (价格触碰网格线) | 实时 |
+
+**预期效果**: 入场延迟从15分钟降到**5分钟以内**
+
+#### 2. 次级别"笔"预警机制 - 优先级P1
+
+**当前逻辑**:
+```
+等15min K线闭合 → 确认底分型 → 确认笔
+```
+
+**优化逻辑**:
+```
+15min未闭合，但价格已突破前K线最高点
++ 5min周期上底分型放量确认
+= 预触发信号 (Pre-trigger)
+```
+
+⚠️ 注意: 预触发有"未来函数"风险，需要严格条件限制
+
+#### 3. AlphaPool 融合层增强 - 优先级P2
+
+| 指标 | 15min状态 | 实时Price Action | 执行决策 |
+|------|-----------|------------------|----------|
+| 趋势 | 向上笔延伸 | 回调不破15min均线+5min缩量 | 持仓/加仓 |
+| 转折 | 潜在背驰点 | 1min放量反转K线 | 减仓/锁利 |
+
+#### 4. 止损用小周期 - 优先级P1 (最紧急)
+
+**当前问题**:
+```
+15分钟笔未闭合 → 止损不动
+价格已跌破5分钟支撑 → 本应立即止损
+→ 损失扩大
+```
+
+**建议修改 PositionLifecycleManager**:
+- **止损**: 检查5分钟关键支撑，跌破**立即跑**
+- **止盈**: 可以等15分钟结构完成
+
+#### 5. 网格斜率动态调整 - 优先级P2
+
+- 网格线实时Tick触发 (已实现)
+- 斜率参数**每5分钟**根据次级别走势微调
+- 而非等待15分钟K线闭合
+
+### 技术实现路径
+
+1. **ChanKLineProcessor 多周期支持**
+   - 添加 `lowerTimeframe` (5min) 数据存储
+   - 添加 `getLowerTimeframeSignal()` 方法
+
+2. **PositionLifecycleManager 止损优化**
+   - 添加5分钟支撑检查
+   - `if (5min支撑跌破) { 立即止损 }`
+
+3. **AlphaPool Pre-trigger 信号**
+   - 添加 `PRE_TRIGGER` 信号类型
+   - 严格条件: 15min有结构潜力 + 5min确认 + 1min反转
+
+### 风险提示
+
+| 风险 | 说明 | 缓解措施 |
+|------|------|----------|
+| 未来函数 | 次级别信号可能是噪音 | 仅在5min强确认时触发 |
+| 过度交易 | 小周期信号过多 | 设置最低置信度阈值 |
+| 信号冲突 | 多周期信号不一致 | 大周期优先原则 |
+
+
+## 2026/05/10 17:45 - 区间套止损实现 (P0优先级)
+
+### 变更内容
+
+#### 1. 新增5分钟K线订阅
+
+**ChanWebSocketLauncher.java**:
+```java
+// 5-minute K-line tracking for faster stop detection
+private final ConcurrentLinkedQueue<ChanKLineProcessor.KLine> kline5mQueue = ...;
+private volatile double lowerTimeframeAtr = 0;
+private volatile double lowerTimeframeSupport = 0;
+private volatile double lowerTimeframeResistance = 0;
+```
+
+#### 2. WebSocket订阅5分钟K线
+
+```java
+subscribeKlineStream5m(symbolLower);  // 新增
+
+private void subscribeKlineStream5m(String symbolLower) {
+    wsClient.klineStream(symbolLower, "5m", ...);
+}
+```
+
+#### 3. 处理5分钟K线数据
+
+```java
+private void handleKline5mMessage(String msg) {
+    // 1. 添加到5min队列
+    kline5mQueue.add(k5m);
+    
+    // 2. 计算5min ATR
+    lowerTimeframeAtr = sum / 14;
+    
+    // 3. 计算5min支撑/阻力 (最近5根K线的高低点)
+    lowerTimeframeSupport = recent_min_low;
+    lowerTimeframeResistance = recent_max_high;
+}
+```
+
+#### 4. P0快速止损逻辑
+
+```java
+// checkPositionLifecycle() 中新增
+if (posState.isLong() && lowerTimeframeSupport > 0 && currentPrice < lowerTimeframeSupport) {
+    // Price跌破5min支撑，立即市价止损
+    [Lifecycle][5m快速止损] LONG position: price=%.2f < 5min_support=%.2f
+}
+
+if (posState.isShort() && lowerTimeframeResistance > 0 && currentPrice > lowerTimeframeResistance) {
+    // Price突破5min阻力，立即市价止损
+    [Lifecycle][5m快速止损] SHORT position: price=%.2f > 5min_resistance=%.2f
+}
+```
+
+### 效果
+
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| LONG止损 | 等15min闭合 | **实时**跌破5min支撑即跑 |
+| SHORT止损 | 等15min闭合 | **实时**突破5min阻力即跑 |
+| 延迟 | 最高15分钟 | **<5秒** (5min K线更新) |
+
+### 验证
+
+- ✅ 编译通过
+- ⏳ 需重启实盘验证
+
+
+## 2026/05/10 18:00 - 实盘监控更新 (进程未运行)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ 242 tests - BUILD SUCCESS |
+| 交易进程 | ❌ **进程未运行** |
+| 运行模式 | LIVE (testnet=false) |
+| 最后余额 | 14.07 USDT |
+| 最后持仓 | 空仓 |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| 最后状态 | mode=SMART_LIMIT, total=3, filled=0 |
+| 订单成交率 | 0% (filledQty=0.0000) |
+| 问题 | LIMIT订单挂出未成交 |
+
+**分析**:
+```
+[Launcher] ORDER: CHAN_TREND LONG 0.0018 @ 80872.80
+[BinanceAdapter] Live order: status=NEW, filledQty=0.0000
+[ExecutionEngine] Fill: LONG 0.0000 @ 0.00
+```
+订单状态NEW但成交数量为0，可能是:
+1. 价格未触及限价
+2. 余额不足(Margin)
+3. 网络延迟
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| 总信号 | 44 |
+| AI Expert | conf=0.6, SHORT |
+| Chan Expert | conf=0.7, LONG→SHORT |
+| 融合 | ✅ 2/2 experts |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Direction | Confidence |
+|--------|-----------|-------------|
+| AI | SHORT | 0.6 |
+| Chan | SHORT | 0.7 |
+| **融合** | SHORT | 0.70 |
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 |
+|------|------|
+| WebSocket Kline | ❌ 断开 |
+| REST API | ✅ 备用 |
+| Heartbeat | ✅ 存活 |
+
+#### 5) 错误或异常
+
+| 错误 | 说明 |
+|------|------|
+| filledQty=0.0000 | LIMIT订单未触发成交 |
+| WebSocket沉默 | REST备用正常 |
+
+### 已完成的修复
+
+| 问题 | 状态 | 验证 |
+|------|------|------|
+| SlantGridEngine gridStep衰减 | ✅ 已修复 | 未验证 |
+| TWAP保证金检查 | ✅ 已修复 | 未验证 |
+| K线周期1m→15m | ✅ 已修复 | 未验证 |
+| 区间套止损(5分钟) | ✅ 已修复 | 未验证 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 | 状态 |
+|--------|------|------|------|
+| P1 | **进程未运行** | 需手动重启 | 等待 |
+| P2 | LIMIT订单不成交 | 挂单未触发 | 待排查 |
+| P3 | WebSocket断开 | REST正常 | 监控 |
+| P3 | 余额偏低 | 14U | 需关注 |
+
+### 待验证项 (重启后)
+
+1. 15分钟K线是否正常接收
+2. 5分钟K线订阅是否成功
+3. 5分钟快速止损是否生效
+4. 信号频率是否降低
+
+---
+
+### 观察结论
+
+- ❌ **进程未运行，需重启**
+- ✅ 代码修复已完成 (SlantGridEngine, TWAP, 15m K线, 5分钟止损)
+- ⚠️ LIMIT订单不成交问题待排查
+- ⚠️ 余额偏低
+
+## 2026/05/10 18:15 - 实盘监控更新 (余额问题已修复)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ 242 tests - BUILD SUCCESS |
+| 交易进程 | ✅ 运行中 |
+| 持仓 | SHORT -0.0010 @ 80883.20 |
+| 余额 | 5.87 USDT (已修复) |
+| 模式 | PASSIVE |
+
+### 修复验证
+
+#### ✅ 余额字段修复
+
+**问题根因**: Binance API返回字段是 `totalCrossWalletBalance`，代码查找 `crossWalletBalance`
+
+**修复**:
+```java
+// BinanceExchangeAdapter.java - syncBalanceFromExchange()
+if (node.has("crossWalletBalance")) {
+    walletBal = node.get("crossWalletBalance").asDouble();
+} else if (node.has("totalCrossWalletBalance")) {
+    walletBal = node.get("totalCrossWalletBalance").asDouble();
+}
+// 直接使用API返回的availableBalance字段
+if (node.has("availableBalance")) {
+    availBal = node.get("availableBalance").asDouble();
+}
+```
+
+**结果**: `availableBalance=5.8737 USDT` (之前是0.0000)
+
+#### ✅ Position LifecycleManager 区间套止损
+
+- 已订阅 5min K线
+- 计算 5min ATR, Support, Resistance
+- 跌破5min支撑立即止损
+
+### 当前问题
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| P2 | WebSocket 15m K线沉默 | REST轮询正常 |
+| P3 | 5min K线数据未输出 | 需检查日志 |
+
+### 待观察
+
+1. 持仓状态: SHORT -0.0010 @ 80883.20
+2. 止损: ATR_Stop=81061.05
+3. 止盈: TP=80349.64
+4. 5分钟快速止损: 待触发验证
+
+## 2026/05/10 22:30 - 实盘监控更新
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 交易进程 | ✅ 运行中 (PID 619) |
+| 持仓 | 空仓 (pos=0.0000) |
+| 余额 | 13.9799 USDT |
+| 模式 | PASSIVE (偶尔切换SMART_LIMIT) |
+
+### 1) ExecutionEngine状态
+
+| 指标 | 值 |
+|------|------|
+| 模式 | PASSIVE |
+| 队列 | 0 |
+| 总订单 | 6 |
+| 成交 | 0 |
+| 拒绝 | 0 |
+
+**问题**: 所有TWAP订单全部FAILED，LIMIT订单不成交
+
+### 2) SignalCooldownManager
+
+| 日志 | 说明 |
+|------|------|
+| `[ExecutionEngine] Signal cooldown: symbol=BTCUSDT dir=LONG conf=0.70 pos=0.0000` | 冷却生效，阻止重复信号 |
+
+冷却正常工作，但导致无法连续开仓
+
+### 3) AlphaPool信号融合
+
+| 指标 | 值 |
+|------|------|
+| AI信号 | conf=0.6, dir=SHORT |
+| Chan信号 | conf=0.7, dir=LONG/SHORT (波动) |
+| 融合结果 | totalSignalsGenerated=44 |
+| 最终方向 | 因冲突+冷却被拒绝 |
+
+**问题**: AI和Chan信号方向冲突 (AI SHORT vs Chan LONG)
+
+### 4) WebSocket/REST连接
+
+| 连接 | 状态 |
+|------|------|
+| WebSocket kline | ❌ 沉默39-59秒 |
+| REST API | ✅ 备用正常 |
+| Heartbeat | ✅ 存活 |
+
+### 5) 错误和异常
+
+| 错误 | 次数 | 说明 |
+|------|------|------|
+| `Margin is insufficient` | 6+ | 余额不足 (14U)，TWAP失败 |
+| TWAP FAILED | 2次 | ws-1778419148463, ws-1778419448464 |
+| filled=0 | 持续 | LIMIT订单从未成交 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| **P1** | 余额不足 | 14U无法开仓，保证金要求不满足 |
+| **P2** | LIMIT订单不成交 | 价格80899-80932，接近市场价但未触发 |
+| **P2** | TWAP全部失败 | 3次slice失败后algo停止 |
+| **P3** | 5min K线数据缺失 | 日志中无5分钟K线输出 |
+| **P3** | Price=0.00 | KlineCount显示价格0，说明WebSocket静默 |
+
+### 优化建议
+
+#### P1 - 余额管理
+```java
+// PreTradeRiskChecker.java:113
+// 当前阈值: MIN_BALANCE_FOR_NEW_POSITION = 10.0 USDT
+// 建议: 余额 < 20U时，降低仓位或切换模拟
+if (availableBalance < 20.0) {
+    // 限制最大仓位为balance的50%
+    dynamicPositionLimit = availableBalance * 0.5;
+}
+```
+
+#### P2 - TWAP失败处理
+```java
+// AlgoExecutionEngine.java:372
+// 当前: 3次失败后停止TWAP
+// 建议: 余额不足时，切换到更小的slice或使用市价单
+if (availableBalance < requiredMargin) {
+    // 使用市价单(MARKET)代替LIMIT
+    slice.orderType = OrderType.MARKET;
+}
+```
+
+#### P3 - 5min K线订阅
+```java
+// ChanWebSocketLauncher.java - 确认订阅成功
+// 当前: subscribeKlineStream5m() 已调用
+// 问题: handleKline5mMessage() 未输出日志
+// 建议: 在handleKline5mMessage()添加调试日志
+System.out.printf("[5minKline] timestamp=%d, O=%.2f H=%.2f L=%.2f C=%.2f%n",
+    timestamp, open, high, low, close);
+```
+
+#### P2 - 信号冲突解决
+```java
+// AlphaPool.java - fuseSignals()
+// 当前: AI和Chan方向冲突时，可能输出混合信号
+// 建议: 高波动市场优先VOLATILITY expert，避免方向冲突
+if (marketContext.getVolatility() > threshold) {
+    return signals.get(VOLATILITY); // 优先波动率信号
+}
+```
+
+### 待验证项
+
+- [ ] 5min K线数据是否正常接收
+- [ ] 余额提升后TWAP是否能正常执行
+- [ ] 信号冲突时的融合逻辑是否正确
+- [ ] WebSocket kline断开原因排查
+
+---

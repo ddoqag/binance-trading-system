@@ -78,9 +78,9 @@ public class ChanMetaLearnerBridge {
         // Re-determine regime based on current context (since K-line was just added)
         regime = determineRegimeFromContext(ctx);
 
-        // P2-8 DEBUG: Log context state when Zhongshu exists
+        // DEBUG: Log context state when Zhongshu exists (production: log.debug)
         if (ctx != null && ctx.zhongshu != null) {
-            System.out.printf("[ChanMetaLearner] Zhongshu: ZG=%.2f ZD=%.2f, lastBi=%s, lastFenxing=%s, regime=%s%n",
+            log.debug("Zhongshu: ZG={:.2f} ZD={:.2f}, lastBi={}, lastFenxing={}, regime={}",
                 ctx.zhongshu.zg, ctx.zhongshu.zd,
                 ctx.lastBi != null ? ctx.lastBi.direction + "@" + ctx.lastBi.low : "null",
                 ctx.lastFenxing != null ? ctx.lastFenxing.type + "@" + ctx.lastFenxing.price : "null",
@@ -100,9 +100,9 @@ public class ChanMetaLearnerBridge {
 
         PatternSignal signal = adapter.detect(ctx, regime);
 
-        // P2-8 DEBUG: Log signal detection result with regime
+        // DEBUG: Log signal detection result with regime (production: log.debug)
         if (ctx != null && ctx.zhongshu != null) {
-            System.out.printf("[ChanMetaLearner] detect() result: hasSignal=%s, type=%s, confidence=%.2f, minConf=%.2f, regime=%s%n",
+            log.debug("detect() result: hasSignal={}, type={}, confidence={:.2f}, minConf={:.2f}, regime={}",
                 signal.hasSignal(), signal.type, signal.confidence, adapter.getMinConfidence(), regime);
         }
 

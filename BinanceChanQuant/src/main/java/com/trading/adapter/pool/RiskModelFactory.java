@@ -86,30 +86,32 @@ public class RiskModelFactory {
      *
      * Higher volatility = wider stop
      * Strong trend = tighter stop (follow the trend)
+     *
+     * Optimized: Wider stops to avoid premature stops
      */
     private static double getAtrStopMultiplier(String volatilityRegime, String trendRegime) {
         double base;
 
         switch (volatilityRegime) {
             case "EXTREME":
-                base = 3.0;  // Very wide in extreme vol
+                base = 3.5;  // Very wide in extreme vol
                 break;
             case "HIGH":
-                base = 2.5;
+                base = 3.0;
                 break;
             case "MEDIUM":
-                base = 2.0;
+                base = 2.5;  // Wider than before
                 break;
             case "LOW":
-                base = 1.5;  // Tight in low vol
+                base = 2.0;  // Wider than before (was 1.5)
                 break;
             default:
-                base = 2.0;
+                base = 2.5;
         }
 
-        // Adjust for trend strength
+        // In trends, use slightly wider stops to let position run
         if ("TREND_UP".equals(trendRegime) || "TREND_DOWN".equals(trendRegime)) {
-            base *= 0.9;  // Slightly tighter in trends
+            base *= 1.1;  // Slightly wider in trends
         }
 
         return base;
@@ -117,13 +119,14 @@ public class RiskModelFactory {
 
     /**
      * Get take profit multiplier
+     * Optimized: Higher TP to let winners run
      */
     private static double getTakeProfitMultiplier(String volatilityRegime, String trendRegime) {
-        double base = getAtrStopMultiplier(volatilityRegime, trendRegime) * 1.5;
+        double base = getAtrStopMultiplier(volatilityRegime, trendRegime) * 2.0;  // Was 1.5x
 
-        // In trends, let winners run
+        // In trends, let winners run significantly
         if ("TREND_UP".equals(trendRegime) || "TREND_DOWN".equals(trendRegime)) {
-            base *= 1.2;
+            base *= 1.5;  // Much higher TP in trends (was 1.2x)
         }
 
         return base;
@@ -133,30 +136,34 @@ public class RiskModelFactory {
      * Get Chandelier K multiplier
      *
      * Chandelier Exit = HighestHigh - K * ATR (for LONG)
+     * Optimized: Wider K to avoid premature trailing stops
      */
     private static double getChandelierK(String volatilityRegime, String trendRegime) {
         double base;
 
         switch (volatilityRegime) {
             case "EXTREME":
-                base = 3.0;
+                base = 3.5;
                 break;
             case "HIGH":
-                base = 2.5;
+                base = 3.0;
                 break;
             case "MEDIUM":
-                base = 2.0;
+                base = 2.5;  // Was 2.0
                 break;
             case "LOW":
-                base = 1.5;
+                base = 2.0;  // Was 1.5
                 break;
             default:
-                base = 2.0;
+                base = 2.5;
         }
 
-        // Wider in ranges, tighter in trends
+        // Wider in ranges, wider in trends (let winners run)
         if ("RANGE".equals(trendRegime)) {
             base *= 1.2;
+        }
+        if ("TREND_UP".equals(trendRegime) || "TREND_DOWN".equals(trendRegime)) {
+            base *= 1.3;  // Wider in trends
         }
 
         return base;
