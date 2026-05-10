@@ -40,7 +40,11 @@ public class ExecutionStateMachine {
     private final long minModeDuration;
 
     public ExecutionStateMachine(RiskManager riskManager) {
-        this(riskManager, 0.3, 0.8, 0.7, 30000);
+        this(riskManager, 0.3, 0.8, 0.7, 60000); // Default 60s minimum mode duration
+    }
+
+    public ExecutionStateMachine(RiskManager riskManager, long minModeDuration) {
+        this(riskManager, 0.3, 0.8, 0.7, minModeDuration);
     }
 
     public ExecutionStateMachine(RiskManager riskManager, double urgencyThreshold,
@@ -142,19 +146,29 @@ public class ExecutionStateMachine {
         ExecutionMode current = currentMode.get();
         double effectiveUrgencyThreshold = urgencyThreshold;
         double aggressiveThreshold = 0.7;
+        double deAggressiveThreshold = 0.6; // Hysteresis: need urgency < 0.6 to exit AGGRESSIVE
         // V6 FIX: Add inventoryRisk hysteresis for positions
         double effectiveInventoryThreshold = 0.5;
 
         if (current == ExecutionMode.PASSIVE) {
             effectiveUrgencyThreshold = 0.45;  // Require higher urgency to exit PASSIVE
-            aggressiveThreshold = 0.8;         // Harder to go AGGRESSIVE from PASSIVE
+            aggressiveThreshold = 0.85;        // Harder to go AGGRESSIVE from PASSIVE
+            deAggressiveThreshold = 0.6;
             effectiveInventoryThreshold = 0.7;  // Allow higher inventory when already PASSIVE
+        } else if (current == ExecutionMode.SMART_LIMIT) {
+            aggressiveThreshold = 0.85;         // Require higher urgency to go AGGRESSIVE
+            deAggressiveThreshold = 0.6;        // Keep 0.6 threshold when in AGGRESSIVE
+        } else if (current == ExecutionMode.AGGRESSIVE) {
+            aggressiveThreshold = 0.85;          // Once AGGRESSIVE, stay harder to switch back
+            deAggressiveThreshold = 0.6;        // But 0.6 threshold to de-escalate
         }
 
         if (urgency < effectiveUrgencyThreshold && inventoryRisk < effectiveInventoryThreshold) {
             return ExecutionMode.PASSIVE;
-        } else if (urgency < aggressiveThreshold) {
+        } else if (urgency < aggressiveThreshold && urgency >= deAggressiveThreshold) {
             return ExecutionMode.SMART_LIMIT;
+        } else if (urgency < deAggressiveThreshold) {
+            return ExecutionMode.SMART_LIMIT;  // Can always de-escalate to SMART_LIMIT
         } else {
             return ExecutionMode.AGGRESSIVE;
         }
@@ -186,8 +200,23 @@ public class ExecutionStateMachine {
 
             // TODO: Implement gradual transition (e.g., AGGRESSIVE -> SMART_LIMIT -> PASSIVE over multiple steps)
             // This prevents sudden execution strategy changes that could increase costs
-            System.out.printf("[ExecutionStateMachine] Mode changed: %s -> %s%n",
-                oldMode, newMode);
+
+            // Calculate current values for logging
+            double urgency = 0.0;
+            double inventoryRisk = 0.0;
+            try {
+                if (riskManager != null) {
+                    RiskManager.DailyRiskMetrics metrics = riskManager.getDailyRiskMetrics();
+                    RiskManager.PositionRisk positionRisk = riskManager.getPositionRisk();
+                    urgency = calculateUrgency(metrics, positionRisk);
+                    inventoryRisk = calculateInventoryRisk(positionRisk);
+                }
+            } catch (Exception e) {
+                // Use defaults if metrics unavailable
+            }
+
+            System.out.printf("[ExecutionStateMachine] Mode changed: %s -> %s (urgency=%.2f, risk=%.2f)%n",
+                oldMode, newMode, urgency, inventoryRisk);
         }
     }
 

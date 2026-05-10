@@ -128,6 +128,32 @@ public class AlphaPool {
         }
 
         if (signals.size() == 1) {
+            // Only one expert provided a signal - reduce confidence due to lack of confirmation
+            // But only if we expected multiple experts (at least 2 active experts registered)
+            int activeExperts = (int) experts.values().stream().filter(AlphaExpert::isActive).count();
+            if (activeExperts >= 2) {
+                AlphaSignal singleSignal = signals.get(0);
+                // FIX: Reduced penalty from 20% to 10% - was too aggressive
+                // Also log which expert provided signal for debugging
+                System.out.printf("[AlphaPool] Single-signal (expert=%s, conf=%.2f, expected=%d experts)%n",
+                    singleSignal.getSource(), singleSignal.getConfidence(), activeExperts);
+                double penalizedConf = singleSignal.getConfidence() * 0.9;
+                CompositeAlphaSignal composite = CompositeAlphaSignal.builder()
+                    .direction(singleSignal.getDirection())
+                    .entryPrice(singleSignal.getEntryPrice())
+                    .stopLossPrice(singleSignal.getStopLossPrice())
+                    .takeProfitPrice(singleSignal.getTakeProfitPrice())
+                    .confidence(penalizedConf)
+                    .urgency(singleSignal.getUrgency())
+                    .horizonMinutes(singleSignal.getHorizonMinutes())
+                    .expectedReturn(singleSignal.getExpectedReturn())
+                    .expectedVolatility(singleSignal.getExpectedVolatility())
+                    .source("Composite:" + singleSignal.getSource())
+                    .build();
+                composite.addComponentSignal(singleSignal);
+                composite.setType(AlphaType.COMPOSITE);
+                return composite;
+            }
             return CompositeAlphaSignal.fromSingle(signals.get(0));
         }
 

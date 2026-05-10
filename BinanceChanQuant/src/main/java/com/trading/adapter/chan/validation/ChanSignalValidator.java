@@ -34,9 +34,9 @@ public class ChanSignalValidator {
     // Separate cooldown tracking for shadow vs real signals
     private final AtomicLong lastShadowSignalTime = new AtomicLong(0);
     private final AtomicLong lastRealSignalTime = new AtomicLong(0);
-    // FIX: Added minimum cooldown for real signals (3 seconds)
-    private final long shadowCooldownMs = 10_000; // 10 seconds for shadow
-    private final long realCooldownMs = 3_000;    // 3 seconds minimum for real signals
+    // FIX: Added minimum cooldown for real signals (30 seconds - reduced from too frequent blocking)
+    private final long shadowCooldownMs = 30_000; // 30 seconds for shadow
+    private final long realCooldownMs = 30_000;   // 30 seconds minimum for real signals
 
     // Rolling window for signal quality (real signals only)
     private final RingBuffer<SignalRecord> signalBuffer = new RingBuffer<>(100);

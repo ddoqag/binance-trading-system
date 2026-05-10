@@ -33,8 +33,7 @@ class ExecutionEngineTest {
     void setUp() {
         riskChecker = PreTradeRiskChecker.defaults();
         engine = new ExecutionEngine(riskChecker);
-        // Disable signal cooldown for unit tests
-        engine.setSignalCooldownMs(0, 0);
+        // SignalCooldownManager has its own default values suitable for testing
     }
 
     @AfterEach
@@ -125,6 +124,12 @@ class ExecutionEngineTest {
     @Test
     @DisplayName("Algo engine should be accessible")
     void algoEngineShouldBeAccessible() {
+        assertNotNull(engine.getAlgoEngine());
+    }
+
+    @Test
+    @DisplayName("Algo engine listener should be accessible")
+    void algoEngineListenerShouldBeAccessible() {
         assertNotNull(engine.getAlgoEngine());
     }
 

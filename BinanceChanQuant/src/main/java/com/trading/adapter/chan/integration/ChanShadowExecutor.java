@@ -54,6 +54,17 @@ public class ChanShadowExecutor {
 
         totalSignals.incrementAndGet();
 
+        // Get current context for regime consistency check
+        ChanKLineProcessor.KlineContext ctx = metaLearnerBridge.getProcessor().getCurrentContext();
+
+        // Verify regime consistency between caller and context
+        if (ctx != null && ctx.zhongshu != null) {
+            MarketRegime contextRegime = metaLearnerBridge.determineRegimeFromContext(ctx);
+            if (contextRegime != regime) {
+                System.out.printf("[ChanShadow] Regime mismatch: passed=%s, context=%s%n", regime, contextRegime);
+            }
+        }
+
         Optional<ChanMetaLearnerBridge.ChanSignalResult> chanResult =
             metaLearnerBridge.generateSignal(data, regime);
 
@@ -65,12 +76,11 @@ public class ChanShadowExecutor {
         ChanMetaLearnerBridge.ChanSignalResult result = chanResult.get();
 
         // Validate signal (shadow mode - separate cooldown tracking)
-        ChanKLineProcessor.KlineContext ctx = metaLearnerBridge.getProcessor().getCurrentContext();
         ChanSignalValidator.ValidationResult validation =
             validator.validate(ctx, regime, result.confidence, true);
 
         ShadowSignalRecord record = new ShadowSignalRecord(
-            "UNKNOWN",
+            data.getSymbol(),
             result.chanSignalType.name(),
             result.confidence,
             regime,
@@ -91,7 +101,7 @@ public class ChanShadowExecutor {
         lastSignalTime.set(System.currentTimeMillis());
 
         log.info("CHAN_SHADOW_SIGNAL: symbol={}, type={}, confidence={}, weight={}",
-                "UNKNOWN", result.chanSignalType, result.confidence, result.confidence);
+                data.getSymbol(), result.chanSignalType, result.confidence, result.confidence);
 
         return Optional.of(new ShadowSignalResult(
             result.signal,

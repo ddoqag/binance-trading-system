@@ -3,6 +3,8 @@ package com.trading.adapter.execution;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderType;
 import com.trading.domain.trading.model.TradeDirection;
+import com.trading.domain.trading.model.ExecutionReport;
+import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.market.model.MarketData;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -10,6 +12,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.List;
 
 /**
  * Algo Execution Engine
@@ -24,6 +28,7 @@ public class AlgoExecutionEngine {
         return t;
     });
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
+    private final List<AlgoExecutionListener> listeners = new CopyOnWriteArrayList<>();
     private BinanceExchangeAdapter exchangeAdapter;
 
     public AlgoExecutionEngine() {
@@ -112,6 +117,35 @@ public class AlgoExecutionEngine {
         }
     }
 
+    /**
+     * Add a listener for algo completion events
+     */
+    public void addListener(AlgoExecutionListener listener) {
+        if (listener != null) {
+            listeners.add(listener);
+        }
+    }
+
+    /**
+     * Remove a listener
+     */
+    public void removeListener(AlgoExecutionListener listener) {
+        listeners.remove(listener);
+    }
+
+    /**
+     * Notify all listeners of algo completion
+     */
+    private void notifyCompletion(String orderId, String symbol, AlgoCompletionReason reason) {
+        for (AlgoExecutionListener listener : listeners) {
+            try {
+                listener.onAlgoCompleted(orderId, symbol, reason);
+            } catch (Exception e) {
+                System.err.printf("[AlgoExecutionEngine] Listener notification error: %s%n", e.getMessage());
+            }
+        }
+    }
+
     private AlgoStrategy createAlgoStrategy(String algoType, Order order) {
         if (algoType == null || algoType.isEmpty()) {
             return null;
@@ -181,7 +215,7 @@ public class AlgoExecutionEngine {
             Slice slice = new Slice();
             slice.orderId = order.getOrderId() + "_twap_" + currentSlice;
             slice.quantity = sliceQuantity;
-            slice.orderType = OrderType.LIMIT;
+            slice.orderType = OrderType.IOC;
             slice.timeInForce = 300;
 
             // Use order's original price as fallback when marketData is null
@@ -245,7 +279,7 @@ public class AlgoExecutionEngine {
             Slice slice = new Slice();
             slice.orderId = order.getOrderId() + "_vwap_" + currentPeriod;
             slice.quantity = sliceQty;
-            slice.orderType = OrderType.LIMIT;
+            slice.orderType = OrderType.IOC;
 
             if (marketData != null) {
                 slice.price = marketData.getMidPrice();
@@ -284,6 +318,9 @@ public class AlgoExecutionEngine {
         private double filledQuantity = 0.0;
         private long lastExecuteTime = 0;
         private final AtomicBoolean running = new AtomicBoolean(true);
+        private final AtomicBoolean completionNotified = new AtomicBoolean(false);
+        private int consecutiveFailures = 0;
+        private static final int MAX_CONSECUTIVE_FAILURES = 3;
 
         public AlgoExecution(Order order, AlgoStrategy algo, MarketData marketData) {
             this.order = order;
@@ -299,8 +336,8 @@ public class AlgoExecutionEngine {
 
             // Force sync position before checking
             if (exchangeAdapter != null) {
-                // Sync to get fresh position data
-                exchangeAdapter.syncPositionsFromExchange();
+                // Sync to get fresh position data (silent since sendLiveOrder will also sync)
+                exchangeAdapter.syncPositionsFromExchange(true);
                 double currentPos = exchangeAdapter.getCurrentPosition();
                 TradeDirection desiredDir = order.getSide();
 
@@ -309,6 +346,9 @@ public class AlgoExecutionEngine {
                     (currentPos < 0 && desiredDir == TradeDirection.SHORT)) {
                     System.out.printf("[AlgoExecution] Stopping %s: already have position %.4f in same direction%n",
                         order.getStrategy(), currentPos);
+                    if (completionNotified.compareAndSet(false, true)) {
+                        notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.POSITION_MATCHED);
+                    }
                     stop();
                     return;
                 }
@@ -332,7 +372,23 @@ public class AlgoExecutionEngine {
                 );
 
                 if (exchangeAdapter != null) {
-                    exchangeAdapter.sendOrder(sliceOrder);
+                    ExecutionReport report = exchangeAdapter.sendOrder(sliceOrder);
+                    if (report != null && report.getStatus() == OrderStatus.REJECTED) {
+                        consecutiveFailures++;
+                        String reason = report.getAvgFillPrice() > 0 ? "rejected" : "margin insufficient";
+                        System.out.printf("[AlgoExecution] Slice %s failed (%s), failures=%d/%d%n",
+                            slice.orderId, reason, consecutiveFailures, MAX_CONSECUTIVE_FAILURES);
+                        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+                            System.out.printf("[AlgoExecution] Stopping TWAP: too many failures%n");
+                            if (completionNotified.compareAndSet(false, true)) {
+                                notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.FAILED);
+                            }
+                            stop();
+                            return;
+                        }
+                    } else if (report != null) {
+                        consecutiveFailures = 0;
+                    }
                 }
 
                 lastExecuteTime = System.currentTimeMillis();
@@ -352,6 +408,9 @@ public class AlgoExecutionEngine {
         }
 
         public void stop() {
+            if (completionNotified.compareAndSet(false, true)) {
+                notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.CANCELLED);
+            }
             running.set(false);
             activeAlgos.remove(order.getOrderId());
         }

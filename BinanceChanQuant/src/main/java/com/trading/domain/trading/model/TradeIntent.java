@@ -109,8 +109,8 @@ public enum TradeIntent {
      */
     public TradeDirection getCloseDirection() {
         switch (this) {
-            case EXIT_LONG:  return TradeDirection.LONG;
-            case EXIT_SHORT: return TradeDirection.SHORT;
+            case EXIT_LONG:  return TradeDirection.SHORT;  // Sell to close LONG
+            case EXIT_SHORT: return TradeDirection.LONG;  // Buy to close SHORT
             default: return TradeDirection.NEUTRAL;
         }
     }

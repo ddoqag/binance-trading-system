@@ -52,7 +52,10 @@ public class ChanWebSocketLauncher {
     private static final int MAX_KLINES = 120;
 
     // Connection settings
-    private static final int RECONNECT_DELAY_MS = 5000;
+    private static final int INITIAL_RECONNECT_DELAY_MS = 1000;
+    private static final int MAX_RECONNECT_DELAY_MS = 30000;
+    private static final int RECONNECT_DELAY_MULTIPLIER = 2;
+    private int currentReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
     private static final int MAX_RECONNECT_ATTEMPTS = 10;
     private static final int HEARTBEAT_INTERVAL_MS = 30000; // 30 seconds
 
@@ -86,11 +89,17 @@ public class ChanWebSocketLauncher {
     // Connection state
     private volatile boolean wsConnectionAlive = false;
     private long lastMessageTime = 0;
-    private long lastKlineTime = 0;
+    private long lastKlineTime = System.currentTimeMillis(); // Initialize to now - don't trigger immediate REST fallback
     private static final long MESSAGE_TIMEOUT_MS = 60000; // 60 seconds without message = likely disconnected
     private int reconnectAttempts = 0;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private ScheduledFuture<?> heartbeatTask;
+
+    // Diagnostic fields for connection health
+    private long lastSuccessfulConnectionTime = 0;
+    private static final long KLINE_GAP_THRESHOLD_MS = 30000; // 30s gap = concerning
+    private int messagesLastMinute = 0;
+    private long messagesCheckTime = System.currentTimeMillis();
 
     // AlphaPool and experts
     private AlphaPool alphaPool;
@@ -113,8 +122,120 @@ public class ChanWebSocketLauncher {
     }
 
     public static void main(String[] args) {
+        // Single instance check - prevent multiple running instances
+        String lockFile = System.getProperty("user.home") + "/.trading_launcher.lock";
+        java.io.File lock = new java.io.File(lockFile);
+
+        // First, aggressively clean up any stale processes
+        cleanupStaleProcesses(lockFile);
+
+        // Write our PID
+        try {
+            lock.createNewFile();
+            java.nio.file.Files.write(lock.toPath(), String.valueOf(ProcessHandle.current().pid()).getBytes());
+            lock.deleteOnExit(); // Auto-cleanup on exit
+        } catch (Exception e) {
+            System.err.println("Warning: Could not create lock file: " + e.getMessage());
+        }
+
         ChanWebSocketLauncher launcher = new ChanWebSocketLauncher();
         launcher.start();
+    }
+
+    /**
+     * Aggressively clean up any stale or stray Java processes running the trading system
+     */
+    private static void cleanupStaleProcesses(String lockFile) {
+        // 1. Check lock file first
+        java.io.File lock = new java.io.File(lockFile);
+        if (lock.exists()) {
+            try {
+                String pidStr = new String(java.nio.file.Files.readAllBytes(lock.toPath())).trim();
+                long pid = Long.parseLong(pidStr);
+                try {
+                    ProcessHandle.of(pid).ifPresent(h -> {
+                        if (h.isAlive()) {
+                            System.out.println("[SingletonCheck] Found running process from lock file: PID " + pid);
+                            System.out.println("[SingletonCheck] Destroying stale process...");
+                            h.destroy();
+                            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                            if (h.isAlive()) h.destroyForcibly();
+                        }
+                    });
+                } catch (Exception e) {
+                    // Process doesn't exist
+                }
+                lock.delete();
+                System.out.println("[SingletonCheck] Removed stale lock file");
+            } catch (Exception e) {
+                System.out.println("[SingletonCheck] Could not process lock file: " + e.getMessage());
+            }
+        }
+
+        // 2. Scan for stray Java processes using tasklist (more reliable on Windows)
+        System.out.println("[SingletonCheck] Scanning for stray Java processes...");
+        final int[] killedCount = {0};
+        try {
+            // Use tasklist to find Java processes - more reliable than ProcessHandle on Windows
+            ProcessBuilder pb = new ProcessBuilder("tasklist", "/FI", "IMAGENAME eq java.exe", "/FO", "CSV", "/NH");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(p.getInputStream()));
+            String line;
+            long currentPid = ProcessHandle.current().pid();
+            while ((line = reader.readLine()) != null) {
+                try {
+                    // Parse CSV line: "java.exe","12345","Console","4"
+                    String[] parts = line.split(",");
+                    if (parts.length >= 2) {
+                        String pidStr = parts[1].replace("\"", "").trim();
+                        long pid = Long.parseLong(pidStr);
+                        if (pid != currentPid) {
+                            System.out.println("[SingletonCheck] Found stray Java process: PID " + pid);
+                            System.out.println("[SingletonCheck] Killing PID " + pid + "...");
+                            ProcessHandle.of(pid).ifPresent(h -> {
+                                h.destroy();
+                                try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+                                if (h.isAlive()) h.destroyForcibly();
+                            });
+                            killedCount[0]++;
+                        }
+                    }
+                } catch (Exception e) {
+                    // Skip malformed lines
+                }
+            }
+            reader.close();
+        } catch (Exception e) {
+            System.out.println("[SingletonCheck] tasklist scan error: " + e.getMessage());
+            // Fallback to ProcessHandle scan
+            try {
+                ProcessHandle.allProcesses().forEach(ph -> {
+                    try {
+                        if (ph.isAlive() && ph.pid() != ProcessHandle.current().pid()) {
+                            String name = ph.info().command().orElse("");
+                            if (name.toLowerCase().contains("java")) {
+                                System.out.println("[SingletonCheck] Found stray Java: PID " + ph.pid());
+                                ph.destroy();
+                                try { Thread.sleep(300); } catch (InterruptedException ignored) {}
+                                if (ph.isAlive()) ph.destroyForcibly();
+                                killedCount[0]++;
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                });
+            } catch (Exception fallbackError) {
+                System.out.println("[SingletonCheck] Fallback scan also failed: " + fallbackError.getMessage());
+            }
+        }
+
+        if (killedCount[0] > 0) {
+            System.out.println("[SingletonCheck] Killed " + killedCount[0] + " stray process(es)");
+            try { Thread.sleep(1000); } catch (InterruptedException ignored) {} // Wait for OS
+        } else {
+            System.out.println("[SingletonCheck] No stray processes found");
+        }
     }
 
     public void start() {
@@ -191,6 +312,29 @@ public class ChanWebSocketLauncher {
         executionEngine = new ExecutionEngine(riskChecker, testnet, apiKey, apiSecret);
         executionEngine.start();
         System.out.println("[Launcher] ExecutionEngine initialized (paper=" + testnet + ")");
+
+        // Set position change callback to attach RiskModel when position opens
+        var exchangeAdapter = executionEngine.getExchangeAdapter();
+        if (exchangeAdapter != null) {
+            exchangeAdapter.setPositionChangeCallback(event -> {
+                if (event.wasOpened && lastMarketContext != null) {
+                    // Position opened - create PositionState with RiskModel
+                    double qty = Math.abs(event.newPosition);
+                    double price = lastMarketContext.getCurrentPrice();
+                    String orderId = "entry-" + System.currentTimeMillis();
+                    double equity = 10.0; // Approximate equity
+                    PositionState posWithRisk = positionSignalManager.createPositionFromEntry(
+                        event.newPosition, price, orderId, equity, lastMarketContext);
+                    positionSignalManager.updatePosition(posWithRisk);
+                    System.out.printf("[Launcher] Position opened with RiskModel: qty=%.4f price=%.2f%n", qty, price);
+                } else if (event.wasClosed) {
+                    // Position closed - reset to empty
+                    positionSignalManager.updatePosition(PositionState.empty());
+                    System.out.println("[Launcher] Position closed, RiskModel cleared");
+                }
+            });
+            System.out.println("[Launcher] Position change callback registered");
+        }
 
         // Initialize REST client for kline polling fallback
         restClient = new UMFuturesClientImpl(apiKey, apiSecret, testnet);
@@ -319,13 +463,12 @@ public class ChanWebSocketLauncher {
         System.out.println("[Launcher] Connecting to Binance WebSocket...");
 
         try {
-            // Clear proxy settings for WebSocket - direct connection
-            // The proxy works for REST API but breaks WebSocket SSL
-            System.clearProperty("https.proxyHost");
-            System.clearProperty("https.proxyPort");
-            System.clearProperty("http.proxyHost");
-            System.clearProperty("http.proxyPort");
-            System.out.println("[Launcher] WebSocket connecting directly (no proxy for WS)");
+            // Set proxy for WebSocket connections - use same proxy as HFT
+            System.setProperty("https.proxyHost", "192.168.16.1");
+            System.setProperty("https.proxyPort", "7897");
+            System.setProperty("http.proxyHost", "192.168.16.1");
+            System.setProperty("http.proxyPort", "7897");
+            System.out.println("[Launcher] WebSocket proxy set: 192.168.16.1:7897");
 
             wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com");
 
@@ -343,10 +486,13 @@ public class ChanWebSocketLauncher {
             System.out.println("[Launcher] WebSocket connected for " + SYMBOL);
             wsConnectionAlive = true;
             lastMessageTime = System.currentTimeMillis();
+            lastSuccessfulConnectionTime = System.currentTimeMillis();
 
             // Start heartbeat
             startHeartbeat();
 
+            // Reset exponential backoff on successful connection
+            currentReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
             reconnectAttempts = 0;
 
         } catch (Exception e) {
@@ -377,17 +523,20 @@ public class ChanWebSocketLauncher {
 
     private void subscribeKlineStream(String symbolLower) {
         try {
-            String streamName = symbolLower + "@kline_1m";
-            System.out.println("[Launcher] Subscribing to " + streamName + "...");
-            wsClient.klineStream(symbolLower, "1m", msg -> {
-                System.err.println("[KLINE] CB len=" + (msg == null ? "null" : msg.length()));
-                try {
-                    handleKlineMessage(msg);
-                } catch (Exception e) {
-                    System.err.println("[Kline] Parse error: " + e.getMessage());
+            // Use 3-param klineStream which internally uses noop callbacks
+            wsClient.klineStream(symbolLower, "1m", new com.binance.connector.futures.client.utils.WebSocketCallback() {
+                @Override
+                public void onReceive(String msg) {
+                    if (msg == null || msg.isEmpty()) {
+                        return;
+                    }
+                    try {
+                        handleKlineMessage(msg);
+                    } catch (Exception e) {
+                        System.err.println("[Kline] Parse error: " + e.getMessage());
+                    }
                 }
             });
-            System.out.println("[Launcher] Subscribed to kline stream: " + streamName);
         } catch (Exception e) {
             System.err.println("[Launcher] Kline subscription failed: " + e.getMessage());
             e.printStackTrace();
@@ -396,11 +545,14 @@ public class ChanWebSocketLauncher {
 
     private void subscribeDepthStream(String symbolLower) {
         try {
-            wsClient.diffDepthStream(symbolLower, 100, msg -> {
-                try {
-                    handleDepthMessage(msg);
-                } catch (Exception e) {
-                    System.err.println("[Depth] Error: " + e.getMessage());
+            wsClient.diffDepthStream(symbolLower, 100, new com.binance.connector.futures.client.utils.WebSocketCallback() {
+                @Override
+                public void onReceive(String msg) {
+                    try {
+                        handleDepthMessage(msg);
+                    } catch (Exception e) {
+                        System.err.println("[Depth] Error: " + e.getMessage());
+                    }
                 }
             });
         } catch (Exception e) {
@@ -410,11 +562,14 @@ public class ChanWebSocketLauncher {
 
     private void subscribeTradeStream(String symbolLower) {
         try {
-            wsClient.aggTradeStream(symbolLower, msg -> {
-                try {
-                    handleTradeMessage(msg);
-                } catch (Exception e) {
-                    System.err.println("[Trade] Error: " + e.getMessage());
+            wsClient.aggTradeStream(symbolLower, new com.binance.connector.futures.client.utils.WebSocketCallback() {
+                @Override
+                public void onReceive(String msg) {
+                    try {
+                        handleTradeMessage(msg);
+                    } catch (Exception e) {
+                        System.err.println("[Trade] Error: " + e.getMessage());
+                    }
                 }
             });
         } catch (Exception e) {
@@ -425,6 +580,7 @@ public class ChanWebSocketLauncher {
     private void handleKlineMessage(String msg) throws Exception {
         messageCount.incrementAndGet();
         lastMessageTime = System.currentTimeMillis();
+        messagesLastMinute++;
 
         JsonNode json = mapper.readTree(msg);
         JsonNode kline = json.get("k");
@@ -439,6 +595,24 @@ public class ChanWebSocketLauncher {
 
         lastPrice = close;
 
+        // Diagnostic: check for kline gaps
+        long now = System.currentTimeMillis();
+        if (lastKlineTime > 0) {
+            long gap = now - lastKlineTime;
+            if (gap > KLINE_GAP_THRESHOLD_MS) {
+                System.out.printf("[WebSocket] Kline gap detected: %ds since last kline%n", gap/1000);
+            }
+        }
+        lastKlineTime = now;
+
+        // Diagnostic: report messages per minute
+        if (now - messagesCheckTime > 60000) {
+            System.out.printf("[WebSocket] Health: msg/min=%d, reconnects=%d%n",
+                messagesLastMinute, reconnectCount.get());
+            messagesLastMinute = 0;
+            messagesCheckTime = now;
+        }
+
         // Create KLine and process through Chan
         ChanKLineProcessor.KLine k = new ChanKLineProcessor.KLine(
             timestamp, open, high, low, close, volume
@@ -451,9 +625,6 @@ public class ChanWebSocketLauncher {
             System.err.printf("[WS-KLINE] Kline #%d: O=%.2f H=%.2f L=%.2f C=%.2f V=%.2f%n",
                 kc, open, high, low, close, volume);
         }
-
-        // Update last kline time
-        lastKlineTime = System.currentTimeMillis();
 
         // Process through Chan strategy
         MarketData marketData = createMarketData(close);
@@ -478,7 +649,7 @@ public class ChanWebSocketLauncher {
 
             // Generate composite signal
             CompositeAlphaSignal signal = alphaPool.generateCompositeSignal(context);
-            if (signal != null && signal.getConfidence() > 0.55) {
+            if (signal != null && signal.getConfidence() > 0.35) {
                 processCompositeSignal(signal);
             }
 
@@ -521,6 +692,7 @@ public class ChanWebSocketLauncher {
 
     private MarketData createMarketData(double price) {
         MarketData data = new MarketData();
+        data.setSymbol(SYMBOL);
         data.setLastPrice(price);
         data.setBidPrice(bidPrice > 0 ? bidPrice : price - 5);
         data.setAskPrice(askPrice > 0 ? askPrice : price + 5);
@@ -570,7 +742,9 @@ public class ChanWebSocketLauncher {
     private double calculateATR() {
         // Calculate ATR from recent K-lines in chanProcessor
         List<ChanKLineProcessor.KLine> recentKlines = chanProcessor.getCurrentContext().recentKlines;
-        if (recentKlines == null || recentKlines.size() < 14) {
+        int klineCount = (recentKlines != null) ? recentKlines.size() : 0;
+
+        if (klineCount < 14) {
             return lastPrice * 0.02; // Default 2% ATR
         }
 
@@ -580,7 +754,7 @@ public class ChanWebSocketLauncher {
             ChanKLineProcessor.KLine k = recentKlines.get(i);
             sum += (k.high - k.low);
         }
-        return sum / Math.min(14, recentKlines.size());
+        return sum / 14;
     }
 
     /**
@@ -655,7 +829,7 @@ public class ChanWebSocketLauncher {
                 }
 
                 CompositeAlphaSignal signal = alphaPool.generateCompositeSignal(context);
-                if (signal != null && signal.getConfidence() > 0.55) {
+                if (signal != null && signal.getConfidence() > 0.35) {
                     processCompositeSignal(signal);
                 }
 
@@ -685,9 +859,8 @@ public class ChanWebSocketLauncher {
             return;
         }
 
-        // Calculate quantity based on risk - smaller position for low balance
-        double quantity = Math.min(0.0005, riskChecker.getDynamicPositionLimit() * 0.05);
-        if (quantity < 0.0001) quantity = 0.0001;
+        // Dynamic quantity based on ATR, confidence, and urgency
+        double quantity = calculateDynamicQuantity(signal, lastMarketContext);
 
         Order order = new Order(
             "ws-" + System.currentTimeMillis(),
@@ -706,6 +879,40 @@ public class ChanWebSocketLauncher {
             System.out.printf("[Launcher] ORDER: %s conf=%.2f score=%.2f %s %.4f @ %.2f%n",
                 signal.getType(), confidence, score, signal.getDirection(), quantity, price);
         }
+    }
+
+    /**
+     * Dynamic position sizing based on ATR, confidence, and volatility
+     * High volatility → smaller position
+     * High confidence → larger position
+     * High urgency → larger position
+     */
+    private double calculateDynamicQuantity(CompositeAlphaSignal signal, MarketContext context) {
+        double baseQty = 0.001;  // Base: 0.001 BTC
+
+        // Confidence factor: 0.55-0.90 → 0.7-1.3
+        double confidenceFactor = 0.7 + (signal.getConfidence() - 0.55) * (0.6 / 0.35);
+
+        // ATR/volatility factor: high volatility → smaller position
+        double atrPercent = (context != null) ? context.getAtrPercent() : 0.02;
+        double atrFactor = Math.max(0.5, Math.min(1.5, 0.02 / atrPercent));
+
+        // Urgency factor: 1.0-1.5
+        double urgencyFactor = 1.0 + signal.getUrgency() * 0.5;
+
+        double qty = baseQty * confidenceFactor * atrFactor * urgencyFactor;
+
+        // Risk check: don't exceed risk-based limit
+        double maxQty = riskChecker.getDynamicPositionLimit() * 0.1;  // 10% of limit
+        double equityLimit = 0.002;  // Max 0.002 BTC (~2% of $80 equity at $40k)
+
+        qty = Math.max(0.0001, Math.min(Math.min(qty, maxQty), equityLimit));
+
+        if (lastMarketContext != null && lastMarketContext.getAtr() > 0) {
+            System.out.printf("[Launcher] QTY: conf=%.2f atrFactor=%.2f urgency=%.2f → qty=%.4f%n",
+                signal.getConfidence(), atrFactor, signal.getUrgency(), qty);
+        }
+        return qty;
     }
 
     /**
@@ -806,19 +1013,30 @@ public class ChanWebSocketLauncher {
         // Track last kline timestamp to avoid duplicate processing
         final long[] lastKlineTimestamp = {0};
 
-        // Start REST polling for K-lines (Binance kline stream is unreliable - callbacks don't fire)
-        // Poll every 5 seconds - duplicate timestamps are filtered by lastKlineTimestamp
+        // REST polling as FALLBACK only - when WebSocket hasn't received data for >20s
+        // REST polling as backup when kline stream is inactive
         scheduler.scheduleAtFixedRate(() -> {
             if (!running.get()) return;
 
             try {
+                // Always poll REST as backup - don't rely on lastKlineTime
+                // This ensures we get kline data even if WebSocket callback is silent
                 if (restClient != null) {
+                    long timeSinceKline = lastKlineTime > 0
+                        ? System.currentTimeMillis() - lastKlineTime
+                        : Long.MAX_VALUE;
+
+                    // Log WebSocket health every 60s
+                    if (timeSinceKline > 30_000) {
+                        System.out.printf("[Launcher] WebSocket kline silent for %ds, REST backup active%n",
+                            timeSinceKline / 1000);
+                    }
                     pollLatestKlineRest(lastKlineTimestamp);
                 }
             } catch (Exception e) {
                 // Silent - polling failure is expected
             }
-        }, 5, 5, TimeUnit.SECONDS);
+        }, 10, 10, TimeUnit.SECONDS);
 
         while (running.get()) {
             try {
@@ -834,10 +1052,18 @@ public class ChanWebSocketLauncher {
                     waitSeconds++;
 
                     // Check if connection is still alive (receiving messages)
-                    if (lastMessageTime > 0 && System.currentTimeMillis() - lastMessageTime > MESSAGE_TIMEOUT_MS) {
-                        System.out.println("[Launcher] No messages for " + (MESSAGE_TIMEOUT_MS/1000) + "s, connection may be dead");
-                        wsConnectionAlive = false;
-                        break;
+                    if (lastMessageTime > 0) {
+                        long silentTime = System.currentTimeMillis() - lastMessageTime;
+                        // Early warning at 30s
+                        if (silentTime > 30000 && silentTime < MESSAGE_TIMEOUT_MS) {
+                            System.out.printf("[WebSocket] Warning: silent for %ds, checking connection...%n", silentTime/1000);
+                        }
+                        // Full timeout triggers reconnect
+                        if (silentTime > MESSAGE_TIMEOUT_MS) {
+                            System.out.println("[Launcher] No messages for " + (MESSAGE_TIMEOUT_MS/1000) + "s, connection may be dead");
+                            wsConnectionAlive = false;
+                            break;
+                        }
                     }
                 }
 
@@ -861,7 +1087,9 @@ public class ChanWebSocketLauncher {
     private void handleDisconnect() {
         wsConnectionAlive = false;
         long count = reconnectCount.incrementAndGet();
-        System.out.println("\n[Reconnect] Attempt " + count + " after WebSocket disconnect");
+        reconnectAttempts++;
+        System.out.printf("[Reconnect] Attempt %d/%d after WebSocket disconnect, delay=%dms%n",
+            count, MAX_RECONNECT_ATTEMPTS, currentReconnectDelay);
 
         // Close existing connection
         if (wsClient != null) {
@@ -885,9 +1113,11 @@ public class ChanWebSocketLauncher {
             return;
         }
 
-        // Wait before reconnecting
+        // Wait before reconnecting with exponential backoff
         try {
-            Thread.sleep(RECONNECT_DELAY_MS);
+            Thread.sleep(currentReconnectDelay);
+            // Exponential backoff: double delay for next attempt, capped at MAX
+            currentReconnectDelay = Math.min(currentReconnectDelay * RECONNECT_DELAY_MULTIPLIER, MAX_RECONNECT_DELAY_MS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }

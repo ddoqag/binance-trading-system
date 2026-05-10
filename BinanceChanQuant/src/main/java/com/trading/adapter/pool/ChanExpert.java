@@ -40,11 +40,13 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
     @Override
     public AlphaSignal generate(MarketContext context) {
         if (!active || context == null) {
+            System.out.println("[ChanExpert] generate: inactive or null context");
             return null;
         }
 
         MarketData data = context.getMarketData();
         if (data == null) {
+            System.out.println("[ChanExpert] generate: null market data");
             return null;
         }
 
@@ -54,6 +56,7 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
             // Process through Chan bridge
             Optional<ChanSignalResult> optResult = bridge.generateSignal(data, regime);
             if (optResult.isEmpty()) {
+                System.out.println("[ChanExpert] generate: bridge returned empty");
                 return null;
             }
 
@@ -63,6 +66,8 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
             KlineContext klineCtx = processor.getCurrentContext();
             ValidationResult validation = validator.validate(klineCtx, regime, result.confidence);
             if (!validation.isValid) {
+                System.out.printf("[ChanExpert] generate: validation failed: %s (%s)%n",
+                    validation.code, validation.reason);
                 return null;
             }
 
@@ -71,6 +76,7 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
 
         } catch (Exception e) {
             System.err.println("[ChanExpert] Signal generation failed: " + e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }

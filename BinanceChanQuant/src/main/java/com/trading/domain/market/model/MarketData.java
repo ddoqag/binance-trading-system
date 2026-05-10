@@ -4,6 +4,7 @@ package com.trading.domain.market.model;
  * Market Data snapshot
  */
 public class MarketData {
+    private String symbol;
     private double bidPrice;
     private double askPrice;
     private double bidSize;
@@ -36,6 +37,9 @@ public class MarketData {
 
     public long getTimestamp() { return timestamp; }
     public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
+
+    public String getSymbol() { return symbol; }
+    public void setSymbol(String symbol) { this.symbol = symbol; }
 
     public double getSpread() {
         return askPrice - bidPrice;

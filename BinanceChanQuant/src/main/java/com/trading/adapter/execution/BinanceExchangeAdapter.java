@@ -24,9 +24,20 @@ import java.util.concurrent.atomic.AtomicLong;
  * Bridges the Clean Architecture trading system to Binance Futures API.
  * Supports both paper trading (simulated fills) and live trading.
  *
- * Reuses patterns from HFT OrderExecutor for API integration.
+ * Reusable patterns from HFT OrderExecutor for API integration.
  */
 public class BinanceExchangeAdapter {
+
+    /**
+     * Position mode for Binance Futures account
+     * One-Way: Only one direction at a time (net position)
+     * Hedge: Can hold both LONG and SHORT simultaneously
+     */
+    public enum PositionMode {
+        ONE_WAY,   // Single position, no positionSide needed
+        HEDGE,     // Dual position, positionSide required
+        UNKNOWN    // Not yet detected
+    }
 
     private final String symbol;
     private final boolean paperTrading;
@@ -38,14 +49,28 @@ public class BinanceExchangeAdapter {
     private volatile double avgEntryPrice = 0.0;
     private volatile double unrealizedPnl = 0.0;
     private volatile double realizedPnl = 0.0;
+    private final AtomicLong lastSyncTime = new AtomicLong(0);
     private volatile double totalRealizedPnl = 0.0;
 
     // Balance tracking
     private volatile double walletBalance = 0.0;
     private volatile double availableBalance = 0.0;
 
+    // Balance cache to reduce API calls
+    private volatile long lastBalanceSyncTime = 0;
+    private static final long BALANCE_CACHE_TTL_MS = 30_000; // 30 seconds
+
+    // Account position mode - detected on startup
+    private volatile PositionMode positionMode = PositionMode.UNKNOWN;
+
     // Order update callback for ProductionExchangeAdapter
     private java.util.function.Consumer<OrderUpdate> orderUpdateCallback;
+
+    // Position change callback - triggered when position crosses zero
+    private java.util.function.Consumer<PositionChangeEvent> positionChangeCallback;
+
+    // Track last known position for change detection
+    private double lastReportedPosition = 0.0;
 
     // Statistics
     private final AtomicLong totalOrders = new AtomicLong(0);
@@ -57,11 +82,13 @@ public class BinanceExchangeAdapter {
 
         if (paperTrading) {
             this.client = null;
+            this.positionMode = PositionMode.ONE_WAY; // Paper mode behaves as one-way
             System.out.println("[BinanceAdapter] Paper trading mode");
         } else {
             this.client = new UMFuturesClientImpl(apiKey, apiSecret, ConfigUtil.isTestNet());
             setProxy();
-            System.out.println("[BinanceAdapter] Live trading mode (testnet=" + ConfigUtil.isTestNet() + ")");
+            fetchPositionMode(); // Detect account position mode on startup
+            System.out.println("[BinanceAdapter] Live trading mode (testnet=" + ConfigUtil.isTestNet() + ", positionMode=" + positionMode + ")");
         }
     }
 
@@ -78,6 +105,45 @@ public class BinanceExchangeAdapter {
         } catch (Exception e) {
             System.out.println("[BinanceAdapter] Proxy not configured: " + e.getMessage());
         }
+    }
+
+    /**
+     * Fetch and cache the account position mode (One-Way vs Hedge)
+     * Binance API: GET /fapi/v1/positionSide/dual
+     */
+    private void fetchPositionMode() {
+        try {
+            // Use accountInformation to detect mode - if "positionSide" appears in any position, it's hedge mode
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            Object resp = client.account().accountInformation(params);
+            String respStr = resp instanceof String ? (String) resp : resp.toString();
+
+            JsonNode node = objectMapper.readTree(respStr);
+
+            // Check if any position has positionSide field (indicates hedge mode)
+            boolean hasPositionSide = false;
+            if (node.has("positions")) {
+                for (JsonNode pos : node.get("positions")) {
+                    if (pos.has("positionSide")) {
+                        hasPositionSide = true;
+                        break;
+                    }
+                }
+            }
+
+            this.positionMode = hasPositionSide ? PositionMode.HEDGE : PositionMode.ONE_WAY;
+            System.out.println("[BinanceAdapter] Position mode detected: " + positionMode);
+        } catch (Exception e) {
+            System.err.println("[BinanceAdapter] Failed to detect position mode: " + e.getMessage());
+            this.positionMode = PositionMode.ONE_WAY; // Default to One-Way for safety
+        }
+    }
+
+    /**
+     * Get current position mode
+     */
+    public PositionMode getPositionMode() {
+        return positionMode;
     }
 
     /**
@@ -247,8 +313,8 @@ public class BinanceExchangeAdapter {
 
     private ExecutionReport sendLiveOrder(Order order) {
         try {
-            // Sync position from exchange before sending order
-            syncPositionsFromExchange();
+            // Sync position from exchange before sending order (silent since executeSlice already synced)
+            syncPositionsFromExchange(true);
 
             // Log account balance to diagnose margin issues
             logAccountBalance();
@@ -257,52 +323,67 @@ public class BinanceExchangeAdapter {
             params.put("symbol", order.getSymbol());
             params.put("side", order.getSide() == TradeDirection.LONG ? "BUY" : "SELL");
 
-            // Account is in hedge mode (dual-side) - positionSide is required
-            // Get current position to determine correct positionSide
-            double currentPos = this.currentPosition; // Local cache of position
-            String positionSide = null;
+            // Get current position to determine correct order parameters
+            double currentPos = this.currentPosition;
+            String positionSide = null; // Declare at method level for use in HEDGE mode
             boolean isCloseOrder = false;
             double orderQty = order.getQuantity();
 
-            // Check if this order would exceed available position in same direction
-            boolean sameDirectionAsPosition = (currentPos > 0 && order.getSide() == TradeDirection.SHORT) ||
-                                              (currentPos < 0 && order.getSide() == TradeDirection.LONG);
-
-            if (order.getSide() == TradeDirection.LONG) {
+            // Apply positionSide and reduceOnly based on DETECTED account mode
+            if (positionMode == PositionMode.ONE_WAY) {
+                // ONE-WAY MODE: Don't send positionSide at all
+                // Determine if this is a close order based on position direction
+                if (currentPos > 0 && order.getSide() == TradeDirection.SHORT) {
+                    // Closing LONG position
+                    isCloseOrder = true;
+                    orderQty = Math.min(orderQty, Math.abs(currentPos));
+                } else if (currentPos < 0 && order.getSide() == TradeDirection.LONG) {
+                    // Closing SHORT position
+                    isCloseOrder = true;
+                    orderQty = Math.min(orderQty, Math.abs(currentPos));
+                }
+                // For ONE-WAY: reduceOnly if closing, no positionSide
+                if (isCloseOrder) {
+                    params.put("reduceOnly", true);
+                }
+            } else {
+                // HEDGE MODE: positionSide is required for non-close orders
                 if (currentPos < 0) {
-                    // Has SHORT position, close it with BUY
-                    positionSide = "SHORT";
-                    isCloseOrder = true;
-                    // Quantity should not exceed the short position we're closing
-                    orderQty = Math.min(orderQty, Math.abs(currentPos));
-                } else {
-                    positionSide = "LONG"; // Opening or adding LONG
-                }
-            } else if (order.getSide() == TradeDirection.SHORT) {
-                if (currentPos > 0) {
-                    // Has LONG position, close it with SELL
-                    positionSide = "LONG";
-                    isCloseOrder = true;
-                    // Quantity should not exceed the long position we're closing
-                    orderQty = Math.min(orderQty, Math.abs(currentPos));
-                } else {
-                    // currentPos < 0 (already SHORT) - should not add to short in same direction
-                    // This would be adding to existing position which uses more margin
-                    if (currentPos < 0) {
-                        System.out.printf("[BinanceAdapter] Skipping SHORT order: already have SHORT position %.4f, would exceed margin%n", currentPos);
-                        return createRejectedReport(order, "Already have SHORT position, cannot add");
+                    // Have SHORT position
+                    if (order.getSide() == TradeDirection.LONG) {
+                        // Closing SHORT - set positionSide to SHORT
+                        positionSide = "SHORT";
+                        orderQty = Math.min(orderQty, Math.abs(currentPos));
+                        isCloseOrder = true;
+                    } else if (order.getSide() == TradeDirection.SHORT) {
+                        // Adding to SHORT - not allowed
+                        System.out.printf("[BinanceAdapter] Skipping SHORT order: already have SHORT position %.4f%n", currentPos);
+                        return createRejectedReport(order, "Already have SHORT position");
                     }
-                    positionSide = "SHORT"; // Opening new SHORT (currentPos == 0)
+                } else if (currentPos > 0) {
+                    // Have LONG position
+                    if (order.getSide() == TradeDirection.SHORT) {
+                        // Closing LONG - set positionSide to LONG
+                        positionSide = "LONG";
+                        orderQty = Math.min(orderQty, Math.abs(currentPos));
+                        isCloseOrder = true;
+                    } else if (order.getSide() == TradeDirection.LONG) {
+                        // Adding to LONG - not allowed
+                        System.out.printf("[BinanceAdapter] Skipping LONG order: already have LONG position %.4f%n", currentPos);
+                        return createRejectedReport(order, "Already have LONG position");
+                    }
+                } else {
+                    // No position - opening new
+                    if (order.getSide() == TradeDirection.LONG) {
+                        positionSide = "LONG";
+                    } else if (order.getSide() == TradeDirection.SHORT) {
+                        positionSide = "SHORT";
+                    }
                 }
-            } else if (order.getSide() == TradeDirection.CLOSE) {
-                // Closing position - use opposite of current position
-                positionSide = currentPos > 0 ? "SHORT" : "LONG";
-                isCloseOrder = true;
-                orderQty = Math.min(orderQty, Math.abs(currentPos));
-            }
 
-            if (positionSide != null) {
-                params.put("positionSide", positionSide);
+                if (positionSide != null) {
+                    params.put("positionSide", positionSide);
+                }
             }
 
             // Map our OrderType to Binance order type
@@ -315,10 +396,16 @@ public class BinanceExchangeAdapter {
                 order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP_LIMIT) {
                 params.put("price", formatPrice(order.getPrice()));
                 params.put("timeInForce", "GTC");
+            } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.IOC) {
+                params.put("price", formatPrice(order.getPrice()));
+                params.put("timeInForce", "IOC");
+            } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.FOK) {
+                params.put("price", formatPrice(order.getPrice()));
+                params.put("timeInForce", "FOK");
             }
 
-            // Add reduceOnly for close orders (when closing in One-Way Mode, not Hedge Mode)
-            // In Hedge Mode with positionSide, reduceOnly is NOT needed
+            // For close orders in hedge mode, positionSide already indicates close - don't add reduceOnly
+            // Adding reduceOnly with positionSide can cause -2022 error
             if (isCloseOrder && positionSide == null) {
                 params.put("reduceOnly", true);
             }
@@ -326,13 +413,16 @@ public class BinanceExchangeAdapter {
             // Add client order ID for idempotency
             params.put("newClientOrderId", order.getOrderId());
 
-            // Debug: log order parameters
-            System.out.printf("[BinanceAdapter] Sending order: symbol=%s, side=%s, type=%s, qty=%s, price=%s%n",
+            // Debug: log order parameters including positionMode
+            System.out.printf("[BinanceAdapter] Sending order: symbol=%s, side=%s, type=%s, qty=%s, price=%s, mode=%s, positionSide=%s, reduceOnly=%s%n",
                 order.getSymbol(),
                 order.getSide() == TradeDirection.LONG ? "BUY" : "SELL",
                 binanceType,
-                formatQuantity(order.getQuantity()),
-                formatPrice(order.getPrice()));
+                formatQuantity(orderQty),
+                formatPrice(order.getPrice()),
+                positionMode,
+                positionSide != null ? positionSide : "NONE",
+                isCloseOrder ? "true" : "false");
 
             Object resp = client.account().newOrder(params);
 
@@ -420,11 +510,12 @@ public class BinanceExchangeAdapter {
     }
 
     private String mapOrderType(com.trading.domain.trading.model.OrderType orderType) {
+        // For IOC/FOK orders, Binance uses LIMIT with timeInForce parameter
+        // type parameter only supports: MARKET, LIMIT, STOP, STOP_MARKET
         if (orderType == com.trading.domain.trading.model.OrderType.MARKET) return "MARKET";
         if (orderType == com.trading.domain.trading.model.OrderType.STOP) return "STOP";
         if (orderType == com.trading.domain.trading.model.OrderType.STOP_LIMIT) return "STOP";
-        if (orderType == com.trading.domain.trading.model.OrderType.IOC) return "IOC";
-        if (orderType == com.trading.domain.trading.model.OrderType.FOK) return "FOK";
+        // For IOC and FOK, we use LIMIT type with timeInForce parameter
         return "LIMIT";
     }
 
@@ -490,9 +581,29 @@ public class BinanceExchangeAdapter {
 
     /**
      * Sync positions from Binance exchange
+     * @param silent if true, suppresses routine position-zero logs
      */
-    public void syncPositionsFromExchange() {
+    public void syncPositionsFromExchange(boolean silent) {
         if (paperTrading || client == null) return;
+
+        long now = System.currentTimeMillis();
+        long elapsed = now - lastSyncTime.get();
+        // Throttle: skip if called within 500ms and silent mode
+        if (silent && elapsed < 500) {
+            // System.out.printf("[BinanceAdapter] Sync throttled (silent=%s, elapsed=%dms)%n", silent, elapsed);
+            return;
+        }
+
+        // P1-4 FIX: Balance cache - skip account API call if within TTL
+        // Only call account API every 30s to reduce API usage (from ~20/min to ~2/min)
+        long balanceElapsed = now - lastBalanceSyncTime;
+        if (balanceElapsed < BALANCE_CACHE_TTL_MS) {
+            // Use cached data, don't call API
+            return;
+        }
+
+        lastSyncTime.set(now);
+        lastBalanceSyncTime = now;
 
         try {
             // Use empty params to get full account info
@@ -502,7 +613,15 @@ public class BinanceExchangeAdapter {
             String respStr = resp instanceof String ? (String) resp : resp.toString();
             JsonNode node = objectMapper.readTree(respStr);
 
+            // Balance cache: only update balance fields every 30s
+            // (already done above with lastBalanceSyncTime = now)
+
             boolean positionFound = false;
+            boolean alreadyLoggedClosed = false; // Prevent duplicate logs for LONG/SHORT entries
+            double totalPosAmt = 0;
+            double totalUnrealizedPnl = 0;
+            double weightedEntryPrice = 0;
+            boolean hasPosition = false;
             if (node.has("positions")) {
                 for (JsonNode pos : node.get("positions")) {
                     String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
@@ -513,16 +632,51 @@ public class BinanceExchangeAdapter {
                     double entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
                     double unrealizedPnL = pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
 
-                    // Always update position (including zero) to ensure cache consistency
-                    this.currentPosition = posAmt;
-                    this.avgEntryPrice = entryPrice;
-                    this.unrealizedPnl = unrealizedPnL;
+                    // Accumulate positions (Binance returns LONG and SHORT as separate entries)
+                    totalPosAmt += posAmt;
+                    totalUnrealizedPnl += unrealizedPnL;
                     if (Math.abs(posAmt) > 0.0001) {
-                        System.out.printf("[BinanceAdapter] Position synced: pos=%.4f, entry=%.2f, unrealizedPnl=%.2f%n",
-                            currentPosition, avgEntryPrice, unrealizedPnl);
-                    } else {
-                        System.out.printf("[BinanceAdapter] Position closed: pos=%.4f%n", currentPosition);
+                        hasPosition = true;
+                        if (Math.abs(weightedEntryPrice) < 0.0001) {
+                            weightedEntryPrice = entryPrice;
+                        } else if (posAmt > 0) {
+                            // Weighted average for long positions
+                            double totalLongQty = Math.abs(totalPosAmt) + Math.abs(posAmt);
+                            weightedEntryPrice = (weightedEntryPrice * Math.abs(totalPosAmt) + entryPrice * Math.abs(posAmt)) / totalLongQty;
+                        }
                     }
+                }
+
+                // Update fields once after accumulating all position entries
+                this.currentPosition = totalPosAmt;
+                this.avgEntryPrice = Math.abs(weightedEntryPrice) < 0.0001 ? 0 : weightedEntryPrice;
+                this.unrealizedPnl = totalUnrealizedPnl;
+
+                // Detect position change (crossing zero) and fire callback
+                if (Math.abs(lastReportedPosition) > 0.0001 && Math.abs(this.currentPosition) < 0.0001) {
+                    // Position was closed (crossed from non-zero to zero)
+                    System.out.printf("[BinanceAdapter] Position CLOSED: was %.4f, now 0%n", lastReportedPosition);
+                    if (positionChangeCallback != null) {
+                        TradeDirection closedDir = lastReportedPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
+                        positionChangeCallback.accept(new PositionChangeEvent(lastReportedPosition, 0, symbol));
+                        System.out.printf("[BinanceAdapter] PositionChange callback fired for %s%n", closedDir);
+                    }
+                } else if (Math.abs(lastReportedPosition) < 0.0001 && Math.abs(this.currentPosition) > 0.0001) {
+                    // Position was opened (crossed from zero to non-zero)
+                    System.out.printf("[BinanceAdapter] Position OPENED: was 0, now %.4f%n", this.currentPosition);
+                    if (positionChangeCallback != null) {
+                        TradeDirection openedDir = this.currentPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
+                        positionChangeCallback.accept(new PositionChangeEvent(0, this.currentPosition, symbol));
+                        System.out.printf("[BinanceAdapter] PositionChange callback fired for OPEN: %s%n", openedDir);
+                    }
+                }
+                lastReportedPosition = this.currentPosition;
+
+                if (hasPosition) {
+                    System.out.printf("[BinanceAdapter] Position synced: pos=%.4f, entry=%.2f, unrealizedPnl=%.2f%n",
+                        currentPosition, avgEntryPrice, unrealizedPnl);
+                } else if (!silent) {
+                    System.out.printf("[BinanceAdapter] Position closed: pos=%.4f%n", currentPosition);
                 }
             }
 
@@ -536,6 +690,13 @@ public class BinanceExchangeAdapter {
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Position sync failed: " + e.getMessage());
         }
+    }
+
+    /**
+     * Sync positions from Binance exchange (backward-compatible, verbose)
+     */
+    public void syncPositionsFromExchange() {
+        syncPositionsFromExchange(false);
     }
 
     private long parseOrderId(Object response) {
@@ -664,6 +825,13 @@ public class BinanceExchangeAdapter {
     }
 
     /**
+     * Set callback for position change events (position crossing zero)
+     */
+    public void setPositionChangeCallback(java.util.function.Consumer<PositionChangeEvent> callback) {
+        this.positionChangeCallback = callback;
+    }
+
+    /**
      * Trigger order update callback (called from WebSocket handler)
      */
     public void onOrderUpdate(String clientOrderId, String status, double filledQty, double avgFillPrice) {
@@ -687,6 +855,25 @@ public class BinanceExchangeAdapter {
             this.status = status;
             this.filledQty = filledQty;
             this.avgFillPrice = avgFillPrice;
+        }
+    }
+
+    /**
+     * Position change event - triggered when position crosses zero
+     */
+    public static class PositionChangeEvent {
+        public final double previousPosition;
+        public final double newPosition;
+        public final String symbol;
+        public final boolean wasClosed;  // true if position went to zero (closed)
+        public final boolean wasOpened;  // true if position opened from zero
+
+        public PositionChangeEvent(double previousPosition, double newPosition, String symbol) {
+            this.previousPosition = previousPosition;
+            this.newPosition = newPosition;
+            this.symbol = symbol;
+            this.wasClosed = Math.abs(previousPosition) > 0.0001 && Math.abs(newPosition) < 0.0001;
+            this.wasOpened = Math.abs(previousPosition) < 0.0001 && Math.abs(newPosition) > 0.0001;
         }
     }
 

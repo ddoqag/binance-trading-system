@@ -20,6 +20,7 @@ public class V4IntegrationTest {
 
         // 2. 模拟市场数据
         MarketData market = new MarketData();
+        market.setSymbol("BTCUSDT");
         market.setLastPrice(2000.0);
         market.setBidPrice(1999.0);
         market.setAskPrice(2001.0);
