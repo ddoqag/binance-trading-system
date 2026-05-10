@@ -121,7 +121,7 @@ public class PositionSignalManager {
             );
 
         } else if (intent.isExiting()) {
-            // Closing existing position
+            // Closing existing position - use MARKET for immediate execution
             TradeDirection closeDirection = intent.getCloseDirection();
             double qty = Math.abs(currentPosition.getQuantity());
 
@@ -129,11 +129,11 @@ public class PositionSignalManager {
                 orderId,
                 currentSymbol,
                 closeDirection,
-                OrderType.LIMIT,
+                OrderType.MARKET,  // Use MARKET for exits to avoid missed fills
                 qty,
-                price,
+                0,  // Market order doesn't need price
                 "POSITION_MANAGER",
-                1.0  // High urgency for exits
+                1.0  // Maximum urgency for exits
             );
         }
 

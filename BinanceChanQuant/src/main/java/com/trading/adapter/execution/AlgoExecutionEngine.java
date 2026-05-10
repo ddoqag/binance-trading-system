@@ -215,8 +215,8 @@ public class AlgoExecutionEngine {
             Slice slice = new Slice();
             slice.orderId = order.getOrderId() + "_twap_" + currentSlice;
             slice.quantity = sliceQuantity;
-            slice.orderType = OrderType.IOC;
-            slice.timeInForce = 300;
+            slice.orderType = OrderType.LIMIT;
+            slice.timeInForce = 300; // GTC-like behavior with timeInForce
 
             // Use order's original price as fallback when marketData is null
             double referencePrice = order.getPrice();
