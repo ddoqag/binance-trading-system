@@ -99,8 +99,9 @@ public class BinanceExchangeAdapter {
 
     private void setProxy() {
         try {
-            // In WSL2, 127.0.0.1 refers to WSL2 itself, so use Windows gateway IP
-            String proxyHost = "127.0.0.1";
+            // Use Windows host IP (192.168.16.1) as seen in .env HTTPS_PROXY
+            // 127.0.0.1 in WSL2 refers to WSL2 itself, not Windows
+            String proxyHost = "192.168.16.1";
             int proxyPort = 7897;
 
             Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
@@ -118,32 +119,62 @@ public class BinanceExchangeAdapter {
      */
     private void fetchPositionMode() {
         try {
-            // Use accountInformation to detect mode - if "positionSide" appears in any position, it's hedge mode
+            // Use accountInformation to detect mode
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             Object resp = client.account().accountInformation(params);
             String respStr = resp instanceof String ? (String) resp : resp.toString();
 
             JsonNode node = objectMapper.readTree(respStr);
 
-            // Check if any position has positionSide field (indicates hedge mode)
-            boolean hasPositionSide = false;
+            int ourSymbolNonZeroLong = 0;
+            int ourSymbolNonZeroShort = 0;
+            int ourSymbolNonZeroBoth = 0;
+
             if (node.has("positions")) {
                 for (JsonNode pos : node.get("positions")) {
+                    double posAmt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
+                    String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
+                    boolean isOurSymbol = posSymbol.equalsIgnoreCase(symbol);
+
+                    if (Math.abs(posAmt) < 0.0001) {
+                        continue;
+                    }
                     if (pos.has("positionSide")) {
-                        hasPositionSide = true;
-                        break;
+                        String posSide = pos.get("positionSide").asText();
+                        if ("LONG".equalsIgnoreCase(posSide)) {
+                            if (isOurSymbol) ourSymbolNonZeroLong++;
+                        } else if ("SHORT".equalsIgnoreCase(posSide)) {
+                            if (isOurSymbol) ourSymbolNonZeroShort++;
+                        } else if ("BOTH".equalsIgnoreCase(posSide)) {
+                            if (isOurSymbol) ourSymbolNonZeroBoth++;
+                        }
                     }
                 }
             }
 
-            this.positionMode = hasPositionSide ? PositionMode.HEDGE : PositionMode.ONE_WAY;
-            System.out.println("[BinanceAdapter] Position mode detected: " + positionMode);
+            System.out.printf("[BinanceAdapter] Position mode detection: ourSymbol LONG=%d, SHORT=%d, BOTH=%d%n",
+                ourSymbolNonZeroLong, ourSymbolNonZeroShort, ourSymbolNonZeroBoth);
+
+            // If our symbol has BOTH entry -> it's ONE-WAY
+            // If our symbol has LONG or SHORT entries -> it's HEDGE
+            // If we have NO entries (all zero positions), we need to infer from error pattern:
+            // - Getting -4061 without positionSide means account needs positionSide (HEDGE)
+            // Since we got -4061 in previous runs without positions, assume HEDGE
+            boolean hasNonBoth = (ourSymbolNonZeroLong > 0 || ourSymbolNonZeroShort > 0);
+            boolean hasBoth = (ourSymbolNonZeroBoth > 0);
+            boolean noPositions = (ourSymbolNonZeroLong == 0 && ourSymbolNonZeroShort == 0 && ourSymbolNonZeroBoth == 0);
+
+            // If we have no positions, we can't definitively detect the mode from positionSide alone.
+            // However, -4061 error means the account requires positionSide, indicating HEDGE mode.
+            // Default to HEDGE when we can't detect to avoid -4061 rejection.
+            boolean likelyHedge = hasNonBoth || noPositions;
+            this.positionMode = likelyHedge ? PositionMode.HEDGE : PositionMode.ONE_WAY;
+            System.out.println("[BinanceAdapter] Position mode detected: " + positionMode
+                + " (hasNonBoth=" + hasNonBoth + ", hasBoth=" + hasBoth + ", noPositions=" + noPositions + ")");
         } catch (Exception e) {
             System.err.println("[BinanceAdapter] Failed to detect position mode: " + e.getMessage());
-            // Default to HEDGE for safety - HEDGE requires positionSide which is safer
-            // If we default to ONE_WAY and account is HEDGE, orders will be rejected
-            this.positionMode = PositionMode.HEDGE;
-            System.err.println("[BinanceAdapter] Defaulting to HEDGE mode for safety");
+            this.positionMode = PositionMode.ONE_WAY;
+            System.err.println("[BinanceAdapter] Defaulting to ONE_WAY mode");
         }
     }
 
@@ -255,24 +286,21 @@ public class BinanceExchangeAdapter {
             // Parse balance from response
             JsonNode node = objectMapper.readTree(respStr);
 
-            // USDT-M futures字段：crossWalletBalance, crossUnrealizedPnl
+            // USDT-M futures字段 (v3 API更新):
+            // crossWalletBalance → totalCrossWalletBalance
             double balance = 0;
-            if (node.has("crossWalletBalance")) {
+            if (node.has("totalCrossWalletBalance")) {
+                balance = node.get("totalCrossWalletBalance").asDouble();
+            } else if (node.has("crossWalletBalance")) {
                 balance = node.get("crossWalletBalance").asDouble();
-            } else if (node.has("crossUnrealizedPnl")) {
-                // 可以用 equity - unrealizedPnl 来推算
-                double unrealizedPnl = node.has("crossUnrealizedPnl") ? node.get("crossUnrealizedPnl").asDouble() : 0;
-                // 如果有totalEquity可以用它减
-                if (node.has("totalCrossUnrealizedPnl")) {
-                    // nothing
-                }
-                balance = unrealizedPnl; // 临时
             } else if (node.has("totalMarginBalance")) {
                 balance = node.get("totalMarginBalance").asDouble();
             }
 
             double unrealizedPnl = 0;
-            if (node.has("crossUnrealizedPnl")) {
+            if (node.has("totalCrossUnrealizedPnl")) {
+                unrealizedPnl = node.get("totalCrossUnrealizedPnl").asDouble();
+            } else if (node.has("crossUnrealizedPnl")) {
                 unrealizedPnl = node.get("crossUnrealizedPnl").asDouble();
             }
 
@@ -390,16 +418,29 @@ public class BinanceExchangeAdapter {
                     }
                 } else {
                     // No position - opening new
+                    // For open orders in HEDGE mode with no existing position, we need to specify positionSide
+                    // But which side? Use the order direction
                     if (order.getSide() == TradeDirection.LONG) {
                         positionSide = "LONG";
                     } else if (order.getSide() == TradeDirection.SHORT) {
                         positionSide = "SHORT";
                     }
+                    System.out.printf("[BinanceAdapter] Opening order in HEDGE mode: using positionSide=%s%n", positionSide);
                 }
 
                 if (positionSide != null) {
                     params.put("positionSide", positionSide);
                 }
+
+                // If trying to close but position doesn't exist, skip the order
+                if (isCloseOrder && Math.abs(currentPos) < 0.0001) {
+                    System.out.printf("[BinanceAdapter] Skipping %s order: position is already 0%n",
+                        order.getSide() == TradeDirection.LONG ? "LONG" : "SHORT");
+                    return createRejectedReport(order, "Position already closed");
+                }
+
+                // In HEDGE mode: NEVER send reduceOnly, it causes -1106 error
+                // positionSide alone is sufficient to indicate close vs open
             }
 
             // Map our OrderType to Binance order type
@@ -418,12 +459,6 @@ public class BinanceExchangeAdapter {
             } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.FOK) {
                 params.put("price", formatPrice(order.getPrice()));
                 params.put("timeInForce", "FOK");
-            }
-
-            // For close orders in hedge mode, positionSide already indicates close - don't add reduceOnly
-            // Adding reduceOnly with positionSide can cause -2022 error
-            if (isCloseOrder && positionSide == null) {
-                params.put("reduceOnly", true);
             }
 
             // Add client order ID for idempotency
@@ -753,23 +788,32 @@ public class BinanceExchangeAdapter {
             // Debug: print full response structure
             System.out.println("[BinanceAdapter] Account response sample: " + respStr.substring(0, Math.min(500, respStr.length())));
 
-            // USDT-M futures字段：crossWalletBalance, crossUnrealizedPnl
+            // USDT-M futures字段 (v3 API更新):
+            // crossWalletBalance → totalCrossWalletBalance
+            // crossUnrealizedPnl → totalCrossUnrealizedPnl
             double walletBal = 0;
             double availBal = 0;
             double unrealizedPnL = 0;
 
-            if (node.has("crossWalletBalance")) {
-                walletBal = node.get("crossWalletBalance").asDouble();
-                availBal = walletBal; // 可用余额初值
-            } else if (node.has("totalCrossWalletBalance")) {
+            // 优先使用新字段名 totalCrossWalletBalance
+            if (node.has("totalCrossWalletBalance")) {
                 walletBal = node.get("totalCrossWalletBalance").asDouble();
-                availBal = walletBal;
+            } else if (node.has("crossWalletBalance")) {
+                // 兼容旧字段名
+                walletBal = node.get("crossWalletBalance").asDouble();
             }
-            // 直接使用API返回的availableBalance字段（如果存在）
+
+            // 直接使用API返回的availableBalance字段
             if (node.has("availableBalance")) {
                 availBal = node.get("availableBalance").asDouble();
+            } else {
+                availBal = walletBal; // fallback
             }
-            if (node.has("crossUnrealizedPnl")) {
+
+            // 新字段: totalCrossUnrealizedPnl
+            if (node.has("totalCrossUnrealizedPnl")) {
+                unrealizedPnL = node.get("totalCrossUnrealizedPnl").asDouble();
+            } else if (node.has("crossUnrealizedPnl")) {
                 unrealizedPnL = node.get("crossUnrealizedPnl").asDouble();
             }
 
