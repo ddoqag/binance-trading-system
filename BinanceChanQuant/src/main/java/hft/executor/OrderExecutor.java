@@ -51,7 +51,7 @@ public class OrderExecutor {
 
     private void setProxy() {
         try {
-            String proxyHost = "192.168.16.1";
+            String proxyHost = "127.0.0.1";
             int proxyPort = 7897;
 
             Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));

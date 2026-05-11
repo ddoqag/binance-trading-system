@@ -132,7 +132,7 @@ public class BinanceExchangeAdapter {
         int proxyPort = Integer.parseInt(System.getenv("PROXY_PORT") != null ? System.getenv("PROXY_PORT") : "7897");
 
         if (proxyHost == null) {
-            proxyHost = "192.168.16.1"; // Windows host IP in WSL2 mirrored mode
+            proxyHost = "127.0.0.1"; // Localhost proxy
         }
 
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));

@@ -482,7 +482,7 @@ public class ChanWebSocketLauncher {
             String proxyPort = System.getenv("PROXY_PORT");
 
             if (proxyHost == null) {
-                proxyHost = "192.168.16.1"; // Windows host IP in WSL2 mirrored mode
+                proxyHost = "127.0.0.1"; // Localhost proxy
             }
             if (proxyPort == null) {
                 proxyPort = "7897";

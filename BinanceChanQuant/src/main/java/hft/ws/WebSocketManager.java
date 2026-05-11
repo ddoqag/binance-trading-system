@@ -76,7 +76,7 @@ public class WebSocketManager {
             String proxyPort = System.getenv("BINANCE_WS_PROXY_PORT");
 
             if (proxyHost == null || proxyHost.isEmpty()) {
-                proxyHost = "192.168.16.1"; // Default Windows host in WSL2
+                proxyHost = "127.0.0.1"; // Localhost proxy
             }
             if (proxyPort == null || proxyPort.isEmpty()) {
                 proxyPort = "7897";
