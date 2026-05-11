@@ -1,6 +1,8 @@
 package com.trading.adapter.execution;
 
 import com.trading.domain.trading.model.TradeDirection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,6 +23,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * - Query methods for cooldown status
  */
 public class SignalCooldownManager {
+
+    private static final Logger log = LoggerFactory.getLogger(SignalCooldownManager.class);
 
     private final ConcurrentHashMap<String, SignalHistory> history = new ConcurrentHashMap<>();
 
@@ -79,7 +83,7 @@ public class SignalCooldownManager {
             if (lastCloseTime > 0 && now - lastCloseTime < postCloseCooldown.toMillis()) {
                 TradeDirection lastClosedDir = h.lastClosedDirection.get();
                 if (lastClosedDir == direction) {
-                    System.out.printf("[SignalCooldown] Post-close cooldown: pos=%.4f, just closed %s, ignoring %s for %ds%n",
+                    log.debug("[SignalCooldown] Post-close cooldown: pos={}, just closed {}, ignoring {} for {}s",
                         currentPosition, lastClosedDir, direction, (postCloseCooldown.toMillis() - (now - lastCloseTime)) / 1000);
                     return true;
                 }
@@ -140,7 +144,7 @@ public class SignalCooldownManager {
         SignalHistory h = history.computeIfAbsent(symbol, k -> new SignalHistory());
         h.lastCloseTime.set(now);
         h.lastClosedDirection.set(closedDirection);
-        System.out.printf("[SignalCooldown] Position closed: %s at %d, post-close cooldown %ds%n",
+        log.info("[SignalCooldown] Position closed: {} at {}, post-close cooldown {}s",
             closedDirection, now, postCloseCooldown.toSeconds());
     }
 
@@ -151,7 +155,7 @@ public class SignalCooldownManager {
     public void onPositionOpened(String symbol, TradeDirection openedDirection) {
         SignalHistory h = history.get(symbol);
         if (h != null && h.lastCloseTime.get() > 0) {
-            System.out.printf("[SignalCooldown] Position opened: %s, clearing post-close cooldown (was %ds ago)%n",
+            log.info("[SignalCooldown] Position opened: {}, clearing post-close cooldown (was {}s ago)",
                 openedDirection, (System.currentTimeMillis() - h.lastCloseTime.get()) / 1000);
             h.lastCloseTime.set(0);
             h.lastClosedDirection.set(null);

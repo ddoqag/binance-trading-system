@@ -11,12 +11,25 @@ import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.trading.model.PositionState;
 import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
+import com.trading.domain.trading.model.TwapOrderRequest;
 
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 /**
  * Binance Exchange Adapter
@@ -27,6 +40,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * Reusable patterns from HFT OrderExecutor for API integration.
  */
 public class BinanceExchangeAdapter {
+
+    private static final Logger log = LoggerFactory.getLogger(BinanceExchangeAdapter.class);
 
     /**
      * Position mode for Binance Futures account
@@ -43,6 +58,11 @@ public class BinanceExchangeAdapter {
     private final boolean paperTrading;
     private final UMFuturesClientImpl client;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    // Stored for native TWAP HTTP calls
+    private final String apiKey;
+    private final String apiSecret;
+    private final HttpClient httpClient;
+    private final String baseUrl;
 
     // Position tracking (synced from exchange)
     private volatile double currentPosition = 0.0;
@@ -84,33 +104,41 @@ public class BinanceExchangeAdapter {
     public BinanceExchangeAdapter(String symbol, boolean paperTrading, String apiKey, String apiSecret) {
         this.symbol = symbol;
         this.paperTrading = paperTrading;
+        this.apiKey = apiKey;
+        this.apiSecret = apiSecret;
+        this.baseUrl = ConfigUtil.isTestNet()
+            ? "https://testnet.binancefuture.com"
+            : "https://fapi.binance.com";
 
         if (paperTrading) {
             this.client = null;
+            this.httpClient = null;
             this.positionMode = PositionMode.ONE_WAY; // Paper mode behaves as one-way
-            System.out.println("[BinanceAdapter] Paper trading mode");
+            log.info("[BinanceAdapter] Paper trading mode");
         } else {
             this.client = new UMFuturesClientImpl(apiKey, apiSecret, ConfigUtil.isTestNet());
+            this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
             setProxy();
             fetchPositionMode(); // Detect account position mode on startup
-            System.out.println("[BinanceAdapter] Live trading mode (testnet=" + ConfigUtil.isTestNet() + ", positionMode=" + positionMode + ")");
+            log.info("[BinanceAdapter] Live trading mode (testnet={}, positionMode={})", ConfigUtil.isTestNet(), positionMode);
         }
     }
 
     private void setProxy() {
-        try {
-            // Use Windows host IP (192.168.16.1) as seen in .env HTTPS_PROXY
-            // 127.0.0.1 in WSL2 refers to WSL2 itself, not Windows
-            String proxyHost = "192.168.16.1";
-            int proxyPort = 7897;
+        // Enable proxy for WSL2 to use Windows VPN
+        String proxyHost = System.getenv("PROXY_HOST");
+        int proxyPort = Integer.parseInt(System.getenv("PROXY_PORT") != null ? System.getenv("PROXY_PORT") : "7897");
 
-            Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
-            ProxyAuth proxyAuth = new ProxyAuth(proxy, null);
-            client.setProxy(proxyAuth);
-            System.out.println("[BinanceAdapter] Proxy set: " + proxyHost + ":" + proxyPort + " (Windows host)");
-        } catch (Exception e) {
-            System.out.println("[BinanceAdapter] Proxy not configured: " + e.getMessage());
+        if (proxyHost == null) {
+            proxyHost = "192.168.16.1"; // Windows host IP in WSL2 mirrored mode
         }
+
+        Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
+        ProxyAuth proxyAuth = new ProxyAuth(proxy, null);
+        client.setProxy(proxyAuth);
+        log.info("[BinanceAdapter] Proxy enabled: {}:{}", proxyHost, proxyPort);
     }
 
     /**
@@ -152,8 +180,7 @@ public class BinanceExchangeAdapter {
                 }
             }
 
-            System.out.printf("[BinanceAdapter] Position mode detection: ourSymbol LONG=%d, SHORT=%d, BOTH=%d%n",
-                ourSymbolNonZeroLong, ourSymbolNonZeroShort, ourSymbolNonZeroBoth);
+            log.info("[BinanceAdapter] Position mode detection: ourSymbol LONG={}, SHORT={}, BOTH={}", ourSymbolNonZeroLong, ourSymbolNonZeroShort, ourSymbolNonZeroBoth);
 
             // If our symbol has BOTH entry -> it's ONE-WAY
             // If our symbol has LONG or SHORT entries -> it's HEDGE
@@ -169,12 +196,11 @@ public class BinanceExchangeAdapter {
             // Default to HEDGE when we can't detect to avoid -4061 rejection.
             boolean likelyHedge = hasNonBoth || noPositions;
             this.positionMode = likelyHedge ? PositionMode.HEDGE : PositionMode.ONE_WAY;
-            System.out.println("[BinanceAdapter] Position mode detected: " + positionMode
-                + " (hasNonBoth=" + hasNonBoth + ", hasBoth=" + hasBoth + ", noPositions=" + noPositions + ")");
+            log.info("[BinanceAdapter] Position mode detected: {} (hasNonBoth={}, hasBoth={}, noPositions={})", positionMode, hasNonBoth, hasBoth, noPositions);
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Failed to detect position mode: " + e.getMessage());
+            log.error("[BinanceAdapter] Failed to detect position mode: {}", e.getMessage());
             this.positionMode = PositionMode.ONE_WAY;
-            System.err.println("[BinanceAdapter] Defaulting to ONE_WAY mode");
+            log.warn("[BinanceAdapter] Defaulting to ONE_WAY mode");
         }
     }
 
@@ -204,7 +230,7 @@ public class BinanceExchangeAdapter {
      */
     public boolean cancelOrder(String orderId, long binanceOrderId) {
         if (paperTrading) {
-            System.out.println("[BinanceAdapter] Cancel (paper): " + orderId);
+            log.info("[BinanceAdapter] Cancel (paper): {}", orderId);
             return true;
         }
 
@@ -214,10 +240,10 @@ public class BinanceExchangeAdapter {
             params.put("orderId", binanceOrderId);
 
             Object resp = client.account().cancelOrder(params);
-            System.out.println("[BinanceAdapter] Cancel: " + orderId + " -> " + resp);
+            log.info("[BinanceAdapter] Cancel: {} -> {}", orderId, resp);
             return true;
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Cancel failed: " + e.getMessage());
+            log.error("[BinanceAdapter] Cancel failed: {}", e.getMessage());
             return false;
         }
     }
@@ -236,12 +262,12 @@ public class BinanceExchangeAdapter {
             params.put("orderId", binanceOrderId);
 
             Object resp = client.account().queryOrder(params);
-            System.out.println("[BinanceAdapter] QueryOrder: " + orderId + " -> " + resp);
+            log.info("[BinanceAdapter] QueryOrder: {} -> {}", orderId, resp);
 
             // Parse response and return ExecutionReport
             return parseQueryResponse(orderId, resp);
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Query failed: " + e.getMessage());
+            log.error("[BinanceAdapter] Query failed: {}", e.getMessage());
             return null;
         }
     }
@@ -266,7 +292,7 @@ public class BinanceExchangeAdapter {
             }
             return new PositionInfo[0];
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Get positions failed: " + e.getMessage());
+            log.error("[BinanceAdapter] Get positions failed: {}", e.getMessage());
             return new PositionInfo[0];
         }
     }
@@ -304,7 +330,7 @@ public class BinanceExchangeAdapter {
                 unrealizedPnl = node.get("crossUnrealizedPnl").asDouble();
             }
 
-            System.out.printf("[BinanceAdapter] Account balance: %.4f USDT (unrealized PnL: %.4f)%n", balance, unrealizedPnl);
+            log.info("[BinanceAdapter] Account balance: {} USDT (unrealized PnL: {})", balance, unrealizedPnl);
 
             // Also log positions if any
             if (node.has("positions")) {
@@ -313,18 +339,17 @@ public class BinanceExchangeAdapter {
                     if (Math.abs(amt) > 0.0001) {
                         String sym = pos.has("symbol") ? pos.get("symbol").asText() : "";
                         double upnl = pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
-                        System.out.printf("[BinanceAdapter] Existing position: %s amt=%.4f pnl=%.4f%n", sym, amt, upnl);
+                        log.info("[BinanceAdapter] Existing position: {} amt={} pnl={}", sym, amt, upnl);
                     }
                 }
             }
         } catch (Exception e) {
-            System.out.println("[BinanceAdapter] Balance check failed: " + e.getMessage());
+            log.info("[BinanceAdapter] Balance check failed: {}", e.getMessage());
         }
     }
 
     private ExecutionReport simulateFill(Order order) {
-        System.out.printf("[BinanceAdapter] Paper fill: %s %s %.4f @ %.2f%n",
-            order.getSide(), order.getOrderType(), order.getQuantity(), order.getPrice());
+        log.info("[BinanceAdapter] Paper fill: {} {} {} @ {}", order.getSide(), order.getOrderType(), order.getQuantity(), order.getPrice());
 
         totalFills.incrementAndGet();
 
@@ -401,7 +426,7 @@ public class BinanceExchangeAdapter {
                         isCloseOrder = true;
                     } else if (order.getSide() == TradeDirection.SHORT) {
                         // Adding to SHORT - not allowed
-                        System.out.printf("[BinanceAdapter] Skipping SHORT order: already have SHORT position %.4f%n", currentPos);
+                        log.info("[BinanceAdapter] Skipping SHORT order: already have SHORT position {}", currentPos);
                         return createRejectedReport(order, "Already have SHORT position");
                     }
                 } else if (currentPos > 0) {
@@ -413,7 +438,7 @@ public class BinanceExchangeAdapter {
                         isCloseOrder = true;
                     } else if (order.getSide() == TradeDirection.LONG) {
                         // Adding to LONG - not allowed
-                        System.out.printf("[BinanceAdapter] Skipping LONG order: already have LONG position %.4f%n", currentPos);
+                        log.info("[BinanceAdapter] Skipping LONG order: already have LONG position {}", currentPos);
                         return createRejectedReport(order, "Already have LONG position");
                     }
                 } else {
@@ -425,7 +450,7 @@ public class BinanceExchangeAdapter {
                     } else if (order.getSide() == TradeDirection.SHORT) {
                         positionSide = "SHORT";
                     }
-                    System.out.printf("[BinanceAdapter] Opening order in HEDGE mode: using positionSide=%s%n", positionSide);
+                    log.info("[BinanceAdapter] Opening order in HEDGE mode: using positionSide={}", positionSide);
                 }
 
                 if (positionSide != null) {
@@ -434,8 +459,7 @@ public class BinanceExchangeAdapter {
 
                 // If trying to close but position doesn't exist, skip the order
                 if (isCloseOrder && Math.abs(currentPos) < 0.0001) {
-                    System.out.printf("[BinanceAdapter] Skipping %s order: position is already 0%n",
-                        order.getSide() == TradeDirection.LONG ? "LONG" : "SHORT");
+                    log.info("[BinanceAdapter] Skipping {} order: position is already 0", order.getSide() == TradeDirection.LONG ? "LONG" : "SHORT");
                     return createRejectedReport(order, "Position already closed");
                 }
 
@@ -465,15 +489,7 @@ public class BinanceExchangeAdapter {
             params.put("newClientOrderId", order.getOrderId());
 
             // Debug: log order parameters including positionMode
-            System.out.printf("[BinanceAdapter] Sending order: symbol=%s, side=%s, type=%s, qty=%s, price=%s, mode=%s, positionSide=%s, reduceOnly=%s%n",
-                order.getSymbol(),
-                order.getSide() == TradeDirection.LONG ? "BUY" : "SELL",
-                binanceType,
-                formatQuantity(orderQty),
-                formatPrice(order.getPrice()),
-                positionMode,
-                positionSide != null ? positionSide : "NONE",
-                isCloseOrder ? "true" : "false");
+            log.info("[BinanceAdapter] Sending order: symbol={}, side={}, type={}, qty={}, price={}, mode={}, positionSide={}, reduceOnly={}", order.getSymbol(), order.getSide() == TradeDirection.LONG ? "BUY" : "SELL", binanceType, formatQuantity(orderQty), formatPrice(order.getPrice()), positionMode, positionSide != null ? positionSide : "NONE", isCloseOrder ? "true" : "false");
 
             Object resp = client.account().newOrder(params);
 
@@ -506,11 +522,10 @@ public class BinanceExchangeAdapter {
                     fillPrice = Double.parseDouble(node.get("avgPrice").asText());
                 }
 
-                System.out.printf("[BinanceAdapter] Live order: clientId=%s, binanceId=%d, status=%s, filledQty=%.4f, avgPrice=%.2f%n",
-                    order.getOrderId(), binanceOrderId, ordStatus, filledQty, fillPrice);
+                log.info("[BinanceAdapter] Live order: clientId={}, binanceId={}, status={}, filledQty={}, avgPrice={}", order.getOrderId(), binanceOrderId, ordStatus, filledQty, fillPrice);
 
             } catch (Exception e) {
-                System.err.println("[BinanceAdapter] JSON parse warning: " + e.getMessage() + " | resp=" + resp);
+                log.warn("[BinanceAdapter] JSON parse warning: {} | resp={}", e.getMessage(), resp);
                 binanceOrderId = System.currentTimeMillis();
                 filledQty = order.getQuantity();
                 fillPrice = order.getPrice();
@@ -537,13 +552,13 @@ public class BinanceExchangeAdapter {
                 0.0  // fee
             );
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Order failed: " + e.getMessage());
+            log.error("[BinanceAdapter] Order failed: {}", e.getMessage());
             return createRejectedReport(order, e.getMessage());
         }
     }
 
     private ExecutionReport createRejectedReport(Order order, String reason) {
-        System.err.printf("[BinanceAdapter] Order rejected: %s%n", reason);
+        log.warn("[BinanceAdapter] Order rejected: {}", reason);
         return new ExecutionReport(
             order.getOrderId(),
             order.getSymbol(),
@@ -558,6 +573,159 @@ public class BinanceExchangeAdapter {
             0.0,
             0.0
         );
+    }
+
+    /**
+     * Submit a native TWAP order to Binance Futures Algo API
+     *
+     * Endpoint: POST /fapi/v1/algo/futures/newOrderTwap
+     *
+     * @param request TWAP order request
+     * @return exchange-assigned algo order ID, or null if failed
+     */
+    public String submitNativeTwap(TwapOrderRequest request) {
+        if (paperTrading) {
+            log.info("[BinanceAdapter] Native TWAP (paper): {}", request);
+            return "paper-algo-" + System.currentTimeMillis();
+        }
+
+        try {
+            // Build query string for signing
+            String query = String.format(
+                "symbol=%s&side=%s&quantity=%s&duration=%d&clientAlgoId=%s",
+                request.symbol(),
+                request.side() == TradeDirection.LONG ? "BUY" : "SELL",
+                request.totalQuantity().toPlainString(),
+                request.durationSeconds(),
+                request.clientAlgoId()
+            );
+
+            String signature = signRequest(query);
+            String url = baseUrl + "/fapi/v1/algo/futures/newOrderTwap?" + query + "&signature=" + signature;
+
+            log.info("[BinanceAdapter] Submitting native TWAP: {}", request);
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("X-MBX-APIKEY", apiKey)
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                JsonNode node = objectMapper.readTree(response.body());
+                long algoOrderId = node.has("algoId") ? node.get("algoId").asLong() : 0;
+                String algoIdStr = algoOrderId > 0 ? String.valueOf(algoOrderId) : null;
+                log.info("[BinanceAdapter] Native TWAP submitted: clientId={}, algoId={}", request.clientAlgoId(), algoIdStr);
+                return algoIdStr;
+            } else {
+                log.error("[BinanceAdapter] Native TWAP failed: HTTP {} - {}", response.statusCode(), response.body());
+                return null;
+            }
+
+        } catch (Exception e) {
+            log.error("[BinanceAdapter] Native TWAP failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Query the status of an open TWAP order
+     *
+     * @param algoOrderId the exchange-assigned algo order ID
+     * @return algo order status string, or null if failed/not found
+     */
+    public String queryNativeTwapStatus(String algoOrderId) {
+        if (paperTrading) {
+            return "paper_status";
+        }
+
+        try {
+            String query = "algoId=" + algoOrderId;
+            String signature = signRequest(query);
+            String url = baseUrl + "/fapi/v1/algo/futures/queryOpenOrders?" + query + "&signature=" + signature;
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("X-MBX-APIKEY", apiKey)
+                .GET()
+                .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                JsonNode node = objectMapper.readTree(response.body());
+                if (node.isArray() && node.size() > 0) {
+                    JsonNode algoOrder = node.get(0);
+                    return algoOrder.has("status") ? algoOrder.get("status").asText() : null;
+                }
+                return null;
+            } else {
+                log.error("[BinanceAdapter] Query TWAP status failed: HTTP {} - {}", response.statusCode(), response.body());
+                return null;
+            }
+
+        } catch (Exception e) {
+            log.error("[BinanceAdapter] Query TWAP status failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Cancel an open TWAP order
+     *
+     * @param algoOrderId the exchange-assigned algo order ID
+     * @return true if cancelled successfully
+     */
+    public boolean cancelNativeTwap(String algoOrderId) {
+        if (paperTrading) {
+            log.info("[BinanceAdapter] Cancel TWAP (paper): {}", algoOrderId);
+            return true;
+        }
+
+        try {
+            String query = "algoId=" + algoOrderId;
+            String signature = signRequest(query);
+            String url = baseUrl + "/fapi/v1/algo/futures/cancelAlgoOrder?" + query + "&signature=" + signature;
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("X-MBX-APIKEY", apiKey)
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                log.info("[BinanceAdapter] Native TWAP cancelled: algoId={}", algoOrderId);
+                return true;
+            } else {
+                log.error("[BinanceAdapter] Cancel TWAP failed: HTTP {} - {}", response.statusCode(), response.body());
+                return false;
+            }
+
+        } catch (Exception e) {
+            log.error("[BinanceAdapter] Cancel TWAP failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Sign a request query string with HMAC-SHA256
+     */
+    private String signRequest(String query) throws Exception {
+        Mac mac = Mac.getInstance("HmacSHA256");
+        SecretKeySpec secretKeySpec = new SecretKeySpec(apiSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        mac.init(secretKeySpec);
+        byte[] hash = mac.doFinal(query.getBytes(StandardCharsets.UTF_8));
+        StringBuilder hexString = new StringBuilder();
+        for (byte b : hash) {
+            String hex = Integer.toHexString(0xff & b);
+            if (hex.length() == 1) hexString.append('0');
+            hexString.append(hex);
+        }
+        return hexString.toString();
     }
 
     private String mapOrderType(com.trading.domain.trading.model.OrderType orderType) {
@@ -706,40 +874,39 @@ public class BinanceExchangeAdapter {
                 // Detect position change (crossing zero) and fire callback
                 if (Math.abs(lastReportedPosition) > 0.0001 && Math.abs(this.currentPosition) < 0.0001) {
                     // Position was closed (crossed from non-zero to zero)
-                    System.out.printf("[BinanceAdapter] Position CLOSED: was %.4f, now 0%n", lastReportedPosition);
+                    log.info("[BinanceAdapter] Position CLOSED: was {}, now 0", lastReportedPosition);
                     if (positionChangeCallback != null) {
                         TradeDirection closedDir = lastReportedPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
                         positionChangeCallback.accept(new PositionChangeEvent(lastReportedPosition, 0, symbol));
-                        System.out.printf("[BinanceAdapter] PositionChange callback fired for %s%n", closedDir);
+                        log.info("[BinanceAdapter] PositionChange callback fired for {}", closedDir);
                     }
                 } else if (Math.abs(lastReportedPosition) < 0.0001 && Math.abs(this.currentPosition) > 0.0001) {
                     // Position was opened (crossed from zero to non-zero)
-                    System.out.printf("[BinanceAdapter] Position OPENED: was 0, now %.4f%n", this.currentPosition);
+                    log.info("[BinanceAdapter] Position OPENED: was 0, now {}", this.currentPosition);
                     if (positionChangeCallback != null) {
                         TradeDirection openedDir = this.currentPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
                         positionChangeCallback.accept(new PositionChangeEvent(0, this.currentPosition, symbol));
-                        System.out.printf("[BinanceAdapter] PositionChange callback fired for OPEN: %s%n", openedDir);
+                        log.info("[BinanceAdapter] PositionChange callback fired for OPEN: {}", openedDir);
                     }
                 }
                 lastReportedPosition = this.currentPosition;
 
                 if (hasPosition) {
-                    System.out.printf("[BinanceAdapter] Position synced: pos=%.4f, entry=%.2f, unrealizedPnl=%.2f%n",
-                        currentPosition, avgEntryPrice, unrealizedPnl);
+                    log.info("[BinanceAdapter] Position synced: pos={}, entry={}, unrealizedPnl={}", currentPosition, avgEntryPrice, unrealizedPnl);
                 } else if (!silent) {
-                    System.out.printf("[BinanceAdapter] Position closed: pos=%.4f%n", currentPosition);
+                    log.info("[BinanceAdapter] Position closed: pos={}", currentPosition);
                 }
             }
 
             // If no position found for our symbol, reset to zero
             if (!positionFound && Math.abs(this.currentPosition) > 0.0001) {
-                System.out.printf("[BinanceAdapter] Position reset: was %.4f, now 0%n", this.currentPosition);
+                log.info("[BinanceAdapter] Position reset: was {}, now 0", this.currentPosition);
                 this.currentPosition = 0;
                 this.avgEntryPrice = 0;
                 this.unrealizedPnl = 0;
             }
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Position sync failed: " + e.getMessage());
+            log.error("[BinanceAdapter] Position sync failed: {}", e.getMessage());
         }
     }
 
@@ -786,7 +953,7 @@ public class BinanceExchangeAdapter {
             JsonNode node = objectMapper.readTree(respStr);
 
             // Debug: print full response structure
-            System.out.println("[BinanceAdapter] Account response sample: " + respStr.substring(0, Math.min(500, respStr.length())));
+            log.debug("[BinanceAdapter] Account response sample: {}", respStr.substring(0, Math.min(500, respStr.length())));
 
             // USDT-M futures字段 (v3 API更新):
             // crossWalletBalance → totalCrossWalletBalance
@@ -823,8 +990,7 @@ public class BinanceExchangeAdapter {
                 // totalEquity 可以直接用
             }
 
-            System.out.printf("[BinanceAdapter] USDT Balance: wallet=%.4f, unrealizedPnl=%.4f, equity=%.4f%n",
-                walletBal, unrealizedPnL, totalEquity);
+            log.info("[BinanceAdapter] USDT Balance: wallet={}, unrealizedPnl={}, equity={}", walletBal, unrealizedPnL, totalEquity);
 
             availableBalance = availBal;
             this.walletBalance = walletBal;
@@ -841,8 +1007,7 @@ public class BinanceExchangeAdapter {
                     String marginType = pos.has("isolatedMargin") ? "isolated" : "cross";
 
                     if (Math.abs(posAmt) > 0.0001) {
-                        System.out.printf("[BinanceAdapter] Position: %s amt=%.4f entry=%.2f pnl=%.2f marginType=%s%n",
-                            posSymbol, posAmt, entryPrice, posUnrealizedPnL, marginType);
+                        log.info("[BinanceAdapter] Position: {} amt={} entry={} pnl={} marginType={}", posSymbol, posAmt, entryPrice, posUnrealizedPnL, marginType);
                         this.currentPosition = posAmt;
                         this.avgEntryPrice = entryPrice;
                         this.unrealizedPnl = posUnrealizedPnL;
@@ -850,11 +1015,10 @@ public class BinanceExchangeAdapter {
                 }
             }
 
-            System.out.printf("[BinanceAdapter] Balance synced: available=%.4f USDT%n", availableBalance);
+            log.info("[BinanceAdapter] Balance synced: available={} USDT", availableBalance);
             return availableBalance;
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Balance sync failed: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[BinanceAdapter] Balance sync failed: {}", e.getMessage());
             return 0.0;
         }
     }
@@ -878,9 +1042,9 @@ public class BinanceExchangeAdapter {
             params.put("leverage", leverage);
 
             Object resp = client.account().changeInitialLeverage(params);
-            System.out.printf("[BinanceAdapter] Leverage set: %dx for %s%n", leverage, symbol);
+            log.info("[BinanceAdapter] Leverage set: {}x for {}", leverage, symbol);
         } catch (Exception e) {
-            System.err.println("[BinanceAdapter] Failed to set leverage: " + e.getMessage());
+            log.error("[BinanceAdapter] Failed to set leverage: {}", e.getMessage());
         }
     }
 

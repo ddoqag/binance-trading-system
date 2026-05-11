@@ -6,6 +6,8 @@ import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.market.model.MarketData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
@@ -20,6 +22,8 @@ import java.util.List;
  * Implements TWAP, VWAP algorithms for order execution
  */
 public class AlgoExecutionEngine {
+
+    private static final Logger log = LoggerFactory.getLogger(AlgoExecutionEngine.class);
 
     private final ConcurrentHashMap<String, AlgoExecution> activeAlgos = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
@@ -72,8 +76,7 @@ public class AlgoExecutionEngine {
             }
         }, 1, 1, TimeUnit.SECONDS);
 
-        System.out.printf("[AlgoExecutionEngine] Started %s algo for order %s%n",
-            algoType, order.getOrderId());
+        log.info("[AlgoExecutionEngine] Started {} algo for order {}", algoType, order.getOrderId());
     }
 
     /**
@@ -102,7 +105,7 @@ public class AlgoExecutionEngine {
     public void start() {
         if (isRunning.compareAndSet(false, true)) {
             scheduler.scheduleAtFixedRate(this::checkAlgos, 1, 1, TimeUnit.SECONDS);
-            System.out.println("[AlgoExecutionEngine] Started");
+            log.info("[AlgoExecutionEngine] Started");
         }
     }
 
@@ -113,7 +116,7 @@ public class AlgoExecutionEngine {
         if (isRunning.compareAndSet(true, false)) {
             scheduler.shutdownNow();
             activeAlgos.clear();
-            System.out.println("[AlgoExecutionEngine] Stopped");
+            log.info("[AlgoExecutionEngine] Stopped");
         }
     }
 
@@ -141,7 +144,7 @@ public class AlgoExecutionEngine {
             try {
                 listener.onAlgoCompleted(orderId, symbol, reason);
             } catch (Exception e) {
-                System.err.printf("[AlgoExecutionEngine] Listener notification error: %s%n", e.getMessage());
+                log.error("[AlgoExecutionEngine] Listener notification error: {}", e.getMessage());
             }
         }
     }
@@ -350,8 +353,7 @@ public class AlgoExecutionEngine {
                 // If we already have a position in the same direction, stop algo
                 if ((currentPos > 0 && desiredDir == TradeDirection.LONG) ||
                     (currentPos < 0 && desiredDir == TradeDirection.SHORT)) {
-                    System.out.printf("[AlgoExecution] Stopping %s: already have position %.4f in same direction%n",
-                        order.getStrategy(), currentPos);
+                    log.info("[AlgoExecution] Stopping {}: already have position {} in same direction", order.getStrategy(), currentPos);
                     if (completionNotified.compareAndSet(false, true)) {
                         notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.POSITION_MATCHED);
                     }
@@ -369,27 +371,16 @@ public class AlgoExecutionEngine {
                 double requiredMargin = sliceQty * price / leverage;
 
                 // Only reject if balance is confirmed insufficient (not just un-synced)
-                if (availableBalance > 0.01 && availableBalance < requiredMargin * 1.2) { // 20% buffer for margin
-                    System.out.printf("[AlgoExecution] Insufficient margin for slice: required=%.4f, available=%.4f%n",
-                        requiredMargin, availableBalance);
-                    consecutiveFailures++;
-                    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                        System.out.printf("[AlgoExecution] Stopping TWAP: insufficient margin%n");
-                        if (completionNotified.compareAndSet(false, true)) {
-                            notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.FAILED);
-                        }
-                        stop();
-                        return;
-                    }
-                    // Skip this slice, will retry next interval
+                // P0 FIX: Don't count margin insufficiency as failure - it's a physical limit
+                if (availableBalance > 0.01 && availableBalance < requiredMargin * 1.2) {
+                    log.info("[AlgoExecution] Insufficient margin for slice: required={}, available={} (skipping)", requiredMargin, availableBalance);
                     return;
                 }
             }
 
             Slice slice = algo.calculateNextSlice(marketData);
             if (slice != null) {
-                System.out.printf("[AlgoExecution] Sending slice: %s, qty=%.4f, price=%.2f%n",
-                    slice.orderId, slice.quantity, slice.price);
+                log.info("[AlgoExecution] Sending slice: {}, qty={}, price={}", slice.orderId, slice.quantity, slice.price);
 
                 // Send slice order to exchange - use strategy from original order
                 Order sliceOrder = new Order(
@@ -408,10 +399,9 @@ public class AlgoExecutionEngine {
                     if (report != null && report.getStatus() == OrderStatus.REJECTED) {
                         consecutiveFailures++;
                         String reason = report.getAvgFillPrice() > 0 ? "rejected" : "margin insufficient";
-                        System.out.printf("[AlgoExecution] Slice %s failed (%s), failures=%d/%d%n",
-                            slice.orderId, reason, consecutiveFailures, MAX_CONSECUTIVE_FAILURES);
+                        log.warn("[AlgoExecution] Slice {} failed ({}), failures={}/{}", slice.orderId, reason, consecutiveFailures, MAX_CONSECUTIVE_FAILURES);
                         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                            System.out.printf("[AlgoExecution] Stopping TWAP: too many failures%n");
+                            log.warn("[AlgoExecution] Stopping TWAP: too many failures");
                             if (completionNotified.compareAndSet(false, true)) {
                                 notifyCompletion(order.getOrderId(), order.getSymbol(), AlgoCompletionReason.FAILED);
                             }

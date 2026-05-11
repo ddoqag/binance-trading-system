@@ -5,8 +5,11 @@ import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.risk.RiskManager;
 import com.trading.domain.trading.risk.RiskCheckResult;
 import com.trading.domain.market.model.MarketData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -19,12 +22,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.TradeIntent;
 import com.trading.domain.market.model.MarketData;
+import com.trading.domain.signal.ExecutionEvent;
+import com.trading.domain.signal.ExecutionEvent.ExecutionEventType;
+import com.trading.messaging.MessageBus;
 
 /**
  * Execution Engine
  * Integrates all execution components: StateMachine, Router, AlgoEngine
  */
 public class ExecutionEngine {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutionEngine.class);
 
     // Components
     private final ExecutionStateMachine stateMachine;
@@ -65,6 +73,17 @@ public class ExecutionEngine {
     // Track position changes for post-close cooldown
     private final AtomicReference<Double> lastKnownPosition = new AtomicReference<>(0.0);
 
+    // V6: ExecutionFeedbackBus - for closed-loop telemetry
+    private MessageBus messageBus;
+    private ExecutionEventListener eventListener;
+
+    /**
+     * V6: Listener interface for execution events
+     */
+    public interface ExecutionEventListener {
+        void onExecutionEvent(ExecutionEvent event);
+    }
+
     /**
      * Constructor for paper trading mode
      */
@@ -85,6 +104,9 @@ public class ExecutionEngine {
         String symbol = "BTCUSDT"; // Default, should be from config
         this.exchangeAdapter = new BinanceExchangeAdapter(symbol, paperTrading, apiKey, apiSecret);
 
+        // P0: Wire exchange adapter to state machine for balance-based STANDBY mode
+        this.stateMachine.setExchangeAdapter(this.exchangeAdapter);
+
         // Wire up algo engine to use exchange adapter for live trading
         algoEngine.setExchangeAdapter(exchangeAdapter);
 
@@ -98,7 +120,7 @@ public class ExecutionEngine {
                 } else {
                     activeExecutions.remove(symbol);
                 }
-                System.out.printf("[ExecutionEngine] Algo completed: orderId=%s symbol=%s reason=%s%n",
+                log.info("[ExecutionEngine] Algo completed: orderId={} symbol={} reason={}",
                     orderId, symbol, reason);
             }
         });
@@ -107,16 +129,54 @@ public class ExecutionEngine {
         exchangeAdapter.setPositionChangeCallback(event -> {
             if (event.wasClosed) {
                 TradeDirection closedDir = event.previousPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
-                System.out.printf("[ExecutionEngine] Position closed detected: %.4f -> 0%n", event.previousPosition);
+                log.info("[ExecutionEngine] Position closed detected: {:.4f} -> 0", event.previousPosition);
                 cooldownManager.onPositionClosed(event.symbol, closedDir);
             }
             // P2-9 FIX: Clear post-close cooldown when position is opened
             if (event.wasOpened) {
                 TradeDirection openedDir = event.newPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
-                System.out.printf("[ExecutionEngine] Position opened detected: 0 -> %.4f%n", event.newPosition);
+                log.info("[ExecutionEngine] Position opened detected: 0 -> {:.4f}", event.newPosition);
                 cooldownManager.onPositionOpened(event.symbol, openedDir);
             }
         });
+    }
+
+    /**
+     * V6: Set MessageBus for ExecutionFeedbackBus
+     */
+    public void setMessageBus(MessageBus bus) {
+        this.messageBus = bus;
+    }
+
+    /**
+     * V6: Set event listener for direct callback (alternative to MessageBus)
+     */
+    public void setEventListener(ExecutionEventListener listener) {
+        this.eventListener = listener;
+    }
+
+    /**
+     * V6: Publish execution event via callback or message bus
+     */
+    private void publishEvent(ExecutionEvent event) {
+        if (eventListener != null) {
+            eventListener.onExecutionEvent(event);
+        }
+        if (messageBus != null) {
+            // Cast to DomainEvent if messageBus requires it
+            messageBus.publish(new ExecutionEventAdapter(event));
+        }
+    }
+
+    /**
+     * V6: Adapter to make ExecutionEvent compatible with DomainEvent
+     */
+    private static class ExecutionEventAdapter implements com.trading.messaging.DomainEvent {
+        private final ExecutionEvent event;
+        ExecutionEventAdapter(ExecutionEvent event) { this.event = event; }
+        @Override public String getMessageId() { return event.correlationId(); }
+        @Override public long getTimestamp() { return event.timestamp(); }
+        @Override public String getEventType() { return event.type().name(); }
     }
 
     /**
@@ -124,7 +184,7 @@ public class ExecutionEngine {
      */
     public void start() {
         if (isRunning.compareAndSet(false, true)) {
-            System.out.println("[ExecutionEngine] Starting...");
+            log.info("[ExecutionEngine] Starting...");
 
             stateMachine.start();
             algoEngine.start();
@@ -133,7 +193,7 @@ public class ExecutionEngine {
             executor.submit(this::reportProcessingLoop);
             executor.submit(this::monitoringLoop);
 
-            System.out.println("[ExecutionEngine] Started successfully");
+            log.info("[ExecutionEngine] Started successfully");
         }
     }
 
@@ -142,7 +202,7 @@ public class ExecutionEngine {
      */
     public void stop() {
         if (isRunning.compareAndSet(true, false)) {
-            System.out.println("[ExecutionEngine] Stopping...");
+            log.info("[ExecutionEngine] Stopping...");
 
             stateMachine.shutdown();
             algoEngine.stop();
@@ -150,7 +210,7 @@ public class ExecutionEngine {
 
             printStatistics();
 
-            System.out.println("[ExecutionEngine] Stopped");
+            log.info("[ExecutionEngine] Stopped");
         }
     }
 
@@ -178,12 +238,35 @@ public class ExecutionEngine {
             currentPos = exchangeAdapter.getCurrentPosition();
         }
         if (!isExitOrder && shouldIgnoreSignalWithPosition(order.getSymbol(), order.getSide(), order.getConfidence(), currentPos)) {
+            // V6: Publish SIGNAL_BLOCKED_BY_COOLDOWN event
+            long remainingMs = cooldownManager.getRemainingCooldownMs(order.getSymbol(), order.getSide());
+            publishEvent(ExecutionEvent.builder()
+                .correlationId(order.getSignalId())
+                .expertId(order.getStrategy())  // source is stored in strategy field
+                .type(ExecutionEventType.SIGNAL_BLOCKED_BY_COOLDOWN)
+                .symbol(order.getSymbol())
+                .direction(order.getSide())
+                .metadata(Map.of("remainingMs", remainingMs, "executionMode", stateMachine.getCurrentMode().name()))
+                .build());
             return false;
         }
 
         // ===== Phase 1: Direction Filter Check =====
         MarketData marketData = getCurrentMarketData();
         if (!shouldExecuteDirection(order, marketData)) {
+            // V6: Publish SIGNAL_BLOCKED_BY_DIRECTION event
+            publishEvent(ExecutionEvent.builder()
+                .correlationId(order.getSignalId())
+                .expertId(order.getStrategy())
+                .type(ExecutionEventType.SIGNAL_BLOCKED_BY_DIRECTION)
+                .symbol(order.getSymbol())
+                .direction(order.getSide())
+                .metadata(marketData != null ? Map.of(
+                    "lastPrice", marketData.getLastPrice(),
+                    "bidPrice", marketData.getBidPrice(),
+                    "askPrice", marketData.getAskPrice()
+                ) : Map.of())
+                .build());
             return false;
         }
 
@@ -199,11 +282,9 @@ public class ExecutionEngine {
                 // Check if execution is stale and should be cleaned up
                 if (existing.getAgeMs() > MAX_EXECUTION_AGE_MS) {
                     activeExecutions.remove(symbol);
-                    System.out.printf("[ExecutionEngine] Removed stale execution for %s (age=%dms)%n",
-                        symbol, existing.getAgeMs());
+                    log.warn("[ExecutionEngine] Removed stale execution for {} (age={}ms)", symbol, existing.getAgeMs());
                 } else {
-                    System.out.printf("[ExecutionEngine] TWAP already active for %s, ignoring (started %d ms ago)%n",
-                        symbol, existing.getAgeMs());
+                    log.debug("[ExecutionEngine] TWAP already active for {}, ignoring (started {} ms ago)", symbol, existing.getAgeMs());
                     return false;
                 }
             }
@@ -213,8 +294,16 @@ public class ExecutionEngine {
         if (riskManager != null) {
             RiskCheckResult result = riskManager.preTradeCheck(order);
             if (!result.isAllowed()) {
-                System.err.printf("[ExecutionEngine] Order rejected by risk: %s%n",
-                    result.getMessage());
+                // V6: Publish SIGNAL_BLOCKED_BY_RISK event
+                publishEvent(ExecutionEvent.builder()
+                    .correlationId(order.getSignalId())
+                    .expertId(order.getStrategy())
+                    .type(ExecutionEventType.SIGNAL_BLOCKED_BY_RISK)
+                    .symbol(order.getSymbol())
+                    .direction(order.getSide())
+                    .metadata(Map.of("reason", result.getMessage(), "ruleTriggered", result.getRuleTriggered()))
+                    .build());
+                log.error("[ExecutionEngine] Order rejected by risk: {}", result.getMessage());
                 rejectedOrders.incrementAndGet();
                 return false;
             }
@@ -224,6 +313,20 @@ public class ExecutionEngine {
 
         if (success) {
             totalOrders.incrementAndGet();
+            // V6: Publish ORDER_SUBMITTED event
+            publishEvent(ExecutionEvent.builder()
+                .correlationId(order.getSignalId())
+                .expertId(order.getStrategy())
+                .type(ExecutionEventType.ORDER_SUBMITTED)
+                .symbol(order.getSymbol())
+                .direction(order.getSide())
+                .metadata(Map.of(
+                    "orderId", order.getOrderId(),
+                    "quantity", order.getQuantity(),
+                    "price", order.getPrice(),
+                    "executionMode", stateMachine.getCurrentMode().name()
+                ))
+                .build());
         }
 
         return success;
@@ -241,7 +344,7 @@ public class ExecutionEngine {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                System.err.println("[ExecutionEngine] Error processing order: " + e.getMessage());
+                log.error("[ExecutionEngine] Error processing order: {}", e.getMessage());
             }
         }
     }
@@ -281,7 +384,7 @@ public class ExecutionEngine {
                     if (notional > 0 && notional < maxNotional) {
                         // Small order - send direct, no TWAP
                         sendOrderDirect(routedOrder, routed.getExchange());
-                        System.out.printf("[ExecutionEngine] Small order notional=%.2f < %.2f, direct send%n",
+                        log.info("[ExecutionEngine] Small order notional={:.2f} < {:.2f}, direct send",
                             notional, maxNotional);
                         continue;
                     }
@@ -308,8 +411,7 @@ public class ExecutionEngine {
             }
 
         } catch (Exception e) {
-            System.err.println("[ExecutionEngine] Failed to process order " +
-                order.getOrderId() + ": " + e.getMessage());
+            log.error("[ExecutionEngine] Failed to process order {}: {}", order.getOrderId(), e.getMessage());
         }
     }
 
@@ -321,8 +423,10 @@ public class ExecutionEngine {
      * - SHORT (开空): use bid (买一) to take buyer's price
      */
     private void sendOrderDirect(Order order, String exchange) {
-        // Adjust price using opponent side for immediate fill
-        double adjustedPrice = order.getPrice();
+        // P3-1: Slippage protection - cap price deviation at 0.05%
+        double limitPrice = order.getPrice();
+        double adjustedPrice = limitPrice;
+
         if (!order.isReduceOnly()) {
             // Opening order: use opponent price for immediate fill
             // LONG (开多): use ask price to immediately take from seller
@@ -337,9 +441,17 @@ public class ExecutionEngine {
                 // 开空：追买一价(bid)，立即吃单成交
                 adjustedPrice = bidPrice;
             }
+
+            // P3-1: Slippage protection - if deviation > 0.05%, use limit price instead
+            double slippagePct = Math.abs(adjustedPrice - limitPrice) / limitPrice;
+            if (slippagePct > 0.0005) { // 0.05%
+                log.warn("[ExecutionEngine] Slippage protection: limit={:.2f}, adjusted={:.2f} ({:.2f}%), using limit",
+                    limitPrice, adjustedPrice, slippagePct * 100);
+                adjustedPrice = limitPrice;
+            }
         }
 
-        System.out.printf("[ExecutionEngine] Sending order %s to %s: %s %s %.4f @ %.2f (adjusted from %.2f)%n",
+        log.info("[ExecutionEngine] Sending order {} to {}: {} {} {:.4f} @ {:.2f} (adjusted from {:.2f})",
             order.getOrderId(), exchange, order.getSide(),
             order.getOrderType(), order.getQuantity(), adjustedPrice, order.getPrice());
 
@@ -375,7 +487,7 @@ public class ExecutionEngine {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                System.err.println("[ExecutionEngine] Error processing report: " + e.getMessage());
+                log.error("[ExecutionEngine] Error processing report: {}", e.getMessage());
             }
         }
     }
@@ -407,7 +519,7 @@ public class ExecutionEngine {
                     // BUY (LONG order) closes SHORT position → getOpposite() = SHORT
                     TradeDirection closedDirection = report.getSide().getOpposite();
                     cooldownManager.onPositionClosed(report.getSymbol(), closedDirection);
-                    System.out.printf("[ExecutionEngine] Position closed: orderSide=%s, closedPosition=%s%n",
+                    log.info("[ExecutionEngine] Position closed: orderSide={}, closedPosition={}",
                         report.getSide(), closedDirection);
                 }
             }
@@ -418,7 +530,7 @@ public class ExecutionEngine {
             riskManager.onExecution(report);
         }
 
-        System.out.printf("[ExecutionEngine] Fill: %s %s %.4f @ %.2f%n",
+        log.info("[ExecutionEngine] Fill: {} {} {:.4f} @ {:.2f}",
             report.getOrderId(),
             report.getSide(),
             report.getFilledQuantity(),
@@ -434,7 +546,7 @@ public class ExecutionEngine {
                 status == com.trading.domain.trading.model.OrderStatus.REJECTED ||
                 status == com.trading.domain.trading.model.OrderStatus.EXPIRED) {
                 activeExecutions.remove(symbol);
-                System.out.printf("[ExecutionEngine] Execution completed for %s: %s%n", symbol, status);
+                log.info("[ExecutionEngine] Execution completed for {}: {}", symbol, status);
             }
         }
     }
@@ -449,18 +561,18 @@ public class ExecutionEngine {
 
                 int queueSize = orderQueue.size();
                 if (queueSize > 500) {
-                    System.err.println("[ExecutionEngine] Warning: Order queue large: " + queueSize);
+                    log.error("[ExecutionEngine] Warning: Order queue large: {}", queueSize);
                 }
 
                 var mode = stateMachine.getCurrentMode();
-                System.out.printf("[ExecutionEngine] Status: mode=%s, queue=%d, total=%d, filled=%d, rejected=%d%n",
+                log.info("[ExecutionEngine] Status: mode={}, queue={}, total={}, filled={}, rejected={}",
                     mode, queueSize, totalOrders.get(), filledOrders.get(), rejectedOrders.get());
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                System.err.println("[ExecutionEngine] Error in monitoring: " + e.getMessage());
+                log.error("[ExecutionEngine] Error in monitoring: {}", e.getMessage());
             }
         }
     }
@@ -496,16 +608,16 @@ public class ExecutionEngine {
      * Print final statistics
      */
     private void printStatistics() {
-        System.out.println("\n=== Execution Engine Statistics ===");
-        System.out.println("Total Orders: " + totalOrders.get());
-        System.out.println("Filled Orders: " + filledOrders.get());
-        System.out.println("Rejected Orders: " + rejectedOrders.get());
+        log.info("=== Execution Engine Statistics ===");
+        log.info("Total Orders: {}", totalOrders.get());
+        log.info("Filled Orders: {}", filledOrders.get());
+        log.info("Rejected Orders: {}", rejectedOrders.get());
 
         double fillRate = totalOrders.get() > 0 ?
             (double) filledOrders.get() / totalOrders.get() * 100 : 0;
-        System.out.printf("Fill Rate: %.2f%%%n", fillRate);
-        System.out.println("Current Mode: " + stateMachine.getCurrentMode());
-        System.out.println("===================================\n");
+        log.info("Fill Rate: {:.2f}%", fillRate);
+        log.info("Current Mode: {}", stateMachine.getCurrentMode());
+        log.info("===================================");
     }
 
     // Getters
@@ -569,7 +681,7 @@ public class ExecutionEngine {
      */
     private boolean shouldIgnoreSignal(String symbol, TradeDirection direction, double confidence) {
         if (cooldownManager.shouldIgnore(symbol, direction, confidence)) {
-            System.out.printf("[ExecutionEngine] Signal cooldown: symbol=%s dir=%s conf=%.2f%n",
+            log.debug("[ExecutionEngine] Signal cooldown: symbol={} dir={} conf={:.2f}",
                 symbol, direction, confidence);
             return true;
         }
@@ -582,7 +694,7 @@ public class ExecutionEngine {
      */
     private boolean shouldIgnoreSignalWithPosition(String symbol, TradeDirection direction, double confidence, double currentPosition) {
         if (cooldownManager.shouldIgnoreWithPosition(symbol, direction, confidence, currentPosition)) {
-            System.out.printf("[ExecutionEngine] Signal cooldown: symbol=%s dir=%s conf=%.2f pos=%.4f%n",
+            log.debug("[ExecutionEngine] Signal cooldown: symbol={} dir={} conf={:.2f} pos={:.4f}",
                 symbol, direction, confidence, currentPosition);
             return true;
         }
@@ -606,7 +718,7 @@ public class ExecutionEngine {
                          (signalDir == TradeDirection.SHORT && marketDir == MarketDirection.DOWN);
 
         if (!aligned) {
-            System.out.printf("[ExecutionEngine] REJECTED: signal=%s market=%s direction mismatch%n",
+            log.warn("[ExecutionEngine] REJECTED: signal={} market={} direction mismatch",
                 signalDir, marketDir);
             rejectedOrders.incrementAndGet();
             return false;

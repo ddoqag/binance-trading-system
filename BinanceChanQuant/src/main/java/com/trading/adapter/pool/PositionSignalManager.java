@@ -8,6 +8,8 @@ import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.TradeIntent;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Position Signal Manager
@@ -24,6 +26,7 @@ import com.trading.domain.trading.model.OrderType;
  */
 public class PositionSignalManager {
 
+    private static final Logger log = LoggerFactory.getLogger(PositionSignalManager.class);
     private final AlphaPool alphaPool;
     private final PositionLifecycleManager lifecycleManager;
     private PositionState currentPosition;
@@ -95,7 +98,7 @@ public class PositionSignalManager {
             intent = intentForEntry(desiredDirection, signalConfidence);
         }
 
-        System.out.printf("[PositionSignalManager] pos=%s, signalConf=%.2f, intent=%s%n",
+        log.info("[PositionSignalManager] pos={}, signalConf={}, intent={}",
             formatPosition(currentPosition), signalConfidence, intent);
 
         return intent;
@@ -111,7 +114,7 @@ public class PositionSignalManager {
 
         double price = context.getCurrentPrice();
         if (price <= 0) {
-            System.out.println("[PositionSignalManager] Cannot create order: no price");
+            log.warn("[PositionSignalManager] Cannot create order: no price");
             return null;
         }
 
@@ -121,7 +124,7 @@ public class PositionSignalManager {
             double qty = calculateEntryQuantity(intent, context);
             RiskModel riskModel = RiskModelFactory.buildRiskModel(price, qty, direction, context);
 
-            System.out.printf("[PositionSignalManager] Created RiskModel: %s%n", riskModel);
+            log.info("[PositionSignalManager] Created RiskModel: {}", riskModel);
 
             // Store the RiskModel for later use (would need to update PositionState)
             // For now, the RiskModel is embedded when position is created
@@ -164,7 +167,7 @@ public class PositionSignalManager {
         TradeDirection direction = quantity > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
         RiskModel riskModel = RiskModelFactory.buildRiskModel(price, quantity, direction, context);
 
-        System.out.printf("[PositionSignalManager] Opening position with RiskModel: %s%n", riskModel);
+        log.info("[PositionSignalManager] Opening position with RiskModel: {}", riskModel);
 
         return PositionState.fromEntry(quantity, price, orderId, equity, riskModel);
     }

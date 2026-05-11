@@ -1,12 +1,20 @@
 package com.trading.adapter.pool;
 
+import com.trading.adapter.chan.validation.ChanSignalValidator;
+import com.trading.domain.signal.AIAlphaSignal;
 import com.trading.domain.signal.AlphaExpert;
 import com.trading.domain.signal.AlphaSignal;
 import com.trading.domain.signal.AlphaType;
+import com.trading.domain.signal.ChanAlphaSignal;
 import com.trading.domain.signal.CompositeAlphaSignal;
+import com.trading.domain.signal.ExecutionEvent;
 import com.trading.domain.signal.MarketContext;
+import com.trading.domain.signal.StructuralBias;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.market.model.MarketRegime;
+import com.trading.adapter.execution.ExecutionEngine;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -23,6 +31,8 @@ import java.util.stream.Collectors;
  */
 public class AlphaPool {
 
+    private static final Logger log = LoggerFactory.getLogger(AlphaPool.class);
+
     private final Map<String, AlphaExpert> experts = new ConcurrentHashMap<>();
     private final List<AlphaSignal> recentSignals = new CopyOnWriteArrayList<>();
 
@@ -32,10 +42,19 @@ public class AlphaPool {
     // Temperature for softmax
     private double temperature = 1.0;
 
+    // V6: ExpertTelemetry - tracks expert participation and blocking stats
+    private final ConcurrentHashMap<String, ExpertTelemetry> expertTelemetry = new ConcurrentHashMap<>();
+
+    // V6: Sliding window size (only track recent N events for灵敏度)
+    private static final int SLIDING_WINDOW_SIZE = 100;
+
+    // V6: Event listener for ExecutionFeedbackBus
+    private ExecutionEngine.ExecutionEventListener eventListener;
+
     public void registerExpert(AlphaExpert expert) {
         if (expert != null) {
             experts.put(expert.getId(), expert);
-            System.out.println("[AlphaPool] Registered expert: " + expert.getId() + " (" + expert.getType() + ")");
+            log.info("[AlphaPool] Registered expert: {} ({})", expert.getId(), expert.getType());
         }
     }
 
@@ -67,29 +86,54 @@ public class AlphaPool {
             return null;
         }
 
-        // Parallel signal collection from all active experts
+        // P1-2: First pass - collect Chan signals to extract bias for AI expert
+        StructuralBias chanBias = StructuralBias.NEUTRAL;
+        AlphaSignal chanSignalForBias = null;
+        for (Map.Entry<String, AlphaExpert> entry : experts.entrySet()) {
+            AlphaExpert expert = entry.getValue();
+            if (expert.isActive() && expert.getType() == AlphaType.CHAN_TREND) {
+                try {
+                    AlphaSignal sig = expert.generate(context);
+                    if (sig != null && sig.getConfidence() > 0 && sig instanceof ChanAlphaSignal) {
+                        chanSignalForBias = sig;
+                        chanBias = extractChanBias((ChanAlphaSignal) sig);
+                        log.debug("[AlphaPool] Chan bias extracted: {} (conf={})", chanBias, sig.getConfidence());
+                    }
+                } catch (Exception e) {
+                    // Ignore
+                }
+            }
+        }
+
+        // P1-2: Set Chan bias on AI expert before signal generation
+        AlphaExpert aiExpert = experts.get("ai");
+        if (aiExpert instanceof AIExpert) {
+            ((AIExpert) aiExpert).setChanBias(chanBias);
+        }
+
+        // Second pass - collect all signals with updated bias
         List<AlphaSignal> signals = experts.values().stream()
             .filter(AlphaExpert::isActive)
             .map(expert -> {
                 try {
                     AlphaSignal sig = expert.generate(context);
                     if (sig == null) {
-                        System.out.println("[AlphaPool] Expert " + expert.getId() + " returned null");
+                        log.warn("[AlphaPool] Expert {} returned null", expert.getId());
                     } else if (sig.getConfidence() <= 0) {
-                        System.out.println("[AlphaPool] Expert " + expert.getId() + " confidence=" + sig.getConfidence());
+                        log.debug("[AlphaPool] Expert {} confidence={}", expert.getId(), sig.getConfidence());
                     } else {
-                        System.out.println("[AlphaPool] Expert " + expert.getId() + " sig conf=" + sig.getConfidence() + " dir=" + sig.getDirection());
+                        log.debug("[AlphaPool] Expert {} sig conf={} dir={}", expert.getId(), sig.getConfidence(), sig.getDirection());
                     }
                     return sig;
                 } catch (Exception e) {
-                    System.err.println("[AlphaPool] Expert " + expert.getId() + " failed: " + e.getMessage());
+                    log.error("[AlphaPool] Expert {} failed: {}", expert.getId(), e.getMessage());
                     return null;
                 }
             })
             .filter(signal -> signal != null && signal.getConfidence() > 0)
             .collect(Collectors.toList());
 
-        System.out.println("[AlphaPool] Collected " + signals.size() + " signals from experts");
+        log.debug("[AlphaPool] Collected {} signals from experts", signals.size());
 
         if (signals.isEmpty()) {
             return null;
@@ -99,8 +143,24 @@ public class AlphaPool {
 
         // Fuse signals
         CompositeAlphaSignal result = fuseSignals(signals, context);
-        System.out.println("[AlphaPool] fuseSignals returned " + (result != null ? "signal" : "null") + " totalSignalsGenerated=" + totalSignalsGenerated.get());
+        log.debug("[AlphaPool] fuseSignals returned {} totalSignalsGenerated={}",
+            result != null ? "signal" : "null", totalSignalsGenerated.get());
         return result;
+    }
+
+    /**
+     * P1-2: Extract StructuralBias from ChanAlphaSignal
+     */
+    private StructuralBias extractChanBias(ChanAlphaSignal chanSignal) {
+        TradeDirection dir = chanSignal.getDirection();
+        double conf = chanSignal.getConfidence();
+
+        if (dir == TradeDirection.LONG) {
+            return conf > 0.7 ? StructuralBias.STRONG_LONG : StructuralBias.WEAK_LONG;
+        } else if (dir == TradeDirection.SHORT) {
+            return conf > 0.7 ? StructuralBias.STRONG_SHORT : StructuralBias.WEAK_SHORT;
+        }
+        return StructuralBias.NEUTRAL;
     }
 
     /**
@@ -128,16 +188,63 @@ public class AlphaPool {
             return null;
         }
 
+        // P2-1: "弃权" - detect opposing signals with low confidence diff
+        if (signals.size() >= 2) {
+            AlphaSignal aiSignal = signals.stream()
+                .filter(s -> s instanceof AIAlphaSignal)
+                .findFirst().orElse(null);
+            AlphaSignal chanSignal = signals.stream()
+                .filter(s -> s instanceof ChanAlphaSignal)
+                .findFirst().orElse(null);
+
+            if (aiSignal != null && chanSignal != null) {
+                boolean directionsOppose = aiSignal.getDirection() != chanSignal.getDirection()
+                    && aiSignal.getDirection() != TradeDirection.NEUTRAL
+                    && chanSignal.getDirection() != TradeDirection.NEUTRAL;
+                double confDiff = Math.abs(aiSignal.getConfidence() - chanSignal.getConfidence());
+
+                if (directionsOppose && confDiff < 0.2) {
+                    log.info("[AlphaPool] Abstention: AI({}) vs Chan({}), diff={}",
+                        aiSignal.getDirection(), chanSignal.getDirection(), String.format("%.2f", confDiff));
+                    return createNeutralSignal(signals);
+                }
+            }
+        }
+
         if (signals.size() == 1) {
-            // Only one expert provided a signal - reduce confidence due to lack of confirmation
-            // But only if we expected multiple experts (at least 2 active experts registered)
+            // Only one expert provided a signal
             int activeExperts = (int) experts.values().stream().filter(AlphaExpert::isActive).count();
             if (activeExperts >= 2) {
                 AlphaSignal singleSignal = signals.get(0);
-                // FIX: Reduced penalty from 20% to 10% - was too aggressive
-                // Also log which expert provided signal for debugging
-                System.out.printf("[AlphaPool] Single-signal (expert=%s, conf=%.2f, expected=%d experts)%n",
+                log.info("[AlphaPool] Single-signal: expert={}, conf={}, expected={} experts",
                     singleSignal.getSource(), singleSignal.getConfidence(), activeExperts);
+
+                // V6: Check if other experts were blocked by cooldown - if so, no penalty
+                boolean hasCooldownBlock = expertTelemetry.values().stream()
+                    .filter(t -> !t.expertId.equals(singleSignal.getSource()))
+                    .anyMatch(ExpertTelemetry::hasRecentCooldownBlock);
+
+                if (hasCooldownBlock) {
+                    log.info("[AlphaPool] Cooldown block detected, skipping penalty for expert={}",
+                        singleSignal.getSource());
+                    CompositeAlphaSignal composite = CompositeAlphaSignal.builder()
+                        .direction(singleSignal.getDirection())
+                        .entryPrice(singleSignal.getEntryPrice())
+                        .stopLossPrice(singleSignal.getStopLossPrice())
+                        .takeProfitPrice(singleSignal.getTakeProfitPrice())
+                        .confidence(singleSignal.getConfidence())  // No penalty
+                        .urgency(singleSignal.getUrgency())
+                        .horizonMinutes(singleSignal.getHorizonMinutes())
+                        .expectedReturn(singleSignal.getExpectedReturn())
+                        .expectedVolatility(singleSignal.getExpectedVolatility())
+                        .source("Composite:" + singleSignal.getSource())
+                        .build();
+                    composite.addComponentSignal(singleSignal);
+                    composite.setType(AlphaType.COMPOSITE);
+                    return composite;
+                }
+
+                // Original: 10% penalty applied
                 double penalizedConf = singleSignal.getConfidence() * 0.9;
                 CompositeAlphaSignal composite = CompositeAlphaSignal.builder()
                     .direction(singleSignal.getDirection())
@@ -301,6 +408,25 @@ public class AlphaPool {
     }
 
     /**
+     * P2-1: Create a neutral/abstention signal when AI and Chan conflict with low confidence diff
+     */
+    private CompositeAlphaSignal createNeutralSignal(List<AlphaSignal> signals) {
+        CompositeAlphaSignal neutral = CompositeAlphaSignal.builder()
+            .direction(TradeDirection.NEUTRAL)
+            .confidence(0.0)
+            .urgency(0.0)
+            .horizonMinutes(5) // Short horizon for neutral
+            .source("AlphaPool:ABSTENTION")
+            .type(AlphaType.COMPOSITE)
+            .build();
+        // Add all component signals for record
+        for (AlphaSignal sig : signals) {
+            neutral.addComponentSignal(sig);
+        }
+        return neutral;
+    }
+
+    /**
      * Get weight for expert
      */
     private double getExpertWeight(String expertId, AlphaType type) {
@@ -362,6 +488,117 @@ public class AlphaPool {
 
         AlphaSignal getSignal() { return signal; }
         double getScore() { return score; }
+    }
+
+    // V6: ExpertTelemetry - tracks per-expert participation with sliding window
+    public static class ExpertTelemetry {
+        private final String expertId;
+        private final AtomicInteger signalsGenerated = new AtomicInteger(0);
+        private final AtomicInteger signalsBlockedByCooldown = new AtomicInteger(0);
+        private final AtomicInteger signalsBlockedByRisk = new AtomicInteger(0);
+        private final AtomicInteger signalsAbstained = new AtomicInteger(0);
+        private final AtomicInteger signalsProfitable = new AtomicInteger(0);
+        private final AtomicInteger signalsLoss = new AtomicInteger(0);
+        private final long windowStartTime = System.currentTimeMillis();
+
+        // P2 FIX: Sliding window - track cooldown blocks with timestamps
+        private volatile long lastCooldownBlockTime = 0;
+        private static final long COOLDOWN_BLOCK_WINDOW_MS = 60_000; // 60 seconds sliding window
+
+        public ExpertTelemetry(String expertId) {
+            this.expertId = expertId;
+        }
+
+        public void recordGenerated() { signalsGenerated.incrementAndGet(); }
+        public void recordBlockedByCooldown() {
+            signalsBlockedByCooldown.incrementAndGet();
+            lastCooldownBlockTime = System.currentTimeMillis();
+        }
+        public void recordBlockedByRisk() { signalsBlockedByRisk.incrementAndGet(); }
+        public void recordAbstained() { signalsAbstained.incrementAndGet(); }
+        public void recordProfitable() { signalsProfitable.incrementAndGet(); }
+        public void recordLoss() { signalsLoss.incrementAndGet(); }
+
+        public int getSignalsGenerated() { return signalsGenerated.get(); }
+        public int getSignalsBlockedByCooldown() { return signalsBlockedByCooldown.get(); }
+        public int getSignalsBlockedByRisk() { return signalsBlockedByRisk.get(); }
+        public int getSignalsAbstained() { return signalsAbstained.get(); }
+
+        // V6: Participation rate - signals generated / (generated + blocked)
+        public double getParticipationRate() {
+            int total = signalsGenerated.get() + signalsBlockedByCooldown.get() + signalsBlockedByRisk.get();
+            return total > 0 ? (double) signalsGenerated.get() / total : 1.0;
+        }
+
+        // P2 FIX: Has cooldown block within sliding window? Used for single-signal penalty exemption
+        public boolean hasRecentCooldownBlock() {
+            if (lastCooldownBlockTime == 0) return false;
+            long elapsed = System.currentTimeMillis() - lastCooldownBlockTime;
+            return elapsed < COOLDOWN_BLOCK_WINDOW_MS;
+        }
+    }
+
+    /**
+     * V6: Set execution event listener to receive ExecutionFeedbackBus events
+     */
+    public void setEventListener(ExecutionEngine.ExecutionEventListener listener) {
+        this.eventListener = listener;
+    }
+
+    /**
+     * V6: Handle execution event from ExecutionEngine
+     */
+    public void onExecutionEvent(ExecutionEvent event) {
+        if (event == null || event.expertId() == null) return;
+
+        String expertId = event.expertId();
+        ExpertTelemetry tel = expertTelemetry.computeIfAbsent(expertId, ExpertTelemetry::new);
+
+        switch (event.type()) {
+            case SIGNAL_GENERATED:
+                tel.recordGenerated();
+                break;
+            case SIGNAL_BLOCKED_BY_COOLDOWN:
+                tel.recordBlockedByCooldown();
+                break;
+            case SIGNAL_BLOCKED_BY_RISK:
+                tel.recordBlockedByRisk();
+                break;
+            case SIGNAL_ABSTAINED:
+                tel.recordAbstained();
+                break;
+            case SIGNAL_PROFITABLE:
+                tel.recordProfitable();
+                break;
+            case SIGNAL_LOSS:
+                tel.recordLoss();
+                break;
+            default:
+                // Other event types - ignore for telemetry
+                break;
+        }
+    }
+
+    /**
+     * V6: Check if any expert was recently blocked by cooldown
+     */
+    private boolean hasCooldownBlockInRecentSignals() {
+        return expertTelemetry.values().stream()
+            .anyMatch(ExpertTelemetry::hasRecentCooldownBlock);
+    }
+
+    /**
+     * V6: Get telemetry for an expert
+     */
+    public ExpertTelemetry getExpertTelemetry(String expertId) {
+        return expertTelemetry.get(expertId);
+    }
+
+    /**
+     * V6: Get all telemetry data
+     */
+    public Map<String, ExpertTelemetry> getAllTelemetry() {
+        return new ConcurrentHashMap<>(expertTelemetry);
     }
 
     public static class PoolStatus {

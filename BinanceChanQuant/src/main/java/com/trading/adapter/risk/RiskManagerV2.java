@@ -13,6 +13,8 @@ import com.trading.domain.trading.risk.RiskStateEngine;
 import com.trading.domain.trading.risk.PositionTracker;
 import com.trading.domain.signal.AlphaSignal;
 import com.trading.domain.signal.CompositeAlphaSignal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -25,17 +27,10 @@ import java.util.concurrent.atomic.AtomicLong;
 /**
  * RiskManagerV2 - 机构级风控系统
  * 替换 PreTradeRiskChecker，实现完整的风险管理
- *
- * Features:
- * 1. PositionTracker - 实时仓位/均价/浮盈亏追踪
- * 2. RiskStateEngine - 三态风险状态机 (NORMAL/CAUTION/KILL)
- * 3. 仓位限制 - maxPosition, maxExposure
- * 4. 浮亏止损 - unrealizedPnlLimit
- * 5. 回撤熔断 - drawdownLimit
- * 6. 频率控制 - rateLimit
- * 7. 连亏控制 - consecutiveLossLimit
  */
 public class RiskManagerV2 implements RiskManager {
+
+    private static final Logger log = LoggerFactory.getLogger(RiskManagerV2.class);
 
     // ========== 配置参数 ==========
     private final double maxPosition;           // 最大仓位（BTC）
@@ -218,8 +213,7 @@ public class RiskManagerV2 implements RiskManager {
 
         if (newState != currentState) {
             currentState = newState;
-            System.out.printf("[RiskManagerV2] State: %s | equity=%.2f | drawdown=%.2f%% | exposureRatio=%.2f%n",
-                newState, equity, drawdown * 100, exposureRatio);
+            log.info("[RiskManagerV2] State: {} | equity={} | drawdown={}% | exposureRatio={}", newState, equity, drawdown * 100, exposureRatio);
         }
     }
 
@@ -483,8 +477,7 @@ public class RiskManagerV2 implements RiskManager {
 
         // 验证状态转换
         if (!isValidTransition(oldState, newState)) {
-            System.out.printf("[RiskManagerV2] Invalid state transition: %s -> %s%n",
-                oldState, newState);
+            log.warn("[RiskManagerV2] Invalid state transition: {} -> {}", oldState, newState);
             return false;
         }
 
@@ -493,8 +486,7 @@ public class RiskManagerV2 implements RiskManager {
             killReason = reason != null ? reason : "MANUAL_KILL";
         }
 
-        System.out.printf("[RiskManagerV2] Manual state switch: %s -> %s by %s%n",
-            oldState, newState, reason);
+        log.info("[RiskManagerV2] Manual state switch: {} -> {} by {}", oldState, newState, reason);
 
         return true;
     }
@@ -507,8 +499,7 @@ public class RiskManagerV2 implements RiskManager {
         currentState = RiskState.KILL;
         killReason = reason != null ? reason : "MANUAL_KILL";
 
-        System.out.printf("[RiskManagerV2] KILL SWITCH TRIGGERED: %s -> KILL by %s%n",
-            oldState, killReason);
+        log.warn("[RiskManagerV2] KILL SWITCH TRIGGERED: {} -> KILL by {}", oldState, killReason);
     }
 
     /**
@@ -519,7 +510,7 @@ public class RiskManagerV2 implements RiskManager {
             return false;
         }
 
-        System.out.printf("[RiskManagerV2] Recovering to NORMAL: %s%n", reason);
+        log.info("[RiskManagerV2] Recovering to NORMAL: {}", reason);
         currentState = RiskState.NORMAL;
         killReason = "";
         return true;

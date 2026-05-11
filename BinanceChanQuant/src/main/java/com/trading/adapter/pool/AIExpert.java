@@ -9,6 +9,8 @@ import com.trading.domain.signal.AlphaType;
 import com.trading.domain.signal.MarketContext;
 import com.trading.domain.signal.StructuralBias;
 import com.trading.domain.trading.model.TradeDirection;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
@@ -19,6 +21,8 @@ import java.util.Map;
  * Architecture: Chan = Bias, AI = Timing
  */
 public class AIExpert extends AlphaExpert.BaseAlphaExpert {
+
+    private static final Logger log = LoggerFactory.getLogger(AIExpert.class);
 
     private final MetaLearner metaLearner;
     private StructuralBias lastChanBias = StructuralBias.NEUTRAL;
@@ -85,7 +89,7 @@ public class AIExpert extends AlphaExpert.BaseAlphaExpert {
             return builder.build();
 
         } catch (Exception e) {
-            System.err.println("[AIExpert] Signal generation failed: " + e.getMessage());
+            log.error("[AIExpert] Signal generation failed: {}", e.getMessage());
             return null;
         }
     }
@@ -107,14 +111,13 @@ public class AIExpert extends AlphaExpert.BaseAlphaExpert {
 
             // Strong conflict: AI says buy but Chan says strong short
             if (!aiBullish && lastChanBias == StructuralBias.STRONG_SHORT) {
-                System.out.println("[AIExpert] Bias conflict: AI wants SHORT but Chan STRONG_SHORT, sticking with SHORT");
+                log.info("[AIExpert] Bias conflict: AI wants SHORT but Chan STRONG_SHORT, sticking with SHORT");
                 // Keep AI direction but note the conflict
             }
 
             // Strong alignment: AI and Chan agree
             if ((aiBullish && chanBullish) || (!aiBullish && !chanBullish)) {
-                System.out.printf("[AIExpert] Bias aligned: AI=%s Chan=%s (%.2f)%n",
-                    aiDirection, lastChanBias.name(), lastChanBias.getBiasScore());
+                log.info("[AIExpert] Bias aligned: AI={} Chan={} ({})", aiDirection, lastChanBias.name(), lastChanBias.getBiasScore());
             }
         }
 

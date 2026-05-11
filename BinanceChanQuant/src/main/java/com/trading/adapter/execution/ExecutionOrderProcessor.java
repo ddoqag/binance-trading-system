@@ -5,6 +5,8 @@ import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.risk.RiskManager;
 import com.trading.domain.market.model.MarketData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -21,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * - Manage active executions
  */
 public class ExecutionOrderProcessor {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutionOrderProcessor.class);
 
     private final RiskManager riskManager;
     private final BinanceExchangeAdapter exchangeAdapter;
@@ -74,7 +78,7 @@ public class ExecutionOrderProcessor {
 
                     if (notional > 0 && notional < maxNotional) {
                         sendOrderDirect(routedOrder, routed.getExchange());
-                        System.out.printf("[ExecutionOrderProcessor] Small order direct: notional=%.2f%n", notional);
+                        log.info("[ExecutionOrderProcessor] Small order direct: notional={}", notional);
                         continue;
                     }
 
@@ -90,7 +94,7 @@ public class ExecutionOrderProcessor {
             }
 
         } catch (Exception e) {
-            System.err.println("[ExecutionOrderProcessor] Failed to process order: " + e.getMessage());
+            log.error("[ExecutionOrderProcessor] Failed to process order: {}", e.getMessage());
         }
     }
 
@@ -137,8 +141,7 @@ public class ExecutionOrderProcessor {
     }
 
     private void sendOrderDirect(Order order, String exchange) {
-        System.out.printf("[ExecutionOrderProcessor] Sending order: %s %s %.4f @ %.2f%n",
-            order.getSide(), order.getOrderType(), order.getQuantity(), order.getPrice());
+        log.info("[ExecutionOrderProcessor] Sending order: {} {} {} @ {}", order.getSide(), order.getOrderType(), order.getQuantity(), order.getPrice());
 
         ExecutionReport report = exchangeAdapter.sendOrder(order);
         if (report != null) {

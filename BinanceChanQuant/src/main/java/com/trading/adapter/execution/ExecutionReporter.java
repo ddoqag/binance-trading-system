@@ -4,6 +4,8 @@ import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.risk.RiskManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,6 +21,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * - Notify risk manager of fills
  */
 public class ExecutionReporter {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutionReporter.class);
 
     private final RiskManager riskManager;
     private final BinanceExchangeAdapter exchangeAdapter;
@@ -52,11 +56,7 @@ public class ExecutionReporter {
         }
 
         // Log fill
-        System.out.printf("[ExecutionReporter] Fill: %s %s %.4f @ %.2f%n",
-            report.getOrderId(),
-            report.getSide(),
-            report.getFilledQuantity(),
-            report.getAvgFillPrice());
+        log.info("[ExecutionReporter] Fill: {} {} {} @ {}", report.getOrderId(), report.getSide(), report.getFilledQuantity(), report.getAvgFillPrice());
 
         // Remove from active executions on completion
         removeOnCompletion(report);
@@ -77,8 +77,7 @@ public class ExecutionReporter {
         if (positionClosed) {
             TradeDirection closedDirection = report.getSide().getOpposite();
             cooldownManager.onPositionClosed(report.getSymbol(), closedDirection);
-            System.out.printf("[ExecutionReporter] Position closed: orderSide=%s, closedPosition=%s%n",
-                report.getSide(), closedDirection);
+            log.info("[ExecutionReporter] Position closed: orderSide={}, closedPosition={}", report.getSide(), closedDirection);
         }
     }
 
@@ -92,7 +91,7 @@ public class ExecutionReporter {
                 status == OrderStatus.REJECTED ||
                 status == OrderStatus.EXPIRED) {
                 activeExecutions.remove(symbol);
-                System.out.printf("[ExecutionReporter] Execution completed for %s: %s%n", symbol, status);
+                log.info("[ExecutionReporter] Execution completed for {}: {}", symbol, status);
             }
         }
     }

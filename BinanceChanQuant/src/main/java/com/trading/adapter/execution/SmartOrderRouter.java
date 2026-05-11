@@ -4,6 +4,8 @@ import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderType;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.market.model.MarketData;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -14,6 +16,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Routes orders based on size, urgency, and market conditions
  */
 public class SmartOrderRouter {
+
+    private static final Logger log = LoggerFactory.getLogger(SmartOrderRouter.class);
 
     // Exchange status
     private final Map<String, ExchangeStatus> exchanges = new ConcurrentHashMap<>();
@@ -69,8 +73,7 @@ public class SmartOrderRouter {
         for (RoutingRule rule : routingRules) {
             List<RoutedOrder> result = rule.apply(order, context);
             if (result != null && !result.isEmpty()) {
-                System.out.printf("[SmartOrderRouter] Applied rule: %s, generated %d slices%n",
-                    rule.getName(), result.size());
+                log.info("[SmartOrderRouter] Applied rule: {}, generated {} slices", rule.getName(), result.size());
                 return result;
             }
         }

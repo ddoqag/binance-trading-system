@@ -7,6 +7,9 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * 冠军-挑战者管理器 - 策略自动进化引擎
  *
@@ -25,6 +28,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * - WINDOW_SIZE: 绩效快照窗口大小（默认50）
  */
 public class ChampionChallengerManager {
+    private static final Logger log = LoggerFactory.getLogger(ChampionChallengerManager.class);
+
     private static final int MUTATION_COUNT = 5;
     private static final int EVALUATION_MINUTES = 30;
     private static final double PROMOTION_THRESHOLD = 1.1;
@@ -39,7 +44,7 @@ public class ChampionChallengerManager {
     private volatile boolean running = true;
 
     public ChampionChallengerManager() {
-        System.out.println("[ChampionChallenger] Manager initialized");
+        log.info("[ChampionChallenger] Manager initialized");
     }
 
     public void stop() {
@@ -47,7 +52,7 @@ public class ChampionChallengerManager {
         activeRunners.values().forEach(this::stopRunners);
         scheduler.shutdownNow();
         runnerExecutor.shutdownNow();
-        System.out.println("[ChampionChallenger] Manager stopped");
+        log.info("[ChampionChallenger] Manager stopped");
     }
 
     /**
@@ -56,7 +61,7 @@ public class ChampionChallengerManager {
     public void registerChampion(String strategyId, StrategyPlugin plugin) {
         PluginVariant champion = new PluginVariant(strategyId, "champion", plugin, 1.0);
         champions.put(strategyId, champion);
-        System.out.println("[ChampionChallenger] Registered champion for " + strategyId);
+        log.info("[ChampionChallenger] Registered champion for {}", strategyId);
     }
 
     /**
@@ -67,7 +72,7 @@ public class ChampionChallengerManager {
 
         PluginVariant champion = champions.get(strategyId);
         if (champion == null) {
-            System.err.println("[ChampionChallenger] No champion found for " + strategyId);
+            log.warn("[ChampionChallenger] No champion found for {}", strategyId);
             return;
         }
 
@@ -84,8 +89,7 @@ public class ChampionChallengerManager {
             evaluateAndPromote(strategyId, champion, runners);
         }, EVALUATION_MINUTES, TimeUnit.MINUTES);
 
-        System.out.println("[ChampionChallenger] Started evolution for " + strategyId +
-            " - " + MUTATION_COUNT + " challengers, evaluation in " + EVALUATION_MINUTES + " min");
+        log.info("[ChampionChallenger] Started evolution for {} - {} challengers, evaluation in {} min", strategyId, MUTATION_COUNT, EVALUATION_MINUTES);
     }
 
     private List<PluginVariant> generateMutations(PluginVariant base, int count) {
@@ -145,20 +149,17 @@ public class ChampionChallengerManager {
             FitnessResult bestFitness = best.get().getValue();
             FitnessResult championFitness = new FitnessResult(0, 0, 0, 0, 0, 0); // 冠军未运行
 
-            System.out.println("[ChampionChallenger] Evaluation results for " + strategyId + ":");
-            results.forEach((id, fitness) ->
-                System.out.println("  " + id + ": " + fitness)
-            );
+            log.info("[ChampionChallenger] Evaluation results for {}:", strategyId);
+            results.forEach((id, fitness) -> log.debug("  {}: {}", id, fitness));
 
             // 检查是否应该晋升
             if (shouldPromote(bestFitness, championFitness)) {
                 promoteChallenger(strategyId, bestId, bestFitness);
             } else {
-                System.out.println("[ChampionChallenger] No promotion - best challenger " +
-                    "did not outperform champion by threshold");
+                log.info("[ChampionChallenger] No promotion - best challenger did not outperform champion by threshold");
             }
         } else {
-            System.out.println("[ChampionChallenger] No valid challengers for " + strategyId);
+            log.info("[ChampionChallenger] No valid challengers for {} - insufficient trades", strategyId);
         }
 
         activeRunners.remove(strategyId);
@@ -166,7 +167,7 @@ public class ChampionChallengerManager {
         // 持续进化：评估后自动启动新一轮
         if (running && champions.containsKey(strategyId)) {
             long delayMinutes = EVALUATION_MINUTES;
-            System.out.println("[ChampionChallenger] Scheduling next evolution in " + delayMinutes + " min");
+            log.info("[ChampionChallenger] Scheduling next evolution in {} min", delayMinutes);
             scheduler.schedule(() -> {
                 if (running && champions.containsKey(strategyId)) {
                     evolve(strategyId);
@@ -184,8 +185,7 @@ public class ChampionChallengerManager {
     }
 
     private void promoteChallenger(String strategyId, String challengerId, FitnessResult fitness) {
-        System.out.println("[ChampionChallenger] PROMOTING " + challengerId +
-            " with fitness " + fitness);
+        log.info("[ChampionChallenger] PROMOTING {} with fitness {}", challengerId, fitness);
         // 实际晋升逻辑会在后续版本实现
         // 目前主要是收集数据和日志
     }

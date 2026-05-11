@@ -5,6 +5,8 @@ import com.trading.domain.trading.model.PositionState;
 import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.TradeIntent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Position Lifecycle Manager
@@ -23,6 +25,8 @@ import com.trading.domain.trading.model.TradeIntent;
  * Key principle: Price-based stops, NOT equity-based.
  */
 public class PositionLifecycleManager {
+
+    private static final Logger log = LoggerFactory.getLogger(PositionLifecycleManager.class);
 
     // Configuration - ATR-based (market structure)
     private final double atrStopMultiplier;           // ATR multiplier for primary stop
@@ -90,8 +94,7 @@ public class PositionLifecycleManager {
         // ========== Layer 2: ATR Stop (PRIMARY) ==========
         if (riskModel != null && riskModel.getAtrStopPrice() > 0) {
             if (riskModel.isAtrStopHit(currentPrice)) {
-                System.out.printf("[Lifecycle] EXIT: ATR Stop hit, price=%.2f < stop=%.2f%n",
-                    currentPrice, riskModel.getAtrStopPrice());
+                log.info("[Lifecycle] EXIT: ATR Stop hit, price={}, stop={}", currentPrice, riskModel.getAtrStopPrice());
                 return intentForClose(position.getDirection());
             }
         }
@@ -99,7 +102,7 @@ public class PositionLifecycleManager {
         // ========== Layer 3: Structure Break (if available) ==========
         if (riskModel != null && riskModel.getStructureStopPrice() > 0) {
             if (riskModel.isStructureStopHit(currentPrice)) {
-                System.out.printf("[Lifecycle] EXIT: Structure break, price=%.2f%n", currentPrice);
+                log.info("[Lifecycle] EXIT: Structure break, price={}", currentPrice);
                 return intentForClose(position.getDirection());
             }
         }
@@ -112,8 +115,7 @@ public class PositionLifecycleManager {
                 ? currentPrice <= chandelierStop
                 : currentPrice >= chandelierStop;
             if (chandelierHit) {
-                System.out.printf("[Lifecycle] EXIT: Chandelier stop hit, price=%.2f, stop=%.2f%n",
-                    currentPrice, chandelierStop);
+                log.info("[Lifecycle] EXIT: Chandelier stop hit, price={}, stop={}", currentPrice, chandelierStop);
                 return intentForClose(position.getDirection());
             }
         }
@@ -121,40 +123,35 @@ public class PositionLifecycleManager {
         // ========== Layer 5: Alpha Decay ==========
         if (signalConfidence < exitConfidenceThreshold) {
             if (signalConfidence >= minExitConfidence) {
-                System.out.printf("[Lifecycle] EXIT: Alpha faded, conf=%.2f < %.2f%n",
-                    signalConfidence, exitConfidenceThreshold);
+                log.info("[Lifecycle] EXIT: Alpha faded, conf={}", signalConfidence);
                 return intentForClose(position.getDirection());
             }
         }
 
         // ========== Layer 6: Reverse Signal ==========
         if (signalDirection != null && isReverseSignal(position.getDirection(), signalDirection)) {
-            System.out.printf("[Lifecycle] EXIT: Reverse signal, pos=%s, signal=%s%n",
-                position.getDirection(), signalDirection);
+            log.info("[Lifecycle] EXIT: Reverse signal, pos={}, signal={}", position.getDirection(), signalDirection);
             return intentForClose(position.getDirection());
         }
 
         // ========== Layer 7: Time Stop ==========
         long holdMinutes = position.getHoldingTimeMinutes();
         if (holdMinutes > maxHoldMinutes) {
-            System.out.printf("[Lifecycle] EXIT: Timeout %d min > %d max%n",
-                holdMinutes, maxHoldMinutes);
+            log.info("[Lifecycle] EXIT: Timeout {} min > {} max", holdMinutes, maxHoldMinutes);
             return intentForClose(position.getDirection());
         }
 
         // ========== Layer 8: Catastrophic Stop (Circuit Breaker) ==========
         double pnlPercent = calculatePnlPercent(position);
         if (pnlPercent < -catastrophicLossPercent) {
-            System.out.printf("[Lifecycle] EXIT: Catastrophic stop, PnL=%.2f%% < -%.2f%%%n",
-                pnlPercent, catastrophicLossPercent);
+            log.warn("[Lifecycle] EXIT: Catastrophic stop, PnL={}%", pnlPercent);
             return intentForClose(position.getDirection());
         }
 
         // ========== Layer 9: Take Profit (optional) ==========
         if (riskModel != null && riskModel.getTakeProfitPrice() > 0) {
             if (riskModel.isTakeProfitHit(currentPrice)) {
-                System.out.printf("[Lifecycle] EXIT: Take profit hit, price=%.2f >= tp=%.2f%n",
-                    currentPrice, riskModel.getTakeProfitPrice());
+                log.info("[Lifecycle] EXIT: Take profit hit, price={}", currentPrice);
                 return intentForClose(position.getDirection());
             }
         }

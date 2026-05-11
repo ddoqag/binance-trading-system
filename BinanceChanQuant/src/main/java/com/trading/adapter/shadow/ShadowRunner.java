@@ -6,6 +6,8 @@ import state.ChanMarketState;
 import state.TradeDirection;
 import state.TradeSignal;
 import chan.ChanPricePoint;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.DoubleStream;
@@ -14,6 +16,8 @@ import java.util.stream.DoubleStream;
  * 影子回测运行器 - 在实时行情上进行零影响的回测
  */
 public class ShadowRunner implements Runnable {
+
+    private static final Logger log = LoggerFactory.getLogger(ShadowRunner.class);
     private final String id;
     private final StrategyPlugin plugin;
     private final ShadowExecutionBook book;
@@ -37,13 +41,13 @@ public class ShadowRunner implements Runnable {
     public void run() {
         running.set(true);
         plugin.init();
-        System.out.println("[ShadowRunner:" + id + "] Started with windowSize=" + windowSize);
+        log.info("[ShadowRunner:{}] Started with windowSize={}", id, windowSize);
     }
 
     public void stop() {
         running.set(false);
         plugin.stop();
-        System.out.println("[ShadowRunner:" + id + "] Stopped - Fitness=" + getFitness());
+        log.info("[ShadowRunner:{}] Stopped - Fitness={}", id, getFitness());
     }
 
     public void onMarketData(MarketData data) {
@@ -89,7 +93,7 @@ public class ShadowRunner implements Runnable {
         // Debug: log first 10 signals
         if (snapshots.size() < 10) {
             String dir = (signal == null) ? "NULL" : signal.direction.name();
-            System.out.println("[ShadowRunner:" + id + "] state=" + currentState + " signal=" + dir + " price=" + smd.getPrice());
+            log.debug("[ShadowRunner:{}] state={} signal={} price={}", id, currentState, dir, smd.getPrice());
         }
         return signal;
     }

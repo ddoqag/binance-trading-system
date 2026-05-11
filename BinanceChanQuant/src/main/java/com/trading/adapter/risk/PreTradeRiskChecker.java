@@ -5,6 +5,8 @@ import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.risk.RiskManager;
 import com.trading.domain.trading.risk.RiskCheckResult;
 import com.trading.domain.trading.risk.CircuitBreaker;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -16,6 +18,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Implements RiskManager interface with comprehensive pre-trade risk checks
  */
 public class PreTradeRiskChecker implements RiskManager {
+
+    private static final Logger log = LoggerFactory.getLogger(PreTradeRiskChecker.class);
 
     // Configuration
     private final double maxPosition;
@@ -197,7 +201,7 @@ public class PreTradeRiskChecker implements RiskManager {
                     lossCircuitBreaker.recordFailure();
 
                     if (consecutiveLosses.get() >= 3) {
-                        System.err.println("[PreTradeRiskChecker] Consecutive losses detected: " + consecutiveLosses.get());
+                        log.error("[PreTradeRiskChecker] Consecutive losses detected: {}", consecutiveLosses.get());
                     }
                 } else {
                     consecutiveLosses.set(0);
@@ -301,8 +305,7 @@ public class PreTradeRiskChecker implements RiskManager {
     public void updateBalance(double balance) {
         this.availableBalance = balance;
         if (balance > 0 && balance < MIN_BALANCE_FOR_NEW_POSITION) {
-            System.out.printf("[PreTradeRiskChecker] WARNING: Low balance alert: %.4f USDT (min: %.1f)%n",
-                balance, MIN_BALANCE_FOR_NEW_POSITION);
+            log.warn("[PreTradeRiskChecker] Low balance alert: {} USDT (min: {})", balance, MIN_BALANCE_FOR_NEW_POSITION);
         }
     }
 
@@ -360,8 +363,7 @@ public class PreTradeRiskChecker implements RiskManager {
                                  (positionCircuitBreaker.isOpen() && positionRecoverable);
 
         if (shouldRecover) {
-            System.out.printf("[PreTradeRiskChecker] Recovery check: profit=%.4f (%.1f%%), recovering circuits%n",
-                unrealizedPnl, profitRatio * 100);
+            log.info("[PreTradeRiskChecker] Recovery check: profit={} ({:.1f}%), recovering circuits", unrealizedPnl, profitRatio * 100);
         }
 
         return shouldRecover;
@@ -376,25 +378,25 @@ public class PreTradeRiskChecker implements RiskManager {
 
         if (lossCircuitBreaker.isOpen()) {
             lossCircuitBreaker.forceState(CircuitBreaker.State.CLOSED);
-            System.out.println("[PreTradeRiskChecker] Loss circuit breaker reset");
+            log.info("[PreTradeRiskChecker] Loss circuit breaker reset");
             anyReset = true;
         }
 
         if (orderCircuitBreaker.isOpen()) {
             orderCircuitBreaker.forceState(CircuitBreaker.State.CLOSED);
-            System.out.println("[PreTradeRiskChecker] Order circuit breaker reset");
+            log.info("[PreTradeRiskChecker] Order circuit breaker reset");
             anyReset = true;
         }
 
         if (positionCircuitBreaker.isOpen()) {
             positionCircuitBreaker.forceState(CircuitBreaker.State.CLOSED);
-            System.out.println("[PreTradeRiskChecker] Position circuit breaker reset");
+            log.info("[PreTradeRiskChecker] Position circuit breaker reset");
             anyReset = true;
         }
 
         if (anyReset) {
             consecutiveLosses.set(0);
-            System.out.println("[PreTradeRiskChecker] All circuit breakers reset, trading resumed");
+            log.info("[PreTradeRiskChecker] All circuit breakers reset, trading resumed");
         }
 
         return anyReset;
