@@ -1,5 +1,285 @@
 # 交易系统优化跟踪
 
+## 2026/05/11 16:50 - 实盘监控更新 (正常开仓)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ BUILD SUCCESS |
+| 交易进程 | ✅ **运行中** |
+| 运行模式 | **LIVE** (testnet=false, HEDGE) |
+| 进程类型 | ChanWebSocketLauncher |
+| Execution模式 | PASSIVE |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| 进程状态 | ✅ 运行中 |
+| 仓位 | **LONG +0.0010 @ 81205.70** |
+| 未实现Pnl | -0.02 USDT (轻微亏损) |
+| 余额 | 14.5424 USDT |
+| 可用余额 | 6.3997 USDT |
+| TWAP状态 | POSITION_MATCHED (正确停止) |
+| 错误状态 | ✅ -2022错误未出现 |
+
+**订单执行正常**:
+- TWAP第一slice成交 → 持仓LONG 0.0010
+- 第二slice检测到同向仓位 → 正确停止 (POSITION_MATCHED)
+- 无-2022错误，开仓成功
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| AlphaPool experts | ✅ 2/2 (ai + chan) |
+| 信号生成 | ✅ totalSignalsGenerated=4 |
+| 信号融合 | ✅ 正常工作 |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Conf | Direction |
+|--------|------|-----------|
+| AI | 0.6 | SHORT |
+| Chan | 0.7 | LONG |
+| **融合** | ⚠️ 信号冲突 (AI空, Chan多) |
+
+**信号冲突**:
+```
+[AlphaPool] Expert ai sig conf=0.6 dir=SHORT
+[AlphaPool] Expert chan sig conf=0.7 dir=LONG
+```
+- AI专家看空，Chan专家看多
+- 系统选择了Chan的LONG方向开仓
+- 这是之前冲突解决逻辑在发挥作用
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 |
+|------|------|
+| WebSocket | ✅ 4个连接全部正常 |
+| REST API | ✅ 正常 |
+| Heartbeat | ✅ Connection alive |
+
+#### 5) 错误或异常
+
+| 问题 | 状态 |
+|------|------|
+| -2022 ReduceOnly错误 | ✅ **未出现** (已修复) |
+| -1106 reduceonly错误 | ✅ 未出现 |
+| -4061 positionSide错误 | ✅ 未出现 |
+| 信号冲突 | ⚠️ AI/Chan方向相反，已解决 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| P2 | **信号冲突** | AI=SHORT, Chan=LONG, 已选择Chan方向 |
+| P3 | 未实现Pnl为负 | -0.02U，需关注 |
+
+### 优化建议
+
+1. **监控信号冲突** - AI和Chan方向相反时，需确认冲突解决逻辑是否最优
+2. **Pnl监控** - 当前-0.02U，考虑止损设置是否合理
+3. **继续观察** - 系统运行正常，保持监控
+
+---
+
+## 2026/05/11 16:35 - 实盘监控更新 (-2022错误重现)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ BUILD SUCCESS |
+| 交易进程 | ✅ **运行中** |
+| 运行模式 | **PAPER** |
+| 进程类型 | TradingSystemLauncher |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| 进程状态 | ✅ 运行中 |
+| 仓位 | **0** (无持仓) |
+| 余额 | 14.5830 USDT |
+| Execution模式 | PASSIVE |
+
+**关键问题 - -2022错误重现**:
+```
+[BinanceAdapter] Sending order: symbol=BTCUSDT, side=SELL, type=LIMIT, qty=0.001, price=81151.90, mode=HEDGE, positionSide=LONG, reduceOnly=true
+[BinanceAdapter] Order failed: {"code":-2022,"msg":"ReduceOnly Order is rejected."}
+```
+
+**问题分析**:
+1. `positionSide=LONG` + `side=SELL` + `reduceOnly=true` 在 HEDGE 模式下矛盾
+2. HEDGE模式不支持reduceOnly参数 (会导致-1106错误)
+3. 本地缓存currentPos非零，但实际交易所position=0
+4. reduceOnly=true被设置，但此时无持仓可平
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| AlphaPool experts | ✅ 2/2 (ai + chan) |
+| 信号融合 | ✅ 正常 |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Conf | Direction |
+|--------|------|-----------|
+| AI | 0.6 | SHORT |
+| Chan | 0.7 | SHORT |
+| **融合** | ✅ 信号共振 |
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 |
+|------|------|
+| REST API | ✅ 正常 (账户查询正常) |
+| Heartbeat | ✅ Connection alive |
+
+#### 5) 错误或异常
+
+| 问题 | 状态 |
+|------|------|
+| **-2022 ReduceOnly错误** | ❌ **重现** - reduceOnly在HEDGE模式被拒绝 |
+| reduceOnly in HEDGE | ❌ HEDGE模式不应设置reduceOnly |
+| positionSide矛盾 | ❌ positionSide=LONG + side=SELL逻辑混乱 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| P0 | **-2022错误重现** | reduceOnly=true在HEDGE模式被拒绝 |
+| P0 | **reduceOnly参数错误** | HEDGE模式不应设置reduceOnly |
+| P1 | positionSide逻辑 | LONG + SELL = 矛盾订单 |
+| P2 | 仓位缓存不一致 | local currentPos != 交易所实际position |
+
+### 优化建议
+
+1. **移除HEDGE模式的reduceOnly** - HEDGE模式应该只用positionSide来标识开平
+2. **修复TWAP slices的reduceOnly** - 检查AlgoExecutionEngine如何设置reduceOnly
+3. **positionSide + side一致性** - 确认组合逻辑正确:
+   - 平多: side=SELL, positionSide=LONG
+   - 平空: side=BUY, positionSide=SHORT
+   - 开多: side=BUY, positionSide=LONG
+   - 开空: side=SELL, positionSide=SHORT
+
+---
+
+## 2026/05/11 16:20 - 实盘监控更新 (信号转换:LONG)
+
+### 当前状态
+
+| 指标 | 状态 |
+|------|------|
+| 分支 | refactor/clean-architecture |
+| 测试状态 | ✅ BUILD SUCCESS |
+| 交易进程 | ✅ **运行中** |
+| 运行模式 | **PAPER** |
+| 进程类型 | TradingSystemLauncher |
+| Execution模式 | PASSIVE (正常) |
+
+### 检查项
+
+#### 1) ExecutionEngine状态和订单执行情况
+
+| 项目 | 状态 |
+|------|------|
+| 进程状态 | ✅ 运行中 |
+| 仓位 | **LONG +0.0010 @ 81100.00** (多头转换) |
+| 未实现Pnl | +0.02 USDT |
+| 余额 | 14.5717 USDT |
+| 可用余额 | 6.4601 USDT |
+| Execution模式 | PASSIVE (正常) |
+| TWAP状态 | POSITION_MATCHED (正确停止) |
+
+**仓位转换**:
+- 之前: SHORT -0.0010 @ 81393.50 (+0.24U)
+- 现在: LONG +0.0010 @ 81100.00 (+0.02U)
+- 信号从SHORT转LONG，触发平仓再开多
+
+#### 2) SignalCooldownManager冷却状态
+
+| 项目 | 状态 |
+|------|------|
+| AlphaPool experts | ⚠️ 1/2 (AI正常, Chan返回null) |
+| 信号生成 | ⚠️ totalSignalsGenerated=1 |
+| 信号融合 | ⚠️ 单信号模式 (降级) |
+
+#### 3) AlphaPool信号融合情况
+
+| Expert | Conf | Direction |
+|--------|------|-----------|
+| AI | 0.6 | **LONG** (正常) |
+| Chan | null | **返回null** (bridge empty) |
+| **融合** | ⚠️ 单信号, conf降至0.54 |
+
+**ChanExpert问题**:
+```
+[ChanExpert] generate: bridge returned empty
+[AlphaPool] Expert chan returned null
+[AlphaPool] Single-signal (expert=, conf=0.60, expected=2 experts)
+```
+- Chan信号生成器返回empty
+- 单信号置信度从0.60降至0.54 (10%惩罚)
+
+#### 4) WebSocket/REST连接状态
+
+| 连接 | 状态 |
+|------|------|
+| WebSocket | ⚠️ **silent 30s+**, SSL握手错误 |
+| REST API | ✅ 正常接管 |
+| Heartbeat | ✅ Connection alive |
+| SSL错误 | ⚠️ "Remote host terminated handshake" |
+
+**SSL握手错误**:
+```
+javax.net.ssl.SSLHandshakeException: Remote host terminated the handshake
+Caused by: java.io.EOFException: SSL peer shut down incorrectly
+```
+- WebSocket连接被远程主机终止握手
+- 可能与代理服务器稳定性有关
+
+#### 5) 错误或异常
+
+| 问题 | 状态 |
+|------|------|
+| -2022 ReduceOnly错误 | ✅ **已修复** |
+| -1106 reduceonly错误 | ✅ **已修复** |
+| -4061 positionSide错误 | ✅ **已修复** |
+| SSL握手错误 | ⚠️ WebSocket偶发断开 |
+| ChanExpert null | ⚠️ bridge返回empty |
+| WebSocket沉默 | ⚠️ 30秒+无数据 |
+
+### 发现的问题
+
+| 优先级 | 问题 | 说明 |
+|--------|------|------|
+| P1 | **ChanExpert返回null** | bridge empty导致单信号模式 |
+| P1 | SSL握手错误 | WebSocket连接不稳定 |
+| P2 | 信号降级 | 单信号置信度惩罚10% |
+
+### 优化建议
+
+1. **ChanExpert bridge问题** - 检查ChanStructureAnalyzer.getSignal输出:
+   - bridge returned empty可能意味着笔/线段结构不完整
+   - 需要修复ChanSignal生成逻辑
+
+2. **WebSocket重连** - 实现自动重连机制处理SSL断开
+
+3. **信号稳定性** - 当2个expert只剩1个时，系统处于降级模式
+
+---
+
 ## 2026/05/11 16:05 - 实盘监控更新 (PAPER模式正常运行)
 
 ### 当前状态
