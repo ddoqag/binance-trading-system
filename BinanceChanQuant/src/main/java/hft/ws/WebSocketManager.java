@@ -29,6 +29,14 @@ public class WebSocketManager {
     private volatile boolean connected = false;
     private volatile long lastUpdateTime = 0;
 
+    // P1: WebSocket heartbeat timeout - if no data for 30s, reconnect
+    private static final long HEARTBEAT_TIMEOUT_MS = 30_000; // 30 seconds
+    private volatile long lastHeartbeat = 0;
+
+    // P1: 24-hour connection limit - reconnect before limit
+    private static final long CONNECTION_LIFETIME_MS = 23 * 60 * 60 * 1000; // 23 hours (reconnect 1hr before limit)
+    private volatile long connectionStartTime = 0;
+
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private UMWebsocketClientImpl wsClient;
 
@@ -63,12 +71,22 @@ public class WebSocketManager {
         System.out.println("[WS] Connecting to Binance WebSocket for " + symbol + "...");
 
         try {
-            // Set proxy for WebSocket connections
-            System.setProperty("https.proxyHost", "192.168.16.1");
-            System.setProperty("https.proxyPort", "7897");
-            System.setProperty("http.proxyHost", "192.168.16.1");
-            System.setProperty("http.proxyPort", "7897");
-            System.out.println("[WS] Proxy set: 192.168.16.1:7897");
+            // P1: Dynamic proxy configuration from environment variables
+            String proxyHost = System.getenv("BINANCE_WS_PROXY_HOST");
+            String proxyPort = System.getenv("BINANCE_WS_PROXY_PORT");
+
+            if (proxyHost == null || proxyHost.isEmpty()) {
+                proxyHost = "192.168.16.1"; // Default Windows host in WSL2
+            }
+            if (proxyPort == null || proxyPort.isEmpty()) {
+                proxyPort = "7897";
+            }
+
+            System.setProperty("https.proxyHost", proxyHost);
+            System.setProperty("https.proxyPort", proxyPort);
+            System.setProperty("http.proxyHost", proxyHost);
+            System.setProperty("http.proxyPort", proxyPort);
+            System.out.println("[WS] Proxy configured: " + proxyHost + ":" + proxyPort);
 
             // Connect to fstream.binance.com for USD-M futures
             wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com");
@@ -80,8 +98,13 @@ public class WebSocketManager {
             subscribeTradeStream();
 
             connected = true;
-            lastUpdateTime = System.currentTimeMillis();
-            System.out.println("[WS] Connected to Binance WebSocket for " + symbol);
+            connectionStartTime = System.currentTimeMillis();
+            lastUpdateTime = connectionStartTime;
+            lastHeartbeat = connectionStartTime;
+            System.out.println("[WS] Connected to Binance WebSocket for " + symbol + " (lifetime=" + CONNECTION_LIFETIME_MS + "ms)");
+
+            // P1: Start heartbeat check scheduler (every 5 seconds)
+            scheduler.scheduleAtFixedRate(this::checkHeartbeat, 5, 5, TimeUnit.SECONDS);
 
         } catch (Exception e) {
             System.err.println("[WS] Connection failed: " + e.getMessage());
@@ -163,6 +186,7 @@ public class WebSocketManager {
                 OrderBook.Snapshot snap = orderBook.getSnapshot();
                 ofiCalc.updateDepth(snap.bestBid, snap.bestAsk, snap.bidVolume, snap.askVolume);
                 lastUpdateTime = System.currentTimeMillis();
+                lastHeartbeat = System.currentTimeMillis(); // P1: Update heartbeat on data received
 
                 // Validate spread before processing
                 if (snap.bestBid > 0 && snap.bestAsk > 0) {
@@ -240,6 +264,7 @@ public class WebSocketManager {
                 lastPrice = price;
                 ofiCalc.updateTrade(price, qty, isBuyerMaker);
                 lastUpdateTime = System.currentTimeMillis();
+                lastHeartbeat = System.currentTimeMillis(); // P1: Update heartbeat on data received
 
                 System.out.println("[WS] Trade: price=" + price + " qty=" + qty + " maker=" + isBuyerMaker);
 
@@ -287,6 +312,60 @@ public class WebSocketManager {
 
         if (tradeHandler != null) {
             tradeHandler.accept(new TradeUpdate(price, qty, isBuyerMaker));
+        }
+    }
+
+    /**
+     * P1: Check WebSocket heartbeat - reconnect if no data for 30s
+     * Also checks for 24-hour connection limit and reconnects proactively
+     */
+    private void checkHeartbeat() {
+        long now = System.currentTimeMillis();
+
+        // P1: Check 24-hour connection limit - reconnect before Binance cuts us off
+        if (connectionStartTime > 0 && (now - connectionStartTime) > CONNECTION_LIFETIME_MS) {
+            System.err.printf("[WS] Connection lifetime exceeded (%dh), reconnecting proactively...%n",
+                (now - connectionStartTime) / (60 * 60 * 1000));
+            reconnect();
+            return;
+        }
+
+        // Check heartbeat timeout
+        if (lastHeartbeat > 0 && (now - lastHeartbeat) > HEARTBEAT_TIMEOUT_MS) {
+            System.err.printf("[WS] Heartbeat timeout: no data for %ds, reconnecting...%n",
+                (now - lastHeartbeat) / 1000);
+            reconnect();
+        }
+    }
+
+    /**
+     * P1: Handle serverShutdown event from Binance (10 minutes before connection ends)
+     * Binance sends: {"e": "serverShutdown", "E": 1770123456789}
+     */
+    private void handleServerShutdown(String msg) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(msg);
+            if (json.has("e") && "serverShutdown".equals(json.get("e").asText())) {
+                long eventTime = json.has("E") ? json.get("E").asLong() : 0;
+                System.err.printf("[WS] Server shutdown warning received at %d, reconnecting immediately...%n", eventTime);
+                reconnect();
+            }
+        } catch (Exception e) {
+            // Ignore parsing errors
+        }
+    }
+
+    /**
+     * P1: Reconnect WebSocket after timeout
+     */
+    private void reconnect() {
+        close(); // Close existing connection
+        connected = false;
+        try {
+            Thread.sleep(1000); // Wait 1s before reconnecting
+            connect(); // Reconnect
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

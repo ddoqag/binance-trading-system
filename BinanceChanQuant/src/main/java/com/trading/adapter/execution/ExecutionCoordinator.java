@@ -4,6 +4,8 @@ import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.risk.RiskManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
@@ -22,6 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * - MonitoringLoop: status monitoring
  */
 public class ExecutionCoordinator {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutionCoordinator.class);
 
     private final ExecutionOrderReceiver orderReceiver;
     private final ExecutionOrderProcessor orderProcessor;
@@ -55,7 +59,7 @@ public class ExecutionCoordinator {
 
     public void start() {
         if (isRunning.compareAndSet(false, true)) {
-            System.out.println("[ExecutionCoordinator] Starting...");
+            log.info("[ExecutionCoordinator] Starting...");
 
             stateMachine.start();
             algoEngine.start();
@@ -64,19 +68,19 @@ public class ExecutionCoordinator {
             executor.submit(this::reportProcessingLoop);
             executor.submit(this::monitoringLoop);
 
-            System.out.println("[ExecutionCoordinator] Started successfully");
+            log.info("[ExecutionCoordinator] Started successfully");
         }
     }
 
     public void stop() {
         if (isRunning.compareAndSet(true, false)) {
-            System.out.println("[ExecutionCoordinator] Stopping...");
+            log.info("[ExecutionCoordinator] Stopping...");
 
             stateMachine.shutdown();
             algoEngine.stop();
             executor.shutdownNow();
 
-            System.out.println("[ExecutionCoordinator] Stopped");
+            log.info("[ExecutionCoordinator] Stopped");
         }
     }
 
@@ -124,7 +128,7 @@ public class ExecutionCoordinator {
         while (isRunning.get()) {
             try {
                 Thread.sleep(60000);
-                System.out.printf("[ExecutionCoordinator] Status: queue=%d%n", orderQueue.size());
+                log.info("[ExecutionCoordinator] Status: queue={}", orderQueue.size());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;

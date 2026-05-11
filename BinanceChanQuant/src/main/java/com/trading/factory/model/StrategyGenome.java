@@ -58,23 +58,12 @@ public final class StrategyGenome {
     }
 
     public static StrategyGenome fromStrategy(AlphaType type, Map<String, Double> params) {
-        TradingStrategy delegate = createDelegate(type);
         return builder()
                 .type(type)
                 .parameters(params)
-                .delegate(delegate)
                 .createdAt(System.currentTimeMillis())
                 .generation(1)
                 .build();
-    }
-
-    private static TradingStrategy createDelegate(AlphaType type) {
-        switch (type) {
-            case TREND_FOLLOWING: return new com.trading.execution.v3.strategies.TrendFollowingStrategy();
-            case VOLATILITY: return new com.trading.execution.v3.strategies.VolatilityStrategy();
-            case MEAN_REVERSION:
-            default: return new com.trading.execution.v3.strategies.MeanReversionStrategy();
-        }
     }
 
     public static class Builder {

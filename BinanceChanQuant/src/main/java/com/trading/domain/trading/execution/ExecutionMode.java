@@ -13,6 +13,12 @@ public enum ExecutionMode {
     /** Aggressive: IOC orders, willing to chase */
     AGGRESSIVE,
 
+    /** Standby: insufficient balance, stop all new trading */
+    STANDBY,
+
     /** Kill Switch: market orders to close positions */
-    KILL_SWITCH
+    KILL_SWITCH,
+
+    /** Native TWAP: use exchange's native TWAP algorithm */
+    NATIVE_TWAP
 }

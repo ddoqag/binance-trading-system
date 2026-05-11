@@ -5,6 +5,7 @@ package com.trading.domain.trading.model;
  */
 public class Order {
     private final String orderId;
+    private String signalId;  // 对应 AlphaSignal.alphaId，用于 ExecutionFeedbackBus 追踪
     private final String symbol;
     private final TradeDirection side;
     private final OrderType orderType;
@@ -31,6 +32,8 @@ public class Order {
     }
 
     public String getOrderId() { return orderId; }
+    public String getSignalId() { return signalId; }
+    public void setSignalId(String signalId) { this.signalId = signalId; }
     public String getSymbol() { return symbol; }
     public TradeDirection getSide() { return side; }
     public OrderType getOrderType() { return orderType; }
