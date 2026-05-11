@@ -61,7 +61,7 @@ public class ChanShadowExecutor {
         if (ctx != null && ctx.zhongshu != null) {
             MarketRegime contextRegime = metaLearnerBridge.determineRegimeFromContext(ctx);
             if (contextRegime != regime) {
-                System.out.printf("[ChanShadow] Regime mismatch: passed=%s, context=%s%n", regime, contextRegime);
+                log.debug("[ChanShadow] Regime mismatch: passed={}, context={}", regime, contextRegime);
             }
         }
 
@@ -69,8 +69,23 @@ public class ChanShadowExecutor {
             metaLearnerBridge.generateSignal(data, regime);
 
         if (chanResult.isEmpty()) {
-            log.info("Shadow signal empty: generateSignal returned empty for regime={}", regime);
-            return Optional.empty();
+            // RANGE market has no clear direction - return NEUTRAL signal instead of null
+            // This allows AlphaPool to properly weight AI signal without bias
+            log.debug("Shadow signal empty for regime={}, returning NEUTRAL", regime);
+            PatternSignal neutralSignal = new PatternSignal(SignalType.RANGE_BOUND, 0.3, data.getLastPrice(),
+                System.currentTimeMillis(), "RANGE market - no clear direction");
+            ChanSignalValidator.ValidationResult neutralValidation = new ChanSignalValidator.ValidationResult(true, "OK", "RANGE market neutral", 0.3);
+
+            acceptedSignals.incrementAndGet();
+            lastSignalTime.set(System.currentTimeMillis());
+
+            return Optional.of(new ShadowSignalResult(
+                neutralSignal,
+                SignalType.RANGE_BOUND,
+                0.3,
+                "chan_shadow",
+                neutralValidation
+            ));
         }
 
         ChanMetaLearnerBridge.ChanSignalResult result = chanResult.get();

@@ -15,6 +15,8 @@ import com.trading.domain.signal.AlphaSignal;
 import com.trading.domain.signal.AlphaType;
 import com.trading.domain.signal.ChanAlphaSignal;
 import com.trading.domain.signal.MarketContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
 
@@ -22,6 +24,8 @@ import java.util.Optional;
  * Chan Expert - wraps Chan analysis as AlphaExpert
  */
 public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
+
+    private static final Logger log = LoggerFactory.getLogger(ChanExpert.class);
 
     private final ChanMetaLearnerBridge bridge;
     private final ChanSignalValidator validator;
@@ -40,13 +44,13 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
     @Override
     public AlphaSignal generate(MarketContext context) {
         if (!active || context == null) {
-            System.out.println("[ChanExpert] generate: inactive or null context");
+            log.debug("[ChanExpert] generate: inactive or null context");
             return null;
         }
 
         MarketData data = context.getMarketData();
         if (data == null) {
-            System.out.println("[ChanExpert] generate: null market data");
+            log.debug("[ChanExpert] generate: null market data");
             return null;
         }
 
@@ -56,8 +60,10 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
             // Process through Chan bridge
             Optional<ChanSignalResult> optResult = bridge.generateSignal(data, regime);
             if (optResult.isEmpty()) {
-                System.out.println("[ChanExpert] generate: bridge returned empty");
-                return null;
+                log.debug("[ChanExpert] generate: bridge returned empty for regime={}, returning NEUTRAL", regime);
+                // RANGE market has no clear direction - return NEUTRAL signal instead of null
+                // This allows AlphaPool to properly weight AI signal without bias
+                return createNeutralSignal(context);
             }
 
             ChanSignalResult result = optResult.get();
@@ -66,8 +72,7 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
             KlineContext klineCtx = processor.getCurrentContext();
             ValidationResult validation = validator.validate(klineCtx, regime, result.confidence);
             if (!validation.isValid) {
-                System.out.printf("[ChanExpert] generate: validation failed: %s (%s)%n",
-                    validation.code, validation.reason);
+                log.debug("[ChanExpert] generate: validation failed: {} ({})", validation.code, validation.reason);
                 return null;
             }
 
@@ -75,8 +80,7 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
             return buildChanSignal(result, context);
 
         } catch (Exception e) {
-            System.err.println("[ChanExpert] Signal generation failed: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[ChanExpert] Signal generation failed: {}", e.getMessage());
             return null;
         }
     }
@@ -117,6 +121,27 @@ public class ChanExpert extends AlphaExpert.BaseAlphaExpert {
             default:
                 return com.trading.domain.trading.model.TradeDirection.NEUTRAL;
         }
+    }
+
+    private AlphaSignal createNeutralSignal(MarketContext context) {
+        return ChanAlphaSignal.builder()
+            .direction(com.trading.domain.trading.model.TradeDirection.NEUTRAL)
+            .confidence(0.3)
+            .urgency(0.0)
+            .horizonMinutes(60)
+            .expectedReturn(0.0)
+            .expectedVolatility(context.getAtrPercent())
+            .entryPrice(context.getCurrentPrice())
+            .stopLossPrice(0)
+            .takeProfitPrice(0)
+            .chanSignalType("NEUTRAL")
+            .pattern("RANGE market - no clear direction")
+            .strengthLevel(0)
+            .timeframes("1m", "5m")
+            .multiTimeframeResonance(false)
+            .hasDivergence(false)
+            .volumeConfirmation(false)
+            .build();
     }
 
     @Override

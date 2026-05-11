@@ -6,6 +6,8 @@ import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.risk.RiskManager;
 import com.trading.domain.signal.AlphaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,6 +20,8 @@ import java.util.concurrent.TimeUnit;
  * Controls order execution aggressiveness based on market/risk conditions
  */
 public class ExecutionStateMachine {
+
+    private static final Logger log = LoggerFactory.getLogger(ExecutionStateMachine.class);
 
     private final AtomicReference<ExecutionMode> currentMode =
         new AtomicReference<>(ExecutionMode.SMART_LIMIT);
@@ -40,6 +44,13 @@ public class ExecutionStateMachine {
     private final double inventoryRiskThreshold;
     private final double conflictThreshold;
     private final long minModeDuration;
+
+    // P0: Balance thresholds for STANDBY mode and KILL_SWITCH recovery
+    private static final double STANDBY_THRESHOLD_BALANCE = 15.0;   // USDT - below this, enter STANDBY
+    private static final double KILL_SWITCH_RECOVERY_BALANCE = 30.0; // 2x threshold - below this, exit KILL_SWITCH
+
+    // Exchange adapter for balance checking
+    private BinanceExchangeAdapter exchangeAdapter;
 
     // Conflict scoring based on SHM expert signals
     // Tracks recent signal directions to detect conflicts
@@ -69,6 +80,23 @@ public class ExecutionStateMachine {
         initialize();
     }
 
+    /**
+     * Set exchange adapter for balance checking (P0: STANDBY mode)
+     */
+    public void setExchangeAdapter(BinanceExchangeAdapter adapter) {
+        this.exchangeAdapter = adapter;
+    }
+
+    /**
+     * Get available balance from exchange adapter
+     */
+    private double getAvailableBalance() {
+        if (exchangeAdapter != null) {
+            return exchangeAdapter.getAvailableBalance();
+        }
+        return Double.MAX_VALUE; // Default to no restriction if adapter not available
+    }
+
     private void initialize() {
         for (ExecutionMode mode : ExecutionMode.values()) {
             modeCounts.put(mode, 0);
@@ -90,7 +118,29 @@ public class ExecutionStateMachine {
             double inventoryRisk = calculateInventoryRisk(positionRisk);
             double conflictScore = calculateConflictScore();
 
-            // Circuit breaker has highest priority
+            // P0-2: Check balance for STANDBY mode (before circuit breaker)
+            double availableBalance = getAvailableBalance();
+            ExecutionMode currentModeValue = currentMode.get();
+
+            // P0-3: KILL_SWITCH auto-recovery - if balance recovered, switch to PASSIVE
+            if (currentModeValue == ExecutionMode.KILL_SWITCH) {
+                if (availableBalance >= KILL_SWITCH_RECOVERY_BALANCE) {
+                    log.info("[ExecutionStateMachine] Balance recovered to {}, KILL_SWITCH -> PASSIVE", availableBalance);
+                    forceMode(ExecutionMode.PASSIVE);
+                }
+                return; // Don't check other conditions while in KILL_SWITCH
+            }
+
+            // Enter STANDBY if balance is too low
+            if (availableBalance > 0 && availableBalance < STANDBY_THRESHOLD_BALANCE) {
+                if (currentModeValue != ExecutionMode.STANDBY) {
+                    log.debug("[ExecutionStateMachine] Balance {} < {} threshold, entering STANDBY", availableBalance, STANDBY_THRESHOLD_BALANCE);
+                    forceMode(ExecutionMode.STANDBY);
+                }
+                return; // Don't execute while in STANDBY
+            }
+
+            // Circuit breaker has highest priority (except KILL_SWITCH recovery above)
             if (riskManager.isCircuitBreakerTriggered()) {
                 forceMode(ExecutionMode.KILL_SWITCH);
                 return;
@@ -253,8 +303,7 @@ public class ExecutionStateMachine {
         if (mode != ExecutionMode.KILL_SWITCH) {
             long timeInMode = System.currentTimeMillis() - lastModeChangeTime;
             if (timeInMode < minModeDuration) {
-                System.out.printf("[ExecutionStateMachine] forceMode %s blocked: cooldown %dms < %dms%n",
-                    mode, timeInMode, minModeDuration);
+                log.debug("[ExecutionStateMachine] forceMode {} blocked: cooldown {}ms < {}ms", mode, timeInMode, minModeDuration);
                 return;
             }
         }
@@ -340,8 +389,7 @@ public class ExecutionStateMachine {
                 // Use defaults if metrics unavailable
             }
 
-            System.out.printf("[ExecutionStateMachine] Mode changed: %s -> %s (urgency=%.2f, risk=%.2f)%n",
-                oldMode, newMode, urgency, inventoryRisk);
+            log.info("[ExecutionStateMachine] Mode changed: {} -> {} (urgency={}, risk={})", oldMode, newMode, urgency, inventoryRisk);
         }
     }
 
@@ -380,6 +428,16 @@ public class ExecutionStateMachine {
                        .useAlgo(false);
                 break;
 
+            case STANDBY:
+                // In STANDBY mode, only allow closing positions (reduceOnly)
+                builder.orderType(com.trading.domain.trading.model.OrderType.LIMIT)
+                       .postOnly(false)
+                       .timeInForce(300)
+                       .maxSlippage(0.01)
+                       .useAlgo(false)
+                       .reduceOnly(true);
+                break;
+
             case KILL_SWITCH:
                 builder.orderType(com.trading.domain.trading.model.OrderType.MARKET)
                        .postOnly(false)
@@ -387,6 +445,16 @@ public class ExecutionStateMachine {
                        .maxSlippage(0.02)
                        .useAlgo(false)
                        .reduceOnly(true);
+                break;
+
+            case NATIVE_TWAP:
+                // Use exchange's native TWAP algorithm - single API call
+                builder.orderType(com.trading.domain.trading.model.OrderType.LIMIT)
+                       .postOnly(false)
+                       .timeInForce(300)
+                       .maxSlippage(0.001)
+                       .useAlgo(true)
+                       .algoType("NATIVE_TWAP");
                 break;
         }
 

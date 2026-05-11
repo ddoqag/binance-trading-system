@@ -1,5 +1,8 @@
 package com.trading.launcher;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.binance.connector.futures.client.impl.UMFuturesClientImpl;
 import com.binance.connector.futures.client.impl.UMWebsocketClientImpl;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -47,6 +50,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   mvn compile exec:java -Dexec.mainClass="com.trading.launcher.ChanWebSocketLauncher"
  */
 public class ChanWebSocketLauncher {
+
+    private static final Logger log = LoggerFactory.getLogger(ChanWebSocketLauncher.class);
 
     private static final String SYMBOL;
     private static final int MAX_KLINES = 120;
@@ -143,7 +148,7 @@ public class ChanWebSocketLauncher {
             java.nio.file.Files.write(lock.toPath(), String.valueOf(ProcessHandle.current().pid()).getBytes());
             lock.deleteOnExit(); // Auto-cleanup on exit
         } catch (Exception e) {
-            System.err.println("Warning: Could not create lock file: " + e.getMessage());
+            log.warn("Could not create lock file: {}", e.getMessage());
         }
 
         ChanWebSocketLauncher launcher = new ChanWebSocketLauncher();
@@ -163,8 +168,8 @@ public class ChanWebSocketLauncher {
                 try {
                     ProcessHandle.of(pid).ifPresent(h -> {
                         if (h.isAlive()) {
-                            System.out.println("[SingletonCheck] Found running process from lock file: PID " + pid);
-                            System.out.println("[SingletonCheck] Destroying stale process...");
+                            log.info("[SingletonCheck] Found running process from lock file: PID {}", pid);
+                            log.info("[SingletonCheck] Destroying stale process...");
                             h.destroy();
                             try { Thread.sleep(500); } catch (InterruptedException ignored) {}
                             if (h.isAlive()) h.destroyForcibly();
@@ -174,14 +179,14 @@ public class ChanWebSocketLauncher {
                     // Process doesn't exist
                 }
                 lock.delete();
-                System.out.println("[SingletonCheck] Removed stale lock file");
+                log.info("[SingletonCheck] Removed stale lock file");
             } catch (Exception e) {
-                System.out.println("[SingletonCheck] Could not process lock file: " + e.getMessage());
+                log.warn("[SingletonCheck] Could not process lock file: {}", e.getMessage());
             }
         }
 
         // 2. Scan for stray Java processes using tasklist (more reliable on Windows)
-        System.out.println("[SingletonCheck] Scanning for stray Java processes...");
+        log.info("[SingletonCheck] Scanning for stray Java processes...");
         final int[] killedCount = {0};
         try {
             // Use tasklist to find Java processes - more reliable than ProcessHandle on Windows
@@ -200,8 +205,8 @@ public class ChanWebSocketLauncher {
                         String pidStr = parts[1].replace("\"", "").trim();
                         long pid = Long.parseLong(pidStr);
                         if (pid != currentPid) {
-                            System.out.println("[SingletonCheck] Found stray Java process: PID " + pid);
-                            System.out.println("[SingletonCheck] Killing PID " + pid + "...");
+                            log.info("[SingletonCheck] Found stray Java process: PID {}", pid);
+                            log.info("[SingletonCheck] Killing PID {}...", pid);
                             ProcessHandle.of(pid).ifPresent(h -> {
                                 h.destroy();
                                 try { Thread.sleep(300); } catch (InterruptedException ignored) {}
@@ -216,7 +221,7 @@ public class ChanWebSocketLauncher {
             }
             reader.close();
         } catch (Exception e) {
-            System.out.println("[SingletonCheck] tasklist scan error: " + e.getMessage());
+            log.warn("[SingletonCheck] tasklist scan error: {}", e.getMessage());
             // Fallback to ProcessHandle scan
             try {
                 ProcessHandle.allProcesses().forEach(ph -> {
@@ -224,7 +229,7 @@ public class ChanWebSocketLauncher {
                         if (ph.isAlive() && ph.pid() != ProcessHandle.current().pid()) {
                             String name = ph.info().command().orElse("");
                             if (name.toLowerCase().contains("java")) {
-                                System.out.println("[SingletonCheck] Found stray Java: PID " + ph.pid());
+                                log.info("[SingletonCheck] Found stray Java: PID {}", ph.pid());
                                 ph.destroy();
                                 try { Thread.sleep(300); } catch (InterruptedException ignored) {}
                                 if (ph.isAlive()) ph.destroyForcibly();
@@ -234,15 +239,15 @@ public class ChanWebSocketLauncher {
                     } catch (Exception ignored) {}
                 });
             } catch (Exception fallbackError) {
-                System.out.println("[SingletonCheck] Fallback scan also failed: " + fallbackError.getMessage());
+                log.warn("[SingletonCheck] Fallback scan also failed: {}", fallbackError.getMessage());
             }
         }
 
         if (killedCount[0] > 0) {
-            System.out.println("[SingletonCheck] Killed " + killedCount[0] + " stray process(es)");
+            log.info("[SingletonCheck] Killed {} stray process(es)", killedCount[0]);
             try { Thread.sleep(1000); } catch (InterruptedException ignored) {} // Wait for OS
         } else {
-            System.out.println("[SingletonCheck] No stray processes found");
+            log.info("[SingletonCheck] No stray processes found");
         }
     }
 
@@ -250,18 +255,18 @@ public class ChanWebSocketLauncher {
         System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
         System.setErr(new PrintStream(System.err, true, StandardCharsets.UTF_8));
 
-        System.out.println("=".repeat(60));
-        System.out.println("Chan Strategy - Real-time WebSocket Mode");
-        System.out.println("=".repeat(60));
-        System.out.println("Symbol: " + SYMBOL);
-        System.out.println("=".repeat(60));
+        log.info("============================================================");
+        log.info("Chan Strategy - Real-time WebSocket Mode");
+        log.info("============================================================");
+        log.info("Symbol: {}", SYMBOL);
+        log.info("============================================================");
 
         try {
             initializeComponents();
 
             // Register shutdown hook
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-                System.out.println("\n[Shutdown] Caught shutdown signal");
+                log.info("\n[Shutdown] Caught shutdown signal");
                 running.set(false);
                 scheduler.shutdown();
             }));
@@ -270,15 +275,14 @@ public class ChanWebSocketLauncher {
             mainLoop();
 
         } catch (Exception e) {
-            System.err.println("[Launcher] Fatal error: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[Launcher] Fatal error: {}", e.getMessage(), e);
         } finally {
             shutdown();
         }
     }
 
     private void initializeComponents() {
-        System.out.println("[Launcher] Initializing Chan components...");
+        log.info("[Launcher] Initializing Chan components...");
 
         chanToggle = ChanFeatureToggle.defaults();
         chanBridge = new ChanMetaLearnerBridge(chanToggle, MAX_KLINES);
@@ -286,19 +290,18 @@ public class ChanWebSocketLauncher {
         chanExecutor = new ChanShadowExecutor(chanBridge, chanValidator, chanToggle);
         chanProcessor = chanBridge.getProcessor();
 
-        System.out.println("[Launcher] Chan modes: reverse=" + chanToggle.getReverseMode()
-            + ", trend=" + chanToggle.getTrendMode()
-            + ", grid=" + chanToggle.getGridMode()
-            + ", resonance=" + chanToggle.getResonanceMode());
-        System.out.println("[Launcher] Chan components initialized");
+        log.info("[Launcher] Chan modes: reverse={} trend={} grid={} resonance={}",
+            chanToggle.getReverseMode(), chanToggle.getTrendMode(),
+            chanToggle.getGridMode(), chanToggle.getResonanceMode());
+        log.info("[Launcher] Chan components initialized");
 
         // Initialize MetaLearner
         metaLearner = MetaLearner.defaults();
-        System.out.println("[Launcher] MetaLearner initialized");
+        log.info("[Launcher] MetaLearner initialized");
 
         // Initialize Risk Checker
         riskChecker = PreTradeRiskChecker.defaults();
-        System.out.println("[Launcher] PreTradeRiskChecker initialized");
+        log.info("[Launcher] PreTradeRiskChecker initialized");
 
         // Initialize AlphaPool with both experts
         alphaPool = new AlphaPool();
@@ -306,12 +309,12 @@ public class ChanWebSocketLauncher {
         alphaPool.registerExpert(aiExpert);
         chanExpert = new ChanExpert(chanBridge, chanValidator, chanProcessor, chanToggle);
         alphaPool.registerExpert(chanExpert);
-        System.out.println("[Launcher] AlphaPool initialized with " + alphaPool.getExpertCount() + " experts");
+        log.info("[Launcher] AlphaPool initialized with {} experts", alphaPool.getExpertCount());
 
         // Initialize Position Lifecycle Manager
         lifecycleManager = PositionLifecycleManager.defaults();
         positionSignalManager = new PositionSignalManager(alphaPool, lifecycleManager);
-        System.out.println("[Launcher] PositionLifecycleManager initialized");
+        log.info("[Launcher] PositionLifecycleManager initialized");
 
         // Initialize Execution Engine
         String apiKey = ConfigUtil.get("api.key");
@@ -319,7 +322,11 @@ public class ChanWebSocketLauncher {
         boolean testnet = ConfigUtil.isTestNet();
         executionEngine = new ExecutionEngine(riskChecker, testnet, apiKey, apiSecret);
         executionEngine.start();
-        System.out.println("[Launcher] ExecutionEngine initialized (paper=" + testnet + ")");
+
+        // V6: Wire AlphaPool and ExecutionEngine for closed-loop feedback
+        executionEngine.setEventListener(event -> alphaPool.onExecutionEvent(event));
+
+        log.info("[Launcher] ExecutionEngine initialized (paper={})", testnet);
 
         // Set position change callback to attach RiskModel when position opens
         var exchangeAdapter = executionEngine.getExchangeAdapter();
@@ -334,30 +341,30 @@ public class ChanWebSocketLauncher {
                     PositionState posWithRisk = positionSignalManager.createPositionFromEntry(
                         event.newPosition, price, orderId, equity, lastMarketContext);
                     positionSignalManager.updatePosition(posWithRisk);
-                    System.out.printf("[Launcher] Position opened with RiskModel: qty=%.4f price=%.2f%n", qty, price);
+                    log.info("[Launcher] Position opened with RiskModel: qty={} price={}", qty, price);
                 } else if (event.wasClosed) {
                     // Position closed - reset to empty
                     positionSignalManager.updatePosition(PositionState.empty());
-                    System.out.println("[Launcher] Position closed, RiskModel cleared");
+                    log.info("[Launcher] Position closed, RiskModel cleared");
                 }
             });
-            System.out.println("[Launcher] Position change callback registered");
+            log.info("[Launcher] Position change callback registered");
         }
 
         // Initialize REST client for kline polling fallback
         restClient = new UMFuturesClientImpl(apiKey, apiSecret, testnet);
-        // Set proxy on REST client
-        try {
-            java.net.InetSocketAddress proxyAddr = new java.net.InetSocketAddress("127.0.0.1", 7897);
-            java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr);
-            com.binance.connector.futures.client.utils.ProxyAuth proxyAuth =
-                new com.binance.connector.futures.client.utils.ProxyAuth(proxy, null);
-            restClient.setProxy(proxyAuth);
-            System.out.println("[Launcher] REST client initialized with proxy");
-        } catch (Exception e) {
-            System.out.println("[Launcher] REST client proxy not set: " + e.getMessage());
-        }
-        System.out.println("[Launcher] REST client initialized");
+        // Proxy disabled - enable if you have a proxy running on Windows
+        // try {
+        //     java.net.InetSocketAddress proxyAddr = new java.net.InetSocketAddress("127.0.0.1", 7897);
+        //     java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr);
+        //     com.binance.connector.futures.client.utils.ProxyAuth proxyAuth =
+        //         new com.binance.connector.futures.client.utils.ProxyAuth(proxy, null);
+        //     restClient.setProxy(proxyAuth);
+        //     log.info("[Launcher] REST client initialized with proxy");
+        // } catch (Exception e) {
+        //     log.warn("[Launcher] REST client proxy not set: {}", e.getMessage());
+        // }
+        log.info("[Launcher] REST client initialized (proxy disabled)");
 
         // Load historical K-line data
         loadHistoricalData();
@@ -367,14 +374,14 @@ public class ChanWebSocketLauncher {
      * Load historical K-line data from Binance
      */
     private void loadHistoricalData() {
-        System.out.println("[Launcher] Loading historical K-line data...");
+        log.info("[Launcher] Loading historical K-line data...");
 
         try {
-            // Set proxy
-            System.setProperty("https.proxyHost", "127.0.0.1");
-            System.setProperty("https.proxyPort", "7897");
-            System.setProperty("http.proxyHost", "127.0.0.1");
-            System.setProperty("http.proxyPort", "7897");
+            // Proxy disabled - enable if you have a proxy running on Windows
+            // System.setProperty("https.proxyHost", "127.0.0.1");
+            // System.setProperty("https.proxyPort", "7897");
+            // System.setProperty("http.proxyHost", "127.0.0.1");
+            // System.setProperty("http.proxyPort", "7897");
 
             // Create REST client for historical data
             UMFuturesClientImpl restClient = new UMFuturesClientImpl(
@@ -383,15 +390,15 @@ public class ChanWebSocketLauncher {
                 ConfigUtil.isTestNet()
             );
 
-            // Set proxy on client
-            try {
-                java.net.InetSocketAddress proxyAddr = new java.net.InetSocketAddress("127.0.0.1", 7897);
-                java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr);
-                com.binance.connector.futures.client.utils.ProxyAuth proxyAuth = new com.binance.connector.futures.client.utils.ProxyAuth(proxy, null);
-                restClient.setProxy(proxyAuth);
-            } catch (Exception e) {
-                System.out.println("[Launcher] Proxy not set for REST client: " + e.getMessage());
-            }
+            // Proxy disabled
+            // try {
+            //     java.net.InetSocketAddress proxyAddr = new java.net.InetSocketAddress("127.0.0.1", 7897);
+            //     java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr);
+            //     com.binance.connector.futures.client.utils.ProxyAuth proxyAuth = new com.binance.connector.futures.client.utils.ProxyAuth(proxy, null);
+            //     restClient.setProxy(proxyAuth);
+            // } catch (Exception e) {
+            //     log.warn("[Launcher] Proxy not set for REST client: {}", e.getMessage());
+            // }
 
             // Request 500 historical K-lines (15m interval for Chan theory)
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
@@ -412,15 +419,15 @@ public class ChanWebSocketLauncher {
                         new com.fasterxml.jackson.core.type.TypeReference<List<List<?>>>() {};
                     klines = new com.fasterxml.jackson.databind.ObjectMapper().readValue((String) response, typeRef);
                 } catch (Exception e) {
-                    System.out.println("[Launcher] Failed to parse klines JSON: " + e.getMessage());
+                    log.warn("[Launcher] Failed to parse klines JSON: {}", e.getMessage());
                     return;
                 }
             } else {
-                System.out.println("[Launcher] Unknown response type: " + (response == null ? "null" : response.getClass().getName()));
+                log.warn("[Launcher] Unknown response type: {}", response == null ? "null" : response.getClass().getName());
                 return;
             }
 
-            System.out.println("[Launcher] Received " + klines.size() + " historical K-lines");
+            log.info("[Launcher] Received {} historical K-lines", klines.size());
 
             // Parse and add each K-line
             int added = 0;
@@ -444,39 +451,48 @@ public class ChanWebSocketLauncher {
                 }
             }
 
-            System.out.println("[Launcher] Loaded " + added + " K-lines into Chan processor");
+            log.info("[Launcher] Loaded {} K-lines into Chan processor", added);
 
             // Print current Chan structure status
             printChanStructureStatus();
 
         } catch (Exception e) {
-            System.err.println("[Launcher] Failed to load historical data: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[Launcher] Failed to load historical data: {}", e.getMessage(), e);
         }
     }
 
     private void printChanStructureStatus() {
         ChanKLineProcessor.KlineContext ctx = chanProcessor.getCurrentContext();
-        System.out.println("=== Chan Structure Status ===");
-        System.out.println("Fenxing count: " + chanProcessor.getFenxingList().size());
-        System.out.println("Bi count: " + chanProcessor.getBiList().size());
-        System.out.println("Zhongshu: " + (ctx != null && ctx.zhongshu != null ? "formed" : "not formed"));
+        log.info("=== Chan Structure Status ===");
+        log.info("Fenxing count: {}", chanProcessor.getFenxingList().size());
+        log.info("Bi count: {}", chanProcessor.getBiList().size());
+        log.info("Zhongshu: {}", ctx != null && ctx.zhongshu != null ? "formed" : "not formed");
         if (ctx != null && ctx.zhongshu != null) {
-            System.out.printf("  ZG: %.2f, ZD: %.2f%n", ctx.zhongshu.zg, ctx.zhongshu.zd);
+            log.info("  ZG: {}, ZD: {}", ctx.zhongshu.zg, ctx.zhongshu.zd);
         }
-        System.out.println("============================");
+        log.info("============================");
     }
 
     private void connectWebSocket() {
-        System.out.println("[Launcher] Connecting to Binance WebSocket...");
+        log.info("[Launcher] Connecting to Binance WebSocket...");
 
         try {
-            // Set proxy for WebSocket connections - use same proxy as HFT
-            System.setProperty("https.proxyHost", "192.168.16.1");
-            System.setProperty("https.proxyPort", "7897");
-            System.setProperty("http.proxyHost", "192.168.16.1");
-            System.setProperty("http.proxyPort", "7897");
-            System.out.println("[Launcher] WebSocket proxy set: 192.168.16.1:7897");
+            // Enable proxy for WSL2 to use Windows VPN
+            String proxyHost = System.getenv("PROXY_HOST");
+            String proxyPort = System.getenv("PROXY_PORT");
+
+            if (proxyHost == null) {
+                proxyHost = "192.168.16.1"; // Windows host IP in WSL2 mirrored mode
+            }
+            if (proxyPort == null) {
+                proxyPort = "7897";
+            }
+
+            System.setProperty("https.proxyHost", proxyHost);
+            System.setProperty("https.proxyPort", proxyPort);
+            System.setProperty("http.proxyHost", proxyHost);
+            System.setProperty("http.proxyPort", proxyPort);
+            log.info("[Launcher] WebSocket proxy set: {}:{}", proxyHost, proxyPort);
 
             wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com");
 
@@ -494,7 +510,7 @@ public class ChanWebSocketLauncher {
             // Subscribe to trade stream
             subscribeTradeStream(symbolLower);
 
-            System.out.println("[Launcher] WebSocket connected for " + SYMBOL);
+            log.info("[Launcher] WebSocket connected for {}", SYMBOL);
             wsConnectionAlive = true;
             lastMessageTime = System.currentTimeMillis();
             lastSuccessfulConnectionTime = System.currentTimeMillis();
@@ -507,8 +523,7 @@ public class ChanWebSocketLauncher {
             reconnectAttempts = 0;
 
         } catch (Exception e) {
-            System.err.println("[Launcher] WebSocket connection failed: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[Launcher] WebSocket connection failed: {}", e.getMessage(), e);
         }
     }
 
@@ -524,10 +539,10 @@ public class ChanWebSocketLauncher {
                 if (wsClient != null) {
                     // Note: The connector library may not expose ping directly
                     // We can send a subscription to an existing stream as a keepalive
-                    System.out.println("[Heartbeat] Connection alive");
+                    log.debug("[Heartbeat] Connection alive");
                 }
             } catch (Exception e) {
-                System.err.println("[Heartbeat] Error: " + e.getMessage());
+                log.error("[Heartbeat] Error: {}", e.getMessage());
             }
         }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
@@ -544,13 +559,12 @@ public class ChanWebSocketLauncher {
                     try {
                         handleKlineMessage(msg);
                     } catch (Exception e) {
-                        System.err.println("[Kline] Parse error: " + e.getMessage());
+                        log.error("[Kline] Parse error: {}", e.getMessage());
                     }
                 }
             });
         } catch (Exception e) {
-            System.err.println("[Launcher] Kline subscription failed: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[Launcher] Kline subscription failed: {}", e.getMessage(), e);
         }
     }
 
@@ -572,13 +586,13 @@ public class ChanWebSocketLauncher {
                     try {
                         handleKline5mMessage(msg);
                     } catch (Exception e) {
-                        System.err.println("[5mKline] Parse error: " + e.getMessage());
+                        log.error("[5mKline] Parse error: {}", e.getMessage());
                     }
                 }
             });
-            System.out.println("[Launcher] 5min K-line stream subscribed for stop detection");
+            log.info("[Launcher] 5min K-line stream subscribed for stop detection");
         } catch (Exception e) {
-            System.err.println("[Launcher] 5m Kline subscription failed: " + e.getMessage());
+            log.error("[Launcher] 5m Kline subscription failed: {}", e.getMessage());
         }
     }
 
@@ -590,12 +604,12 @@ public class ChanWebSocketLauncher {
                     try {
                         handleDepthMessage(msg);
                     } catch (Exception e) {
-                        System.err.println("[Depth] Error: " + e.getMessage());
+                        log.error("[Depth] Error: {}", e.getMessage());
                     }
                 }
             });
         } catch (Exception e) {
-            System.err.println("[Launcher] Depth subscription failed: " + e.getMessage());
+            log.error("[Launcher] Depth subscription failed: {}", e.getMessage());
         }
     }
 
@@ -607,12 +621,12 @@ public class ChanWebSocketLauncher {
                     try {
                         handleTradeMessage(msg);
                     } catch (Exception e) {
-                        System.err.println("[Trade] Error: " + e.getMessage());
+                        log.error("[Trade] Error: {}", e.getMessage());
                     }
                 }
             });
         } catch (Exception e) {
-            System.err.println("[Launcher] Trade subscription failed: " + e.getMessage());
+            log.error("[Launcher] Trade subscription failed: {}", e.getMessage());
         }
     }
 
@@ -639,14 +653,14 @@ public class ChanWebSocketLauncher {
         if (lastKlineTime > 0) {
             long gap = now - lastKlineTime;
             if (gap > KLINE_GAP_THRESHOLD_MS) {
-                System.out.printf("[WebSocket] Kline gap detected: %ds since last kline%n", gap/1000);
+                log.debug("[WebSocket] Kline gap detected: {}s since last kline", gap/1000);
             }
         }
         lastKlineTime = now;
 
         // Diagnostic: report messages per minute
         if (now - messagesCheckTime > 60000) {
-            System.out.printf("[WebSocket] Health: msg/min=%d, reconnects=%d%n",
+            log.info("[WebSocket] Health: msg/min={}, reconnects={}",
                 messagesLastMinute, reconnectCount.get());
             messagesLastMinute = 0;
             messagesCheckTime = now;
@@ -661,7 +675,7 @@ public class ChanWebSocketLauncher {
 
         // Debug first few klines
         if (kc <= 3) {
-            System.err.printf("[WS-KLINE] Kline #%d: O=%.2f H=%.2f L=%.2f C=%.2f V=%.2f%n",
+            log.debug("[WS-KLINE] Kline #{:d}: O=%.2f H=%.2f L=%.2f C=%.2f V=%.2f",
                 kc, open, high, low, close, volume);
         }
 
@@ -682,8 +696,7 @@ public class ChanWebSocketLauncher {
 
             // Debug first few contexts
             if (kc <= 3) {
-                System.out.printf("[DEBUG] Context: price=%.2f regime=%s atr=%.2f%n",
-                    close, regime, context.getAtr());
+                log.trace("Context: price={} regime={} atr={}", close, regime, context.getAtr());
             }
 
             // Generate composite signal
@@ -785,7 +798,7 @@ public class ChanWebSocketLauncher {
 
         // Log every 20 messages to avoid spam
         if (messageCount.get() % 20 == 0) {
-            System.out.printf("[5mKline] ATR=%.2f, Support=%.2f, Resistance=%.2f%n",
+            log.trace("[5mKline] ATR=%.2f, Support=%.2f, Resistance=%.2f",
                 lowerTimeframeAtr, lowerTimeframeSupport, lowerTimeframeResistance);
         }
     }
@@ -976,8 +989,9 @@ public class ChanWebSocketLauncher {
 
         // Submit to execution engine
         if (executionEngine.submitOrder(order)) {
-            System.out.printf("[Launcher] ORDER: %s conf=%.2f score=%.2f %s %.4f @ %.2f%n",
-                signal.getType(), confidence, score, signal.getDirection(), quantity, price);
+            log.info("[Launcher] ORDER: {} conf={} score=0.0 {} {} @ {}",
+                        signal.getDirection(), signal.getConfidence(),
+                        signal.getDirection(), quantity, signal.getEntryPrice());
         }
     }
 
@@ -1009,7 +1023,7 @@ public class ChanWebSocketLauncher {
         qty = Math.max(0.0001, Math.min(Math.min(qty, maxQty), equityLimit));
 
         if (lastMarketContext != null && lastMarketContext.getAtr() > 0) {
-            System.out.printf("[Launcher] QTY: conf=%.2f atrFactor=%.2f urgency=%.2f → qty=%.4f%n",
+            log.trace("[Launcher] QTY: conf=%.2f atrFactor=%.2f urgency=%.2f → qty=%.4f",
                 signal.getConfidence(), atrFactor, signal.getUrgency(), qty);
         }
         return qty;
@@ -1023,17 +1037,17 @@ public class ChanWebSocketLauncher {
             // Get current position state from exchange adapter
             var exchangeAdapter = executionEngine.getExchangeAdapter();
             if (exchangeAdapter == null) {
-                System.out.println("[Launcher] LIFECYCLE: no exchange adapter");
+                log.warn("[Launcher] LIFECYCLE: no exchange adapter");
                 return;
             }
 
             PositionState posState = exchangeAdapter.getPositionState();
-            System.out.printf("[Launcher] LIFECYCLE: posState hasPosition=%s, qty=%.4f%n",
+            log.debug("[Launcher] LIFECYCLE: posState hasPosition={}, qty=%.4f",
                 posState.hasPosition(), posState.getQuantity());
             positionSignalManager.updatePosition(posState);
 
             if (!posState.hasPosition()) {
-                System.out.println("[Launcher] LIFECYCLE: no position to manage");
+                log.trace("[Launcher] LIFECYCLE: no position to manage");
                 return; // No position to manage
             }
 
@@ -1046,7 +1060,7 @@ public class ChanWebSocketLauncher {
             if (currentPrice > 0) {
                 if (posState.isLong() && lowerTimeframeSupport > 0 && currentPrice < lowerTimeframeSupport) {
                     // Price跌破5min支撑，立即止损
-                    System.out.printf("[Lifecycle][5m快速止损] LONG position: price=%.2f < 5min_support=%.2f%n",
+                    log.warn("[Lifecycle][5m快速止损] LONG position: price=%.2f < 5min_support=%.2f",
                         currentPrice, lowerTimeframeSupport);
                     // Create MARKET exit order directly
                     Order exitOrder = new Order(
@@ -1064,7 +1078,7 @@ public class ChanWebSocketLauncher {
                 }
                 if (posState.isShort() && lowerTimeframeResistance > 0 && currentPrice > lowerTimeframeResistance) {
                     // Price突破5min阻力，立即止损
-                    System.out.printf("[Lifecycle][5m快速止损] SHORT position: price=%.2f > 5min_resistance=%.2f%n",
+                    log.warn("[Lifecycle][5m快速止损] SHORT position: price=%.2f > 5min_resistance=%.2f",
                         currentPrice, lowerTimeframeResistance);
                     // Create MARKET exit order directly
                     Order exitOrder = new Order(
@@ -1092,24 +1106,23 @@ public class ChanWebSocketLauncher {
             }
 
             TradeIntent intent = lifecycleManager.determineIntent(posState, signalConfidence, context, signalDirection);
-            System.out.printf("[Launcher] LIFECYCLE: signalConf=%.2f, signalDir=%s, intent=%s%n",
+            log.debug("[Launcher] LIFECYCLE: signalConf=%.2f, signalDir=%s, intent=%s",
                 signalConfidence, signalDirection, intent);
 
             if (intent != TradeIntent.HOLD) {
-                System.out.printf("[Launcher] LIFECYCLE: %s position, executing %s%n",
+                log.info("[Launcher] LIFECYCLE: {} position, executing {}",
                     formatPosition(posState), intent);
 
                 // Create exit order
                 var exitOrder = positionSignalManager.createOrderFromIntent(intent, context, "lifecycle-" + System.currentTimeMillis());
                 if (exitOrder != null) {
                     executionEngine.submitOrder(exitOrder);
-                    System.out.printf("[Launcher] EXIT ORDER: %s %.4f @ %.2f%n",
+                    log.info("[Launcher] EXIT ORDER: {} {} @ {}",
                         intent, exitOrder.getQuantity(), exitOrder.getPrice());
                 }
             }
         } catch (Exception e) {
-            System.err.println("[Launcher] Lifecycle check failed: " + e.getMessage());
-            e.printStackTrace();
+            log.error("[Launcher] Lifecycle check failed: {}", e.getMessage(), e);
         }
     }
 
@@ -1149,8 +1162,8 @@ public class ChanWebSocketLauncher {
     }
 
     private void mainLoop() throws InterruptedException {
-        System.out.println("[Launcher] Entering main loop (Ctrl+C to stop)...");
-        System.out.println("=".repeat(60));
+        log.info("[Launcher] Entering main loop (Ctrl+C to stop)...");
+        log.info("============================================================");
 
         startTime = System.currentTimeMillis();
         running.set(true);
@@ -1171,9 +1184,9 @@ public class ChanWebSocketLauncher {
                         ? System.currentTimeMillis() - lastKlineTime
                         : Long.MAX_VALUE;
 
-                    // Log WebSocket health every 60s
+                    // Log WebSocket health every 60s (debug only - WebSocket via SOCKS proxy is known limited)
                     if (timeSinceKline > 30_000) {
-                        System.out.printf("[Launcher] WebSocket kline silent for %ds, REST backup active%n",
+                        log.debug("[Launcher] WebSocket kline silent for {}s, REST backup active",
                             timeSinceKline / 1000);
                     }
                     pollLatestKlineRest(lastKlineTimestamp);
@@ -1201,11 +1214,11 @@ public class ChanWebSocketLauncher {
                         long silentTime = System.currentTimeMillis() - lastMessageTime;
                         // Early warning at 30s
                         if (silentTime > 30000 && silentTime < MESSAGE_TIMEOUT_MS) {
-                            System.out.printf("[WebSocket] Warning: silent for %ds, checking connection...%n", silentTime/1000);
+                            log.warn("[WebSocket] Warning: silent for {}s, checking connection...", silentTime/1000);
                         }
                         // Full timeout triggers reconnect
                         if (silentTime > MESSAGE_TIMEOUT_MS) {
-                            System.out.println("[Launcher] No messages for " + (MESSAGE_TIMEOUT_MS/1000) + "s, connection may be dead");
+                            log.error("[Launcher] No messages for {}s, connection may be dead", MESSAGE_TIMEOUT_MS/1000);
                             wsConnectionAlive = false;
                             break;
                         }
@@ -1218,7 +1231,7 @@ public class ChanWebSocketLauncher {
                 }
 
             } catch (Exception e) {
-                System.err.println("[Launcher] Error in main loop: " + e.getMessage());
+                log.error("[Launcher] Error in main loop: {}", e.getMessage());
                 handleDisconnect();
             }
         }
@@ -1233,7 +1246,7 @@ public class ChanWebSocketLauncher {
         wsConnectionAlive = false;
         long count = reconnectCount.incrementAndGet();
         reconnectAttempts++;
-        System.out.printf("[Reconnect] Attempt %d/%d after WebSocket disconnect, delay=%dms%n",
+        log.warn("[Reconnect] Attempt {}/{} after WebSocket disconnect, delay={}ms",
             count, MAX_RECONNECT_ATTEMPTS, currentReconnectDelay);
 
         // Close existing connection
@@ -1253,7 +1266,7 @@ public class ChanWebSocketLauncher {
 
         // Check max attempts
         if (count >= MAX_RECONNECT_ATTEMPTS) {
-            System.err.println("[Reconnect] Max attempts reached, stopping");
+            log.error("[Reconnect] Max attempts reached, stopping");
             running.set(false);
             return;
         }
@@ -1273,12 +1286,12 @@ public class ChanWebSocketLauncher {
         int total = chanExecutor.getTotalSignals();
         int accepted = chanExecutor.getAcceptedSignals();
 
-        System.out.printf("[%ds] KlineCount=%d | Signals=%d/%d | Price=%.2f | Reconnects=%d%n",
+        log.debug("[{}s] KlineCount={} | Signals={}/{} | Price={:.2f} | Reconnects={}",
             elapsed, klineCount.get(), accepted, total, lastPrice, reconnectCount.get());
     }
 
     private void shutdown() {
-        System.out.println("[Launcher] Shutting down...");
+        log.info("[Launcher] Shutting down...");
 
         running.set(false);
 
@@ -1296,20 +1309,20 @@ public class ChanWebSocketLauncher {
 
         // Print final stats
         long elapsed = (System.currentTimeMillis() - startTime) / 1000;
-        System.out.println("\n=== Final Statistics ===");
-        System.out.println("Runtime: " + elapsed + "s");
-        System.out.println("Total Kline Updates: " + klineCount.get());
-        System.out.println("Total Messages: " + messageCount.get());
-        System.out.println("Chan Signals Processed: " + chanExecutor.getTotalSignals());
-        System.out.println("Chan Signals Accepted: " + chanExecutor.getAcceptedSignals());
+        log.info("=== Final Statistics ===");
+        log.info("Runtime: {}s", elapsed);
+        log.info("Total Kline Updates: {}", klineCount.get());
+        log.info("Total Messages: {}", messageCount.get());
+        log.info("Chan Signals Processed: {}", chanExecutor.getTotalSignals());
+        log.info("Chan Signals Accepted: {}", chanExecutor.getAcceptedSignals());
 
         if (alphaPool != null) {
             AlphaPool.PoolStatus pool = alphaPool.getStatus();
-            System.out.println("AlphaPool Signals Generated: " + pool.getTotalSignalsGenerated());
-            System.out.println("AlphaPool Signals Executed: " + pool.getTotalSignalsExecuted());
+            log.info("AlphaPool Signals Generated: {}", pool.getTotalSignalsGenerated());
+            log.info("AlphaPool Signals Executed: {}", pool.getTotalSignalsExecuted());
         }
 
-        System.out.println("Reconnection Attempts: " + reconnectCount.get());
-        System.out.println("========================\n");
+        log.info("Reconnection Attempts: {}", reconnectCount.get());
+        log.info("========================");
     }
 }
