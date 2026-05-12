@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,7 +54,8 @@ public class ExecutionCoordinator {
 
         this.orderReceiver = new ExecutionOrderReceiver(riskManager, exchangeAdapter, cooldownManager);
         this.orderProcessor = new ExecutionOrderProcessor(riskManager, exchangeAdapter,
-            new SmartOrderRouter(), algoEngine, orderQueue, cooldownManager);
+            new SmartOrderRouter(), algoEngine, orderQueue, cooldownManager,
+            e -> {}, (s, o) -> {});
         this.reportProcessor = new ExecutionReporter(riskManager, exchangeAdapter, cooldownManager);
     }
 
@@ -104,7 +106,7 @@ public class ExecutionCoordinator {
         while (isRunning.get()) {
             try {
                 Order order = orderQueue.take();
-                orderProcessor.processOrder(order);
+                orderProcessor.processOrder(order, new ConcurrentHashMap<>(), new ConcurrentHashMap<>());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;

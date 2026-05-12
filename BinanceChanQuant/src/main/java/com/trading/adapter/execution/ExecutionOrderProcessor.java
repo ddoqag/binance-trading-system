@@ -1,16 +1,20 @@
 package com.trading.adapter.execution;
 
 import com.trading.domain.trading.model.Order;
-import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.ExecutionReport;
+import com.trading.domain.trading.model.TradeDirection;
+import com.trading.domain.trading.model.TradeIntent;
 import com.trading.domain.trading.risk.RiskManager;
 import com.trading.domain.market.model.MarketData;
+import com.trading.domain.signal.ExecutionEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
 
 /**
  * ExecutionOrderProcessor - 订单处理逻辑
@@ -33,47 +37,50 @@ public class ExecutionOrderProcessor {
     private final BlockingQueue<Order> orderQueue;
     private final SignalCooldownManager cooldownManager;
 
-    // Active execution tracking
-    private final ConcurrentHashMap<String, ExecutionReporter.ActiveExecutionInfo> activeExecutions = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, String> algoOrderToSymbol = new ConcurrentHashMap<>();
+    // Callbacks for event publishing and active execution tracking
+    private final Consumer<ExecutionEvent> eventPublisher;
+    private final BiConsumer<String, String> activeExecutionTracker;
 
     public ExecutionOrderProcessor(RiskManager riskManager, BinanceExchangeAdapter exchangeAdapter,
                                    SmartOrderRouter orderRouter, AlgoExecutionEngine algoEngine,
-                                   BlockingQueue<Order> orderQueue, SignalCooldownManager cooldownManager) {
+                                   BlockingQueue<Order> orderQueue, SignalCooldownManager cooldownManager,
+                                   Consumer<ExecutionEvent> eventPublisher,
+                                   BiConsumer<String, String> activeExecutionTracker) {
         this.riskManager = riskManager;
         this.exchangeAdapter = exchangeAdapter;
         this.orderRouter = orderRouter;
         this.algoEngine = algoEngine;
         this.orderQueue = orderQueue;
         this.cooldownManager = cooldownManager;
+        this.eventPublisher = eventPublisher;
+        this.activeExecutionTracker = activeExecutionTracker;
     }
 
     /**
      * Process order
      */
-    public void processOrder(Order order) {
+    public void processOrder(Order order,
+                            ConcurrentHashMap<String, ExecutionEngine.ActiveExecution> activeExecutions,
+                            ConcurrentHashMap<String, String> algoOrderToSymbol) {
         try {
-            // Get execution plan - need reference to state machine
-            // For now, create inline
-            var executionPlan = getExecutionPlan(order);
-
-            // Create market context
+            ExecutionPlan executionPlan = getExecutionPlan(order);
             MarketData marketData = getCurrentMarketData();
 
-            // Route the order
             List<SmartOrderRouter.RoutedOrder> routedOrders = orderRouter.routeOrder(order, marketData);
 
-            // Execute each routed order
             for (SmartOrderRouter.RoutedOrder routed : routedOrders) {
                 Order routedOrder = routed.getOrder();
-
                 boolean isExitIntent = isExitIntent(order);
 
                 if (executionPlan.isUseAlgo() && !isExitIntent) {
                     // Check notional for small orders
                     double notional = routedOrder.getQuantity() * routedOrder.getPrice();
-                    double availableBalance = exchangeAdapter != null ?
-                        exchangeAdapter.getAvailableBalance() : 100.0;
+                    double availableBalance;
+                    if (exchangeAdapter != null) {
+                        availableBalance = exchangeAdapter.getAvailableBalance();
+                    } else {
+                        throw new IllegalStateException("Exchange adapter unavailable, cannot determine available balance for sizing");
+                    }
                     double maxNotional = availableBalance * 20 * 0.5;
 
                     if (notional > 0 && notional < maxNotional) {
@@ -86,7 +93,7 @@ public class ExecutionOrderProcessor {
                     routedOrder = withAlgoType(routedOrder, executionPlan.getAlgoType());
                     algoEngine.startAlgo(routedOrder, marketData);
                     activeExecutions.put(routedOrder.getSymbol(),
-                        new ExecutionReporter.ActiveExecutionInfo(routedOrder.getOrderId(), routedOrder.getSymbol()));
+                        new ExecutionEngine.ActiveExecution(routedOrder.getOrderId(), routedOrder.getSymbol()));
                     algoOrderToSymbol.put(routedOrder.getOrderId(), routedOrder.getSymbol());
                 } else {
                     sendOrderDirect(routedOrder, routed.getExchange());
@@ -147,6 +154,10 @@ public class ExecutionOrderProcessor {
         if (report != null) {
             // Would add to report queue
         }
+    }
+
+    public SmartOrderRouter getOrderRouter() {
+        return orderRouter;
     }
 
     public static class ExecutionPlan {

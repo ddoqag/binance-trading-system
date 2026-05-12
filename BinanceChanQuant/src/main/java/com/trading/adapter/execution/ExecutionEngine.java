@@ -2,33 +2,40 @@ package com.trading.adapter.execution;
 
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.ExecutionReport;
+import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.risk.RiskManager;
-import com.trading.domain.trading.risk.RiskCheckResult;
 import com.trading.domain.market.model.MarketData;
+import com.trading.domain.signal.ExecutionEvent;
+import com.trading.domain.signal.ExecutionEvent.ExecutionEventType;
+import com.trading.messaging.MessageBus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.ConcurrentHashMap;
-
-import com.trading.domain.trading.model.TradeDirection;
-import com.trading.domain.trading.model.TradeIntent;
-import com.trading.domain.market.model.MarketData;
-import com.trading.domain.signal.ExecutionEvent;
-import com.trading.domain.signal.ExecutionEvent.ExecutionEventType;
-import com.trading.messaging.MessageBus;
+import java.util.function.Consumer;
 
 /**
- * Execution Engine
- * Integrates all execution components: StateMachine, Router, AlgoEngine
+ * Execution Engine - Delegator Pattern
+ *
+ * <p>Simplified facade that delegates to specialized components:
+ * <ul>
+ *   <li>ExecutionOrderReceiver - Order validation</li>
+ *   <li>ExecutionOrderProcessor - Order processing</li>
+ *   <li>ExecutionReporter - Report processing</li>
+ *   <li>ExecutionStateMachine - Execution mode control</li>
+ *   <li>SmartOrderRouter - Order routing</li>
+ *   <li>AlgoExecutionEngine - TWAP execution</li>
+ * </ul>
+ *
+ * <p>Target: ~150 lines (currently 825)
  */
 public class ExecutionEngine {
 
@@ -40,6 +47,12 @@ public class ExecutionEngine {
     private final AlgoExecutionEngine algoEngine;
     private final RiskManager riskManager;
     private final BinanceExchangeAdapter exchangeAdapter;
+
+    // Delegated components
+    private final ExecutionOrderReceiver orderReceiver;
+    private final ExecutionOrderProcessor orderProcessor;
+    private final ExecutionReporter reportProcessor;
+    private final SignalCooldownManager cooldownManager = new SignalCooldownManager();
 
     // Queues
     private final BlockingQueue<Order> orderQueue = new LinkedBlockingQueue<>(1000);
@@ -53,27 +66,19 @@ public class ExecutionEngine {
     });
     private final AtomicBoolean isRunning = new AtomicBoolean(false);
 
+    // Active executions for duplicate TWAP prevention
+    private final ConcurrentHashMap<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
+    private static final long MAX_EXECUTION_AGE_MS = 300000; // 5 minutes
+
+    // Algo order ID to symbol mapping
+    private final ConcurrentHashMap<String, String> algoOrderToSymbol = new ConcurrentHashMap<>();
+
     // Statistics
     private final AtomicLong totalOrders = new AtomicLong(0);
     private final AtomicLong filledOrders = new AtomicLong(0);
     private final AtomicLong rejectedOrders = new AtomicLong(0);
 
-    // Active execution tracking - prevents duplicate TWAP for same symbol
-    private final ConcurrentHashMap<String, ActiveExecution> activeExecutions = new ConcurrentHashMap<>();
-
-    // Max age for active executions - stale entries older than this are cleaned up
-    private static final long MAX_EXECUTION_AGE_MS = 300000; // 5 minutes
-
-    // Map algo order ID to symbol for listener callback
-    private final ConcurrentHashMap<String, String> algoOrderToSymbol = new ConcurrentHashMap<>();
-
-    // Signal cooldown tracking - uses new SignalCooldownManager
-    private final SignalCooldownManager cooldownManager = new SignalCooldownManager();
-
-    // Track position changes for post-close cooldown
-    private final AtomicReference<Double> lastKnownPosition = new AtomicReference<>(0.0);
-
-    // V6: ExecutionFeedbackBus - for closed-loop telemetry
+    // Message bus and event listener
     private MessageBus messageBus;
     private ExecutionEventListener eventListener;
 
@@ -100,17 +105,23 @@ public class ExecutionEngine {
         this.orderRouter = new SmartOrderRouter();
         this.algoEngine = new AlgoExecutionEngine();
 
-        // Initialize exchange adapter
-        String symbol = "BTCUSDT"; // Default, should be from config
+        String symbol = "BTCUSDT";
         this.exchangeAdapter = new BinanceExchangeAdapter(symbol, paperTrading, apiKey, apiSecret);
 
-        // P0: Wire exchange adapter to state machine for balance-based STANDBY mode
+        // Wire state machine to exchange adapter for STANDBY mode
         this.stateMachine.setExchangeAdapter(this.exchangeAdapter);
 
-        // Wire up algo engine to use exchange adapter for live trading
-        algoEngine.setExchangeAdapter(exchangeAdapter);
+        // Wire algo engine to exchange adapter
+        this.algoEngine.setExchangeAdapter(exchangeAdapter);
 
-        // Register as listener for algo completion events to clean up activeExecutions
+        // Initialize delegated components
+        this.orderReceiver = new ExecutionOrderReceiver(riskManager, exchangeAdapter, cooldownManager);
+        this.orderProcessor = new ExecutionOrderProcessor(riskManager, exchangeAdapter,
+                orderRouter, algoEngine, orderQueue, cooldownManager,
+                this::publishEvent, (s, o) -> {});
+        this.reportProcessor = new ExecutionReporter(riskManager, exchangeAdapter, cooldownManager);
+
+        // Register algo completion listener
         algoEngine.addListener(new AlgoExecutionListener() {
             @Override
             public void onAlgoCompleted(String orderId, String symbol, AlgoCompletionReason reason) {
@@ -121,98 +132,49 @@ public class ExecutionEngine {
                     activeExecutions.remove(symbol);
                 }
                 log.info("[ExecutionEngine] Algo completed: orderId={} symbol={} reason={}",
-                    orderId, symbol, reason);
+                        orderId, symbol, reason);
             }
         });
 
-        // Wire up position change callback to trigger post-close cooldown
+        // Register position change callback
         exchangeAdapter.setPositionChangeCallback(event -> {
             if (event.wasClosed) {
                 TradeDirection closedDir = event.previousPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
-                log.info("[ExecutionEngine] Position closed detected: {:.4f} -> 0", event.previousPosition);
                 cooldownManager.onPositionClosed(event.symbol, closedDir);
             }
-            // P2-9 FIX: Clear post-close cooldown when position is opened
             if (event.wasOpened) {
                 TradeDirection openedDir = event.newPosition > 0 ? TradeDirection.LONG : TradeDirection.SHORT;
-                log.info("[ExecutionEngine] Position opened detected: 0 -> {:.4f}", event.newPosition);
                 cooldownManager.onPositionOpened(event.symbol, openedDir);
             }
         });
     }
 
-    /**
-     * V6: Set MessageBus for ExecutionFeedbackBus
-     */
-    public void setMessageBus(MessageBus bus) {
-        this.messageBus = bus;
-    }
+    // ========== Lifecycle ==========
 
-    /**
-     * V6: Set event listener for direct callback (alternative to MessageBus)
-     */
-    public void setEventListener(ExecutionEventListener listener) {
-        this.eventListener = listener;
-    }
-
-    /**
-     * V6: Publish execution event via callback or message bus
-     */
-    private void publishEvent(ExecutionEvent event) {
-        if (eventListener != null) {
-            eventListener.onExecutionEvent(event);
-        }
-        if (messageBus != null) {
-            // Cast to DomainEvent if messageBus requires it
-            messageBus.publish(new ExecutionEventAdapter(event));
-        }
-    }
-
-    /**
-     * V6: Adapter to make ExecutionEvent compatible with DomainEvent
-     */
-    private static class ExecutionEventAdapter implements com.trading.messaging.DomainEvent {
-        private final ExecutionEvent event;
-        ExecutionEventAdapter(ExecutionEvent event) { this.event = event; }
-        @Override public String getMessageId() { return event.correlationId(); }
-        @Override public long getTimestamp() { return event.timestamp(); }
-        @Override public String getEventType() { return event.type().name(); }
-    }
-
-    /**
-     * Start the execution engine
-     */
     public void start() {
         if (isRunning.compareAndSet(false, true)) {
             log.info("[ExecutionEngine] Starting...");
-
             stateMachine.start();
             algoEngine.start();
-
             executor.submit(this::orderProcessingLoop);
             executor.submit(this::reportProcessingLoop);
             executor.submit(this::monitoringLoop);
-
-            log.info("[ExecutionEngine] Started successfully");
+            log.info("[ExecutionEngine] Started");
         }
     }
 
-    /**
-     * Stop the execution engine
-     */
     public void stop() {
         if (isRunning.compareAndSet(true, false)) {
             log.info("[ExecutionEngine] Stopping...");
-
             stateMachine.shutdown();
             algoEngine.stop();
             executor.shutdownNow();
-
             printStatistics();
-
             log.info("[ExecutionEngine] Stopped");
         }
     }
+
+    // ========== Order Submission ==========
 
     /**
      * Submit an order for execution
@@ -222,119 +184,34 @@ public class ExecutionEngine {
             return false;
         }
 
-        // ===== Phase 3: Position Intent Check (before cooldown) =====
-        TradeIntent intent = determinePositionIntent(order);
-        boolean isExitOrder = intent == TradeIntent.EXIT_LONG || intent == TradeIntent.EXIT_SHORT;
-
-        // Intent=HOLD: no position management needed, skip all checks silently
-        if (intent == TradeIntent.HOLD) {
-            // Don't print anything - this is normal when position matches signal direction
+        // Validate order via receiver
+        ExecutionOrderReceiver.OrderValidationResult result = orderReceiver.validateOrder(order);
+        if (!result.accepted) {
             return false;
         }
 
-        // ===== Phase 1: Signal Cooldown Check (only for opening new positions, skip for exits) =====
-        double currentPos = 0.0;
-        if (exchangeAdapter != null) {
-            currentPos = exchangeAdapter.getCurrentPosition();
-        }
-        if (!isExitOrder && shouldIgnoreSignalWithPosition(order.getSymbol(), order.getSide(), order.getConfidence(), currentPos)) {
-            // V6: Publish SIGNAL_BLOCKED_BY_COOLDOWN event
-            long remainingMs = cooldownManager.getRemainingCooldownMs(order.getSymbol(), order.getSide());
-            publishEvent(ExecutionEvent.builder()
-                .correlationId(order.getSignalId())
-                .expertId(order.getStrategy())  // source is stored in strategy field
-                .type(ExecutionEventType.SIGNAL_BLOCKED_BY_COOLDOWN)
-                .symbol(order.getSymbol())
-                .direction(order.getSide())
-                .metadata(Map.of("remainingMs", remainingMs, "executionMode", stateMachine.getCurrentMode().name()))
-                .build());
-            return false;
-        }
-
-        // ===== Phase 1: Direction Filter Check =====
-        MarketData marketData = getCurrentMarketData();
-        if (!shouldExecuteDirection(order, marketData)) {
-            // V6: Publish SIGNAL_BLOCKED_BY_DIRECTION event
-            publishEvent(ExecutionEvent.builder()
-                .correlationId(order.getSignalId())
-                .expertId(order.getStrategy())
-                .type(ExecutionEventType.SIGNAL_BLOCKED_BY_DIRECTION)
-                .symbol(order.getSymbol())
-                .direction(order.getSide())
-                .metadata(marketData != null ? Map.of(
-                    "lastPrice", marketData.getLastPrice(),
-                    "bidPrice", marketData.getBidPrice(),
-                    "askPrice", marketData.getAskPrice()
-                ) : Map.of())
-                .build());
-            return false;
-        }
-
-        // ===== Phase 1: Duplicate TWAP Prevention (exit orders bypass completely) =====
-        String symbol = order.getSymbol();
-
-        // Exit orders bypass TWAP check entirely - they must execute even if TWAP was started
-        if (isExitOrder) {
-            // No need to log - this is expected behavior
-        } else {
+        // Exit orders bypass TWAP check
+        if (!result.isExitOrder) {
+            String symbol = order.getSymbol();
             ActiveExecution existing = activeExecutions.get(symbol);
             if (existing != null) {
-                // Check if execution is stale and should be cleaned up
                 if (existing.getAgeMs() > MAX_EXECUTION_AGE_MS) {
                     activeExecutions.remove(symbol);
-                    log.warn("[ExecutionEngine] Removed stale execution for {} (age={}ms)", symbol, existing.getAgeMs());
                 } else {
-                    log.debug("[ExecutionEngine] TWAP already active for {}, ignoring (started {} ms ago)", symbol, existing.getAgeMs());
-                    return false;
+                    return false; // TWAP already active
                 }
             }
         }
 
-        // Pre-trade risk check
-        if (riskManager != null) {
-            RiskCheckResult result = riskManager.preTradeCheck(order);
-            if (!result.isAllowed()) {
-                // V6: Publish SIGNAL_BLOCKED_BY_RISK event
-                publishEvent(ExecutionEvent.builder()
-                    .correlationId(order.getSignalId())
-                    .expertId(order.getStrategy())
-                    .type(ExecutionEventType.SIGNAL_BLOCKED_BY_RISK)
-                    .symbol(order.getSymbol())
-                    .direction(order.getSide())
-                    .metadata(Map.of("reason", result.getMessage(), "ruleTriggered", result.getRuleTriggered()))
-                    .build());
-                log.error("[ExecutionEngine] Order rejected by risk: {}", result.getMessage());
-                rejectedOrders.incrementAndGet();
-                return false;
-            }
-        }
-
         boolean success = orderQueue.offer(order);
-
         if (success) {
             totalOrders.incrementAndGet();
-            // V6: Publish ORDER_SUBMITTED event
-            publishEvent(ExecutionEvent.builder()
-                .correlationId(order.getSignalId())
-                .expertId(order.getStrategy())
-                .type(ExecutionEventType.ORDER_SUBMITTED)
-                .symbol(order.getSymbol())
-                .direction(order.getSide())
-                .metadata(Map.of(
-                    "orderId", order.getOrderId(),
-                    "quantity", order.getQuantity(),
-                    "price", order.getPrice(),
-                    "executionMode", stateMachine.getCurrentMode().name()
-                ))
-                .build());
         }
-
         return success;
     }
 
-    /**
-     * Order processing loop
-     */
+    // ========== Processing Loops ==========
+
     private void orderProcessingLoop() {
         while (isRunning.get()) {
             try {
@@ -344,256 +221,137 @@ public class ExecutionEngine {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                log.error("[ExecutionEngine] Error processing order: {}", e.getMessage());
+                log.error("[ExecutionEngine] Order processing error: {}", e.getMessage());
             }
         }
     }
 
-    /**
-     * Process an order
-     */
     private void processOrder(Order order) {
         try {
-            // Get execution plan from state machine
             var executionPlan = stateMachine.getExecutionPlan(order);
-
-            // Create market context
             MarketData marketData = getCurrentMarketData();
+            List<SmartOrderRouter.RoutedOrder> routedOrders = orderRouter.routeOrder(order, marketData);
 
-            // Route the order
-            List<SmartOrderRouter.RoutedOrder> routedOrders =
-                orderRouter.routeOrder(order, marketData);
-
-            // Execute each routed order
             for (SmartOrderRouter.RoutedOrder routed : routedOrders) {
                 Order routedOrder = routed.getOrder();
-
-                // Exit orders always go direct (no TWAP) - they must close even if TWAP was previously started
-                boolean isExitIntent = (order.getSide() == TradeDirection.LONG && exchangeAdapter.getCurrentPosition() < 0) ||
-                                       (order.getSide() == TradeDirection.SHORT && exchangeAdapter.getCurrentPosition() > 0);
+                boolean isExitIntent = isExitIntent(order);
 
                 if (executionPlan.isUseAlgo() && !isExitIntent) {
-
-                    // Check notional: if too small relative to balance, send direct instead of TWAP
+                    // Check notional for small orders
                     double notional = routedOrder.getQuantity() * routedOrder.getPrice();
-                    double availableBalance = 100.0; // Default, will be updated on sync
-                    if (exchangeAdapter != null) {
-                        availableBalance = exchangeAdapter.getAvailableBalance();
-                    }
-                    double maxNotional = availableBalance * 20 * 0.5; // leverage 20, use 50% of max
+                    double availableBalance = exchangeAdapter.getAvailableBalance();
+                    double maxNotional = availableBalance * 20 * 0.5;
+
                     if (notional > 0 && notional < maxNotional) {
-                        // Small order - send direct, no TWAP
-                        sendOrderDirect(routedOrder, routed.getExchange());
-                        log.info("[ExecutionEngine] Small order notional={:.2f} < {:.2f}, direct send",
-                            notional, maxNotional);
+                        sendOrderDirect(routedOrder);
                         continue;
                     }
 
-                    // Set algo type from execution plan, not from order's strategy field
-                    routedOrder = new Order(
-                        routedOrder.getOrderId(),
-                        routedOrder.getSymbol(),
-                        routedOrder.getSide(),
-                        routedOrder.getOrderType(),
-                        routedOrder.getQuantity(),
-                        routedOrder.getPrice(),
-                        executionPlan.getAlgoType(), // Use from execution plan
-                        routedOrder.getUrgency()
-                    );
+                    // Start algo
+                    routedOrder = withAlgoType(routedOrder, executionPlan.getAlgoType());
                     algoEngine.startAlgo(routedOrder, marketData);
                     activeExecutions.put(routedOrder.getSymbol(),
-                        new ActiveExecution(routedOrder.getOrderId(), routedOrder.getSymbol()));
+                            new ActiveExecution(routedOrder.getOrderId(), routedOrder.getSymbol()));
                     algoOrderToSymbol.put(routedOrder.getOrderId(), routedOrder.getSymbol());
                 } else {
-                    // Direct execution
-                    sendOrderDirect(routedOrder, routed.getExchange());
+                    sendOrderDirect(routedOrder);
                 }
             }
-
         } catch (Exception e) {
-            log.error("[ExecutionEngine] Failed to process order {}: {}", order.getOrderId(), e.getMessage());
+            log.error("[ExecutionEngine] Failed to process order: {}", e.getMessage());
         }
     }
 
-    /**
-     * Send order directly to exchange (via Binance adapter)
-     * For opening orders: use opponent price (ask for LONG, bid for SHORT)
-     * This ensures immediate fill by taking the opposite side (Taker strategy)
-     * - LONG (开多): use ask (卖一) to take seller's price
-     * - SHORT (开空): use bid (买一) to take buyer's price
-     */
-    private void sendOrderDirect(Order order, String exchange) {
-        // P3-1: Slippage protection - cap price deviation at 0.05%
+    private boolean isExitIntent(Order order) {
+        double pos = exchangeAdapter.getCurrentPosition();
+        return (order.getSide() == TradeDirection.LONG && pos < 0) ||
+               (order.getSide() == TradeDirection.SHORT && pos > 0);
+    }
+
+    private Order withAlgoType(Order order, String algoType) {
+        return new Order(order.getOrderId(), order.getSymbol(), order.getSide(),
+                order.getOrderType(), order.getQuantity(), order.getPrice(),
+                algoType, order.getUrgency());
+    }
+
+    private void sendOrderDirect(Order order) {
+        // Get opponent price for immediate fill
         double limitPrice = order.getPrice();
         double adjustedPrice = limitPrice;
 
         if (!order.isReduceOnly()) {
-            // Opening order: use opponent price for immediate fill
-            // LONG (开多): use ask price to immediately take from seller
-            // SHORT (开空): use bid price to immediately take from buyer
             double bidPrice = exchangeAdapter.getBidPrice();
             double askPrice = exchangeAdapter.getAskPrice();
 
             if (order.getSide() == TradeDirection.LONG && askPrice > 0) {
-                // 开多：追卖一价(ask)，立即吃单成交
                 adjustedPrice = askPrice;
             } else if (order.getSide() == TradeDirection.SHORT && bidPrice > 0) {
-                // 开空：追买一价(bid)，立即吃单成交
                 adjustedPrice = bidPrice;
             }
 
-            // P3-1: Slippage protection - if deviation > 0.05%, use limit price instead
+            // Slippage protection
             double slippagePct = Math.abs(adjustedPrice - limitPrice) / limitPrice;
-            if (slippagePct > 0.0005) { // 0.05%
-                log.warn("[ExecutionEngine] Slippage protection: limit={:.2f}, adjusted={:.2f} ({:.2f}%), using limit",
-                    limitPrice, adjustedPrice, slippagePct * 100);
+            if (slippagePct > 0.0005) {
                 adjustedPrice = limitPrice;
             }
         }
 
-        log.info("[ExecutionEngine] Sending order {} to {}: {} {} {:.4f} @ {:.2f} (adjusted from {:.2f})",
-            order.getOrderId(), exchange, order.getSide(),
-            order.getOrderType(), order.getQuantity(), adjustedPrice, order.getPrice());
-
-        // Create order with adjusted price
-        Order adjustedOrder = new Order(
-            order.getOrderId(),
-            order.getSymbol(),
-            order.getSide(),
-            order.getOrderType(),
-            order.getQuantity(),
-            adjustedPrice,
-            order.getStrategy(),
-            order.getUrgency()
-        );
+        Order adjustedOrder = new Order(order.getOrderId(), order.getSymbol(), order.getSide(),
+                order.getOrderType(), order.getQuantity(), adjustedPrice,
+                order.getStrategy(), order.getUrgency());
         adjustedOrder.setConfidence(order.getConfidence());
 
-        // Use Binance adapter for live trading, or simulate for paper mode
         ExecutionReport report = exchangeAdapter.sendOrder(adjustedOrder);
         if (report != null) {
             reportQueue.offer(report);
         }
     }
 
-    /**
-     * Report processing loop
-     */
     private void reportProcessingLoop() {
         while (isRunning.get()) {
             try {
                 ExecutionReport report = reportQueue.take();
-                processExecutionReport(report);
+                reportProcessor.processExecutionReport(report);
+
+                // Update active executions
+                if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.FILLED) {
+                    filledOrders.incrementAndGet();
+                    activeExecutions.remove(report.getSymbol());
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             } catch (Exception e) {
-                log.error("[ExecutionEngine] Error processing report: {}", e.getMessage());
+                log.error("[ExecutionEngine] Report processing error: {}", e.getMessage());
             }
         }
     }
 
-    /**
-     * Process execution report
-     */
-    private void processExecutionReport(ExecutionReport report) {
-        // Update statistics
-        if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.FILLED) {
-            filledOrders.incrementAndGet();
-
-            // Check if this fill closed a position - trigger post-close cooldown
-            if (exchangeAdapter != null && report.getFilledQuantity() > 0) {
-                // FIX: Determine if position was closed based on fill report quantity and direction
-                // rather than calling syncPositions which may have race conditions
-                double filledQty = report.getFilledQuantity();
-                TradeDirection fillSide = report.getSide();
-                double posBefore = exchangeAdapter.getCurrentPosition();
-
-                // Simple check: if we filled a qty that would close the position
-                boolean wasLongClosed = (fillSide == TradeDirection.SHORT && posBefore > 0);
-                boolean wasShortClosed = (fillSide == TradeDirection.LONG && posBefore < 0);
-                boolean positionClosed = wasLongClosed || wasShortClosed;
-
-                if (positionClosed) {
-                    // Use getOpposite() for cleaner semantics: order side is opposite of closed position
-                    // SELL (SHORT order) closes LONG position → getOpposite() = LONG
-                    // BUY (LONG order) closes SHORT position → getOpposite() = SHORT
-                    TradeDirection closedDirection = report.getSide().getOpposite();
-                    cooldownManager.onPositionClosed(report.getSymbol(), closedDirection);
-                    log.info("[ExecutionEngine] Position closed: orderSide={}, closedPosition={}",
-                        report.getSide(), closedDirection);
-                }
-            }
-        }
-
-        // Notify risk manager
-        if (riskManager != null) {
-            riskManager.onExecution(report);
-        }
-
-        log.info("[ExecutionEngine] Fill: {} {} {:.4f} @ {:.2f}",
-            report.getOrderId(),
-            report.getSide(),
-            report.getFilledQuantity(),
-            report.getAvgFillPrice());
-
-        // Phase 1: Remove from active executions when completed
-        String symbol = report.getSymbol();
-        ActiveExecution exec = activeExecutions.get(symbol);
-        if (exec != null) {
-            com.trading.domain.trading.model.OrderStatus status = report.getStatus();
-            if (status == com.trading.domain.trading.model.OrderStatus.FILLED ||
-                status == com.trading.domain.trading.model.OrderStatus.CANCELLED ||
-                status == com.trading.domain.trading.model.OrderStatus.REJECTED ||
-                status == com.trading.domain.trading.model.OrderStatus.EXPIRED) {
-                activeExecutions.remove(symbol);
-                log.info("[ExecutionEngine] Execution completed for {}: {}", symbol, status);
-            }
-        }
-    }
-
-    /**
-     * Monitoring loop
-     */
     private void monitoringLoop() {
         while (isRunning.get()) {
             try {
-                Thread.sleep(60000); // Check every minute
-
+                Thread.sleep(60000);
                 int queueSize = orderQueue.size();
                 if (queueSize > 500) {
                     log.error("[ExecutionEngine] Warning: Order queue large: {}", queueSize);
                 }
-
-                var mode = stateMachine.getCurrentMode();
                 log.info("[ExecutionEngine] Status: mode={}, queue={}, total={}, filled={}, rejected={}",
-                    mode, queueSize, totalOrders.get(), filledOrders.get(), rejectedOrders.get());
-
+                        stateMachine.getCurrentMode(), queueSize, totalOrders.get(), filledOrders.get(), rejectedOrders.get());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
-            } catch (Exception e) {
-                log.error("[ExecutionEngine] Error in monitoring: {}", e.getMessage());
             }
         }
     }
 
-    /**
-     * Get current market data from exchange adapter
-     * In live mode: uses last trade price from Binance adapter
-     * In paper mode: uses simulated price from paper fill
-     */
+    // ========== Market Data ==========
+
     private MarketData getCurrentMarketData() {
-        if (exchangeAdapter == null) {
-            return null;
-        }
-        // Get latest price from exchange adapter
+        if (exchangeAdapter == null) return null;
         double lastPrice = exchangeAdapter.getLastPrice();
         double bidPrice = exchangeAdapter.getBidPrice();
         double askPrice = exchangeAdapter.getAskPrice();
-
-        if (lastPrice <= 0 && bidPrice <= 0 && askPrice <= 0) {
-            return null; // No valid market data
-        }
+        if (lastPrice <= 0 && bidPrice <= 0 && askPrice <= 0) return null;
 
         MarketData data = new MarketData();
         data.setSymbol(exchangeAdapter.getSymbol());
@@ -604,17 +362,41 @@ public class ExecutionEngine {
         return data;
     }
 
-    /**
-     * Print final statistics
-     */
+    // ========== Event Publishing ==========
+
+    public void setMessageBus(MessageBus bus) {
+        this.messageBus = bus;
+    }
+
+    public void setEventListener(ExecutionEventListener listener) {
+        this.eventListener = listener;
+    }
+
+    private void publishEvent(ExecutionEvent event) {
+        if (eventListener != null) {
+            eventListener.onExecutionEvent(event);
+        }
+        if (messageBus != null) {
+            messageBus.publish(new ExecutionEventAdapter(event));
+        }
+    }
+
+    private static class ExecutionEventAdapter implements com.trading.messaging.DomainEvent {
+        private final ExecutionEvent event;
+        ExecutionEventAdapter(ExecutionEvent event) { this.event = event; }
+        @Override public String getMessageId() { return event.correlationId(); }
+        @Override public long getTimestamp() { return event.timestamp(); }
+        @Override public String getEventType() { return event.type().name(); }
+    }
+
+    // ========== Statistics ==========
+
     private void printStatistics() {
         log.info("=== Execution Engine Statistics ===");
         log.info("Total Orders: {}", totalOrders.get());
         log.info("Filled Orders: {}", filledOrders.get());
         log.info("Rejected Orders: {}", rejectedOrders.get());
-
-        double fillRate = totalOrders.get() > 0 ?
-            (double) filledOrders.get() / totalOrders.get() * 100 : 0;
+        double fillRate = totalOrders.get() > 0 ? (double) filledOrders.get() / totalOrders.get() * 100 : 0;
         log.info("Fill Rate: {:.2f}%", fillRate);
         log.info("Current Mode: {}", stateMachine.getCurrentMode());
         log.info("===================================");
@@ -626,19 +408,15 @@ public class ExecutionEngine {
     public AlgoExecutionEngine getAlgoEngine() { return algoEngine; }
     public BinanceExchangeAdapter getExchangeAdapter() { return exchangeAdapter; }
 
-    // ========== Phase 1: Duplicate TWAP Prevention ==========
+    // ========== Internal Classes ==========
 
     /**
-     * Active execution tracking - prevents duplicate TWAP
+     * Active execution tracking for duplicate TWAP prevention
      */
     public static class ActiveExecution {
         public final String orderId;
         public final String symbol;
         public final long startTime;
-        public volatile boolean completed = false;
-        public long slicesSent = 0;
-        public long slicesFilled = 0;
-        public double filledQuantity = 0;
 
         public ActiveExecution(String orderId, String symbol) {
             this.orderId = orderId;
@@ -646,178 +424,6 @@ public class ExecutionEngine {
             this.startTime = System.currentTimeMillis();
         }
 
-        public void onSliceSent() { slicesSent++; }
-        public void onFill(double qty) { slicesFilled++; filledQuantity += qty; }
-        public void markDone() { completed = true; }
         public long getAgeMs() { return System.currentTimeMillis() - startTime; }
-    }
-
-    /**
-     * Signal history for cooldown tracking
-     */
-    private static class SignalHistory {
-        public TradeDirection lastDirection;
-        public long lastSignalTime;
-        public long lastReverseSignalTime;
-
-        public boolean isCooldownActive(TradeDirection newDir, long now, long sameDirCooldown, long reverseDirCooldown) {
-            if (lastDirection == newDir && (now - lastSignalTime) < sameDirCooldown) {
-                return true; // same-direction cooldown
-            }
-            if (lastDirection != null && lastDirection != newDir &&
-                (now - lastReverseSignalTime) < reverseDirCooldown) {
-                return true; // reverse-direction cooldown
-            }
-            return false;
-        }
-    }
-
-    /**
-     * Check if signal should be ignored due to cooldown
-     * Uses SignalCooldownManager for improved logic:
-     * - High confidence + new direction → Allow (confirm)
-     * - Same direction + low confidence → Cooldown (repeat)
-     * - New direction + low confidence → Short cooldown
-     */
-    private boolean shouldIgnoreSignal(String symbol, TradeDirection direction, double confidence) {
-        if (cooldownManager.shouldIgnore(symbol, direction, confidence)) {
-            log.debug("[ExecutionEngine] Signal cooldown: symbol={} dir={} conf={:.2f}",
-                symbol, direction, confidence);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Check signal cooldown with position awareness.
-     * When flat (position≈0), post-close cooldown doesn't block new entries.
-     */
-    private boolean shouldIgnoreSignalWithPosition(String symbol, TradeDirection direction, double confidence, double currentPosition) {
-        if (cooldownManager.shouldIgnoreWithPosition(symbol, direction, confidence, currentPosition)) {
-            log.debug("[ExecutionEngine] Signal cooldown: symbol={} dir={} conf={:.2f} pos={:.4f}",
-                symbol, direction, confidence, currentPosition);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Direction filter: validate signal direction matches market direction
-     * LONG signal → only execute if market is UP
-     * SHORT signal → only execute if market is DOWN
-     */
-    private boolean shouldExecuteDirection(Order order, MarketData marketData) {
-        if (marketData == null) {
-            return true; // No market data, allow execution
-        }
-
-        TradeDirection signalDir = order.getSide();
-        MarketDirection marketDir = calculateMarketDirection(marketData);
-
-        boolean aligned = (signalDir == TradeDirection.LONG && marketDir == MarketDirection.UP) ||
-                         (signalDir == TradeDirection.SHORT && marketDir == MarketDirection.DOWN);
-
-        if (!aligned) {
-            log.warn("[ExecutionEngine] REJECTED: signal={} market={} direction mismatch",
-                signalDir, marketDir);
-            rejectedOrders.incrementAndGet();
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * Calculate market direction from price data
-     */
-    private MarketDirection calculateMarketDirection(MarketData marketData) {
-        double lastPrice = marketData.getLastPrice();
-        double bidPrice = marketData.getBidPrice();
-        double askPrice = marketData.getAskPrice();
-
-        if (lastPrice <= 0 || bidPrice <= 0 || askPrice <= 0) {
-            return MarketDirection.UNKNOWN;
-        }
-
-        double midPrice = (bidPrice + askPrice) / 2;
-        double deviation = (lastPrice - midPrice) / midPrice;
-
-        if (deviation > 0.001) {
-            return MarketDirection.UP;
-        } else if (deviation < -0.001) {
-            return MarketDirection.DOWN;
-        }
-        return MarketDirection.STABLE;
-    }
-
-    /**
-     * Market direction enum
-     */
-    public enum MarketDirection {
-        UP, DOWN, STABLE, UNKNOWN
-    }
-
-    /**
-     * Check if there's already an active execution for this symbol
-     */
-    private boolean hasActiveExecution(String symbol) {
-        return activeExecutions.containsKey(symbol);
-    }
-
-    // ========== Phase 3: Position Intent Logic ==========
-
-    /**
-     * Determine position intent based on signal direction and current position
-     * This implements the core rule: don't fight existing position
-     */
-    private TradeIntent determinePositionIntent(Order order) {
-        // FIX: Cache position at method start to avoid race conditions during evaluation
-        double currentPos = 0.0;
-        if (exchangeAdapter != null) {
-            currentPos = exchangeAdapter.getCurrentPosition();
-        }
-
-        TradeDirection signalDir = order.getSide();
-
-        // No position - can only OPEN or HOLD
-        if (Math.abs(currentPos) < 0.0001) {
-            if (signalDir == TradeDirection.LONG) {
-                return TradeIntent.OPEN_LONG;
-            } else if (signalDir == TradeDirection.SHORT) {
-                return TradeIntent.OPEN_SHORT;
-            }
-            return TradeIntent.HOLD;
-        }
-
-        // Have LONG position
-        if (currentPos > 0) {
-            if (signalDir == TradeDirection.SHORT) {
-                return TradeIntent.EXIT_LONG;  // Close LONG before SHORT
-            } else if (signalDir == TradeDirection.LONG) {
-                return TradeIntent.HOLD;  // Don't add to LONG - wait for close
-            }
-            return TradeIntent.HOLD;
-        }
-
-        // Have SHORT position
-        if (currentPos < 0) {
-            if (signalDir == TradeDirection.LONG) {
-                return TradeIntent.EXIT_SHORT;  // Close SHORT before LONG
-            } else if (signalDir == TradeDirection.SHORT) {
-                return TradeIntent.HOLD;  // Don't add to SHORT - wait for close
-            }
-            return TradeIntent.HOLD;
-        }
-
-        return TradeIntent.HOLD;
-    }
-
-    /**
-     * Get current position as string for logging
-     */
-    private String getCurrentPositionStr() {
-        if (exchangeAdapter == null) {
-            return "N/A";
-        }
-        return String.format("%.4f", exchangeAdapter.getCurrentPosition());
     }
 }

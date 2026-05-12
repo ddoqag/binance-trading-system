@@ -16,25 +16,21 @@ mvn test
 ```
 
 **Run Main Entry Points:**
-- `TradingSystemLauncher` / `EvolvingTradingLauncher` - Clean Architecture trading system with live trading support:
-  - Paper mode (default): `mvn compile exec:java -Dexec.mainClass="com.trading.launcher.TradingSystemLauncher"`
-  - Paper mode (explicit): `mvn compile exec:java -Dexec.mainClass="com.trading.launcher.TradingSystemLauncher" -Dexec.args="--paper"`
-  - Live trading: `mvn compile exec:java -Dexec.mainClass="com.trading.launcher.TradingSystemLauncher" -Dexec.args="--live"`
-- `ChanWebSocketLauncher` - Chan strategy trading with WebSocket: `mvn compile exec:java -Dexec.mainClass="com.trading.launcher.ChanWebSocketLauncher"`
+- `ChanWebSocketLauncher` - Chan strategy trading with WebSocket (primary): `mvn compile exec:java -Dexec.mainClass="com.trading.launcher.ChanWebSocketLauncher"`
 - `HFTLauncher` — HFT engine with Java AI Brain: `mvn compile exec:java -Dexec.mainClass="Main.HFTLauncher"`
 
-**Config:** `src/main/resources/config.properties` — set `api.key`, `api.secret`, `testnet=true` (default), `symbol`, `leverage`
-
-**HFT Shared Memory Path:** Set via `HFT_SHM_PATH` env var (default: `D:/binance/new/data/hft_trading_shm`)
+**Deprecated:**
+- `TradingSystemLauncher` and `EvolvingTradingLauncher` have been moved to `deprecated/` directory
+- These legacy launchers are no longer maintained
 
 ### Trading Modes
 
-**TradingSystemLauncher** supports two modes:
-- `--paper` (default): Paper trading with simulated fills
-- `--live`: Live trading via Binance Futures API
+**ChanWebSocketLauncher** supports two modes:
+- Paper mode (default): Simulated fills with paper balance
+- Live trading: Via Binance Futures API (set `api.key` and `api.secret` in config)
 
 **Note:** For live trading, ensure:
-- `config.properties` has valid `api.key` and `api.secret`
+- Environment variables `BINANCE_API_KEY` and `BINANCE_API_SECRET` are set
 - `testnet=true` for testnet, `testnet=false` for mainnet
 - Proxy settings in `BinanceExchangeAdapter.java` match your network
 
@@ -73,7 +69,7 @@ mvn test
 
 **Key Integration Points:**
 - `IntegrationOrchestrator` - Coordinates all components with gradual migration support
-- `TradingSystemLauncher` / `EvolvingTradingLauncher` - Main entry point with component lifecycle management
+- `ChanWebSocketLauncher` - Main entry point for Chan strategy trading
 
 ### AlphaSignal Hierarchy
 
@@ -219,7 +215,7 @@ Bridge between Entry Alpha and Exit Logic:
 
 ## Key Notes
 
-- **Paper trading:** `TradingSystemLauncher` defaults to paper mode; check `secret.isEmpty()`
+- **Paper trading:** `ChanWebSocketLauncher` defaults to paper mode (no API key required)
 - **Not thread-safe:** `TradeState.position` (static mutable singleton) — avoid concurrent access
 - **Shared memory path:** Must match between Java engine and Python integrator if used (default: `D:/binance/new/data/hft_trading_shm`)
 - **OFI:** Order Flow Imbalance — key signal computed by `OFICalculator`
