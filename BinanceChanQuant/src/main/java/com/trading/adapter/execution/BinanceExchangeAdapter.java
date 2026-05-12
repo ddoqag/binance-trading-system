@@ -120,7 +120,14 @@ public class BinanceExchangeAdapter {
         log.info("[BinanceAdapter] Proxy enabled: {}:{}", proxyHost, proxyPort);
     }
 
+    private static final int MAX_POSITION_MODE_RETRIES = 3;
+    private static final long INITIAL_RETRY_DELAY_MS = 1_000;
+
     private void fetchPositionMode() {
+        fetchPositionModeWithRetry(0);
+    }
+
+    private void fetchPositionModeWithRetry(int attemptCount) {
         try {
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             Object resp = client.account().accountInformation(params);
@@ -145,13 +152,29 @@ public class BinanceExchangeAdapter {
                 }
             }
 
+            // HEDGE mode: positions have explicit LONG/SHORT sides, or account has no positions at all
+            // ONE_WAY mode: positions use BOTH side
             boolean hasNonBoth = (longCount > 0 || shortCount > 0);
             boolean noPositions = (longCount == 0 && shortCount == 0 && bothCount == 0);
             this.positionMode = (hasNonBoth || noPositions) ? PositionMode.HEDGE : PositionMode.ONE_WAY;
             log.info("[BinanceAdapter] Position mode: {} (L={}, S={}, B={})", positionMode, longCount, shortCount, bothCount);
         } catch (Exception e) {
-            log.error("[BinanceAdapter] Failed to detect position mode: {}", e.getMessage());
-            this.positionMode = PositionMode.ONE_WAY;
+            if (attemptCount < MAX_POSITION_MODE_RETRIES) {
+                long delay = INITIAL_RETRY_DELAY_MS * (1 << attemptCount);
+                log.warn("[BinanceAdapter] Position mode detection failed (attempt {}), retry in {}ms: {}",
+                        attemptCount + 1, delay, e.getMessage());
+                try {
+                    Thread.sleep(delay);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                fetchPositionModeWithRetry(attemptCount + 1);
+            } else {
+                log.error("[BinanceAdapter] Failed to detect position mode after {} attempts: {}",
+                        MAX_POSITION_MODE_RETRIES, e.getMessage());
+                // Safe default: HEDGE mode (requires explicit positionSide, safer for existing positions)
+                this.positionMode = PositionMode.HEDGE;
+            }
         }
     }
 
