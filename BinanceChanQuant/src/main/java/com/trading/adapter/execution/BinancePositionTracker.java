@@ -46,7 +46,15 @@ public class BinancePositionTracker {
 
     // Balance cache to reduce API calls
     private volatile long lastBalanceSyncTime = 0;
-    private static final long BALANCE_CACHE_TTL_MS = 30_000; // 30 seconds
+    private static final long BALANCE_CACHE_TTL_MS = 120_000; // 120 seconds
+
+    // Position cache to reduce API calls
+    private volatile long lastPositionSyncTime = 0;
+    private static final long POSITION_CACHE_TTL_MS = 60_000; // 60 seconds
+
+    // Retry with exponential backoff
+    private static final int MAX_SYNC_RETRIES = 3;
+    private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 
     public BinancePositionTracker(String symbol, boolean paperTrading, UMFuturesClientImpl client) {
         this.symbol = symbol;
@@ -92,7 +100,7 @@ public class BinancePositionTracker {
     }
 
     /**
-     * Sync positions from Binance exchange
+     * Sync positions from Binance exchange (no retry, uses cache)
      * @param silent If true, don't log errors
      */
     public void syncPositionsFromExchange(boolean silent) {
@@ -100,62 +108,106 @@ public class BinancePositionTracker {
             return;
         }
 
+        // Return cached if valid (within cache TTL)
+        long now = System.currentTimeMillis();
+        if (now - lastSyncTime.get() < POSITION_CACHE_TTL_MS && Math.abs(currentPosition) > 0.0001) {
+            return; // Use cached position
+        }
+
         try {
-            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
-            params.put("symbol", symbol);
-
-            Object resp = client.account().positionInformation(params);
-            String respStr = resp instanceof String ? (String) resp : resp.toString();
-
-            JsonNode root = objectMapper.readTree(respStr);
-
-            if (root.isArray() && root.size() > 0) {
-                double positionAmt = 0;
-                double entryPrice = 0;
-                double unrealizedProfit = 0;
-                double realizedPnlVal = 0;
-
-                // Iterate through all positions to find our symbol
-                for (JsonNode pos : root) {
-                    String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
-                    if (!posSymbol.equalsIgnoreCase(symbol)) continue;
-
-                    double amt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
-                    if (Math.abs(amt) < 0.0001) continue;
-
-                    String posSide = pos.has("positionSide") ? pos.get("positionSide").asText() : "BOTH";
-                    // For hedge mode, we need the isolated position amount
-                    positionAmt += amt;
-                    if (entryPrice == 0 && amt != 0) {
-                        entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
-                    }
-                    unrealizedProfit += pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
-                    realizedPnlVal += pos.has("unRealizedProfit") ? pos.get("unRealizedProfit").asDouble() : 0;
-                }
-
-                this.currentPosition = positionAmt;
-                this.avgEntryPrice = entryPrice;
-                this.unrealizedPnl = unrealizedProfit;
-                this.realizedPnl = realizedPnlVal;
-                this.lastSyncTime.set(System.currentTimeMillis());
-
-                if (!silent) {
-                    log.debug("[PositionTracker] Synced: pos={} avgPx={} pnl={}",
-                            positionAmt, entryPrice, unrealizedProfit);
-                }
-            } else {
-                // No position
-                this.currentPosition = 0.0;
-                this.avgEntryPrice = 0.0;
-                this.unrealizedPnl = 0.0;
-                this.realizedPnl = 0.0;
-                this.lastSyncTime.set(System.currentTimeMillis());
-            }
-
+            doSyncPositions(silent);
         } catch (Exception e) {
             if (!silent) {
-                log.error("[PositionTracker] Sync failed: {}", e.getMessage());
+                log.warn("[PositionTracker] Sync failed: {}, will use cached position", e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Sync with exponential backoff retry
+     */
+    public void syncPositionsWithRetry() {
+        syncPositionsWithRetry(false, 0);
+    }
+
+    private void syncPositionsWithRetry(boolean silent, int attemptCount) {
+        if (paperTrading) {
+            return;
+        }
+
+        // Check cache first
+        long now = System.currentTimeMillis();
+        if (now - lastSyncTime.get() < POSITION_CACHE_TTL_MS && Math.abs(currentPosition) > 0.0001) {
+            return; // Use cached position
+        }
+
+        try {
+            doSyncPositions(silent);
+        } catch (Exception e) {
+            if (attemptCount < MAX_SYNC_RETRIES) {
+                long delay = INITIAL_RETRY_DELAY_MS * (1 << attemptCount);
+                log.warn("[PositionTracker] Sync failed (attempt {}), retry in {}ms: {}",
+                        attemptCount + 1, delay, e.getMessage());
+                // Schedule retry for next cycle
+                syncPositionsWithRetry(silent, attemptCount + 1);
+            } else if (!silent) {
+                log.error("[PositionTracker] Sync failed after {} attempts, using cached position: {}",
+                        MAX_SYNC_RETRIES, e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Actual sync logic - separated for reuse
+     */
+    private void doSyncPositions(boolean silent) throws Exception {
+        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+        params.put("symbol", symbol);
+
+        Object resp = client.account().positionInformation(params);
+        String respStr = resp instanceof String ? (String) resp : resp.toString();
+
+        JsonNode root = objectMapper.readTree(respStr);
+
+        if (root.isArray() && root.size() > 0) {
+            double positionAmt = 0;
+            double entryPrice = 0;
+            double unrealizedProfit = 0;
+            double realizedPnlVal = 0;
+
+            // Iterate through all positions to find our symbol
+            for (JsonNode pos : root) {
+                String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
+                if (!posSymbol.equalsIgnoreCase(symbol)) continue;
+
+                double amt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
+                if (Math.abs(amt) < 0.0001) continue;
+
+                positionAmt += amt;
+                if (entryPrice == 0 && amt != 0) {
+                    entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
+                }
+                unrealizedProfit += pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
+                realizedPnlVal += pos.has("unRealizedProfit") ? pos.get("unRealizedProfit").asDouble() : 0;
+            }
+
+            this.currentPosition = positionAmt;
+            this.avgEntryPrice = entryPrice;
+            this.unrealizedPnl = unrealizedProfit;
+            this.realizedPnl = realizedPnlVal;
+            this.lastSyncTime.set(System.currentTimeMillis());
+
+            if (!silent) {
+                log.debug("[PositionTracker] Synced: pos={} avgPx={} pnl={}",
+                        positionAmt, entryPrice, unrealizedProfit);
+            }
+        } else {
+            // No position
+            this.currentPosition = 0.0;
+            this.avgEntryPrice = 0.0;
+            this.unrealizedPnl = 0.0;
+            this.realizedPnl = 0.0;
+            this.lastSyncTime.set(System.currentTimeMillis());
         }
     }
 
