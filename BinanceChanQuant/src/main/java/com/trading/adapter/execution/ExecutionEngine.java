@@ -317,6 +317,10 @@ public class ExecutionEngine {
                 if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.FILLED) {
                     filledOrders.incrementAndGet();
                     activeExecutions.remove(report.getSymbol());
+                } else if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.REJECTED) {
+                    rejectedOrders.incrementAndGet();
+                    activeExecutions.remove(report.getSymbol());
+                    log.warn("[ExecutionEngine] Order rejected: {} - {}", report.getOrderId(), report.getRejectReason());
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();

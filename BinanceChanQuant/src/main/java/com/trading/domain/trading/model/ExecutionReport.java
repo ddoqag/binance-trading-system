@@ -20,13 +20,14 @@ public class ExecutionReport {
     // Signal attribution fields
     private final double signalPrice;
     private final long signalTimestamp;
+    private final String rejectReason;
 
     public ExecutionReport(String orderId, String symbol, TradeDirection side,
                          OrderType orderType, double quantity, double price,
                          double filledQuantity, double avgFillPrice,
                          OrderStatus status, long timestamp, double pnl, double fee) {
         this(orderId, symbol, side, orderType, quantity, price, filledQuantity, avgFillPrice,
-             status, timestamp, pnl, fee, 0.0, 0L);
+             status, timestamp, pnl, fee, 0.0, 0L, null);
     }
 
     public ExecutionReport(String orderId, String symbol, TradeDirection side,
@@ -34,6 +35,15 @@ public class ExecutionReport {
                          double filledQuantity, double avgFillPrice,
                          OrderStatus status, long timestamp, double pnl, double fee,
                          double signalPrice, long signalTimestamp) {
+        this(orderId, symbol, side, orderType, quantity, price, filledQuantity, avgFillPrice,
+             status, timestamp, pnl, fee, signalPrice, signalTimestamp, null);
+    }
+
+    public ExecutionReport(String orderId, String symbol, TradeDirection side,
+                         OrderType orderType, double quantity, double price,
+                         double filledQuantity, double avgFillPrice,
+                         OrderStatus status, long timestamp, double pnl, double fee,
+                         double signalPrice, long signalTimestamp, String rejectReason) {
         this.orderId = orderId;
         this.symbol = symbol;
         this.side = side;
@@ -48,6 +58,7 @@ public class ExecutionReport {
         this.fee = fee;
         this.signalPrice = signalPrice;
         this.signalTimestamp = signalTimestamp;
+        this.rejectReason = rejectReason;
     }
 
     // Getters
@@ -65,6 +76,7 @@ public class ExecutionReport {
     public double getFee() { return fee; }
     public double getSignalPrice() { return signalPrice; }
     public long getSignalTimestamp() { return signalTimestamp; }
+    public String getRejectReason() { return rejectReason; }
 
     // Builder
     public static class Builder {

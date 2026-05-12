@@ -110,11 +110,28 @@ public class BinancePositionTracker {
             JsonNode root = objectMapper.readTree(respStr);
 
             if (root.isArray() && root.size() > 0) {
-                JsonNode pos = root.get(0);
-                double positionAmt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
-                double entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
-                double unrealizedProfit = pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
-                double realizedPnlVal = pos.has("unRealizedProfit") ? pos.get("unRealizedProfit").asDouble() : 0;
+                double positionAmt = 0;
+                double entryPrice = 0;
+                double unrealizedProfit = 0;
+                double realizedPnlVal = 0;
+
+                // Iterate through all positions to find our symbol
+                for (JsonNode pos : root) {
+                    String posSymbol = pos.has("symbol") ? pos.get("symbol").asText() : "";
+                    if (!posSymbol.equalsIgnoreCase(symbol)) continue;
+
+                    double amt = pos.has("positionAmt") ? pos.get("positionAmt").asDouble() : 0;
+                    if (Math.abs(amt) < 0.0001) continue;
+
+                    String posSide = pos.has("positionSide") ? pos.get("positionSide").asText() : "BOTH";
+                    // For hedge mode, we need the isolated position amount
+                    positionAmt += amt;
+                    if (entryPrice == 0 && amt != 0) {
+                        entryPrice = pos.has("entryPrice") ? pos.get("entryPrice").asDouble() : 0;
+                    }
+                    unrealizedProfit += pos.has("unrealizedProfit") ? pos.get("unrealizedProfit").asDouble() : 0;
+                    realizedPnlVal += pos.has("unRealizedProfit") ? pos.get("unRealizedProfit").asDouble() : 0;
+                }
 
                 this.currentPosition = positionAmt;
                 this.avgEntryPrice = entryPrice;

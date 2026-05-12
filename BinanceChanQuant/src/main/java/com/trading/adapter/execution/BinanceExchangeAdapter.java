@@ -94,6 +94,7 @@ public class BinanceExchangeAdapter {
             this.positionTracker = new BinancePositionTracker(symbol, false, client);
             setProxy();
             fetchPositionMode();
+            orderSender.setPositionMode(this.positionMode);
             log.info("[BinanceAdapter] Live trading mode (testnet={}, positionMode={})", ConfigUtil.isTestNet(), positionMode);
         }
     }
@@ -156,6 +157,7 @@ public class BinanceExchangeAdapter {
 
         // Sync position before sending
         positionTracker.syncPositionsFromExchange(true);
+        orderSender.setCurrentPosition(positionTracker.getCurrentPosition());
 
         ExecutionReport report = orderSender.sendOrder(order);
 

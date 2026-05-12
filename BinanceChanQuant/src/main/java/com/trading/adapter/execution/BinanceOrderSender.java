@@ -303,7 +303,9 @@ public class BinanceOrderSender {
             0, 0,
             OrderStatus.REJECTED,
             System.currentTimeMillis(),
-            0, 0
+            0, 0,
+            0.0, 0L,
+            reason
         );
     }
 
@@ -326,7 +328,7 @@ public class BinanceOrderSender {
         } else if (qty >= 0.01) {
             return String.format("%.2f", qty);
         } else {
-            return String.format("%.4f", qty);
+            return String.format("%.3f", qty);  // BTCUSDT: 3 decimal precision
         }
     }
 
