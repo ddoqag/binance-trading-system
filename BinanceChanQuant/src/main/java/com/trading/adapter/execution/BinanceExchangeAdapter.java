@@ -73,6 +73,10 @@ public class BinanceExchangeAdapter {
     // Risk model (set externally)
     private RiskModel currentRiskModel;
 
+    // UserData WebSocket for real-time position/balance updates (Phase 3)
+    private volatile String userDataListenKey;
+    private volatile boolean userDataWsConnected = false;
+
     public BinanceExchangeAdapter(String symbol, boolean paperTrading, String apiKey, String apiSecret) {
         this.symbol = symbol;
         this.paperTrading = paperTrading;
@@ -84,27 +88,32 @@ public class BinanceExchangeAdapter {
 
         if (paperTrading) {
             this.client = null;
-            this.orderSender = new BinanceOrderSender(symbol, true, apiKey, apiSecret, null);
             this.positionTracker = new BinancePositionTracker(symbol, true, null);
+            this.orderSender = new BinanceOrderSender(symbol, true, apiKey, apiSecret, null,
+                    PositionSnapshot.fromTracker(positionTracker));
             this.positionMode = PositionMode.ONE_WAY;
             log.info("[BinanceAdapter] Paper trading mode");
         } else {
             this.client = new UMFuturesClientImpl(apiKey, apiSecret, ConfigUtil.isTestNet());
-            this.orderSender = new BinanceOrderSender(symbol, false, apiKey, apiSecret, client);
             this.positionTracker = new BinancePositionTracker(symbol, false, client);
+            this.orderSender = new BinanceOrderSender(symbol, false, apiKey, apiSecret, client,
+                    PositionSnapshot.fromTracker(positionTracker));
             setProxy();
             fetchPositionMode();
             orderSender.setPositionMode(this.positionMode);
+            startUserDataWebSocket();
             log.info("[BinanceAdapter] Live trading mode (testnet={}, positionMode={})", ConfigUtil.isTestNet(), positionMode);
         }
     }
 
     private void setProxy() {
         String proxyHost = System.getenv("PROXY_HOST");
-        int proxyPort = Integer.parseInt(System.getenv("PROXY_PORT") != null ? System.getenv("PROXY_PORT") : "7897");
-        if (proxyHost == null) {
-            proxyHost = "127.0.0.1";
+        // Only enable proxy if PROXY_HOST is explicitly set (for China users behind VPN)
+        if (proxyHost == null || proxyHost.isEmpty()) {
+            log.info("[BinanceAdapter] Proxy disabled (PROXY_HOST not set)");
+            return;
         }
+        int proxyPort = Integer.parseInt(System.getenv("PROXY_PORT") != null ? System.getenv("PROXY_PORT") : "7897");
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
         ProxyAuth proxyAuth = new ProxyAuth(proxy, null);
         client.setProxy(proxyAuth);
@@ -155,15 +164,8 @@ public class BinanceExchangeAdapter {
             return simulateFill(order);
         }
 
-        // Use cached position - NO sync in critical path
-        // Background sync keeps the cache fresh
-        PositionSnapshot snapshot = PositionSnapshot.fromTracker(positionTracker);
-        orderSender.setPositionSnapshot(snapshot);
-
-        // Log if position is stale but still usable
-        if (snapshot.getFreshness() == PositionSnapshot.Freshness.STALE) {
-            log.warn("[BinanceAdapter] Using stale position: {}", snapshot);
-        }
+        // Position is set via constructor with PositionSnapshot - no sync in critical path
+        // Background sync keeps the cache fresh via positionTracker
 
         ExecutionReport report = orderSender.sendOrder(order);
 
@@ -343,6 +345,22 @@ public class BinanceExchangeAdapter {
         }
     }
 
+    /**
+     * Update position from external WebSocket event (UserData WebSocket).
+     * This decouples WebSocket handling from the adapter.
+     */
+    public void onWebSocketPositionUpdate(double positionAmt, double avgPrice, double unrealizedPnl) {
+        positionTracker.updateFromWebSocket(positionAmt, avgPrice, unrealizedPnl);
+        checkPositionChange();
+    }
+
+    /**
+     * Update balance from external WebSocket event (UserData WebSocket).
+     */
+    public void onWebSocketBalanceUpdate(double walletBalance, double availableBalance, double unrealizedPnl) {
+        positionTracker.updateBalanceFromWebSocket(walletBalance, availableBalance, unrealizedPnl);
+    }
+
     // ========== Internal Classes ==========
 
     public static class OrderUpdate {
@@ -373,6 +391,79 @@ public class BinanceExchangeAdapter {
             this.wasClosed = Math.abs(previousPosition) > 0.0001 && Math.abs(newPosition) < 0.0001;
             this.wasOpened = Math.abs(previousPosition) < 0.0001 && Math.abs(newPosition) > 0.0001;
         }
+    }
+
+    // ========== UserData WebSocket (Phase 3) ==========
+
+    /**
+     * Start UserData WebSocket for real-time position/balance updates.
+     * Replaces periodic REST polling with event-driven updates.
+     */
+    public void startUserDataWebSocket() {
+        if (paperTrading || client == null) {
+            return;
+        }
+
+        try {
+            String resp = client.userData().createListenKey();
+            // Parse JSON response to get listenKey value
+            JsonNode node = objectMapper.readTree(resp);
+            userDataListenKey = node.has("listenKey") ? node.get("listenKey").asText() : resp;
+            log.info("[BinanceAdapter] UserData listenKey created: {}...",
+                    userDataListenKey.substring(0, Math.min(10, userDataListenKey.length())));
+
+            // Note: Actual WebSocket connection would be set up via external client
+            // This creates the listenKey that can be used with UserDataWebSocketClient
+            userDataWsConnected = true;
+
+        } catch (Exception e) {
+            log.error("[BinanceAdapter] Failed to create UserData listenKey: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Get the active listenKey for UserData WebSocket connection.
+     */
+    public String getUserDataListenKey() {
+        return userDataListenKey;
+    }
+
+    /**
+     * Refresh the UserData listenKey (called every 25 minutes).
+     */
+    public void refreshUserDataListenKey() {
+        if (paperTrading || client == null || userDataListenKey == null) {
+            return;
+        }
+
+        try {
+            String newKey = client.userData().extendListenKey();
+            log.debug("[BinanceAdapter] UserData listenKey refreshed");
+        } catch (Exception e) {
+            log.error("[BinanceAdapter] Failed to refresh UserData listenKey: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Stop UserData WebSocket and cleanup.
+     */
+    public void stopUserDataWebSocket() {
+        if (paperTrading || client == null || userDataListenKey == null) {
+            return;
+        }
+
+        try {
+            client.userData().closeListenKey();
+            userDataListenKey = null;
+            userDataWsConnected = false;
+            log.info("[BinanceAdapter] UserData WebSocket stopped");
+        } catch (Exception e) {
+            log.error("[BinanceAdapter] Failed to stop UserData WebSocket: {}", e.getMessage());
+        }
+    }
+
+    public boolean isUserDataWsConnected() {
+        return userDataWsConnected;
     }
 
     public static class PositionInfo {

@@ -19,6 +19,7 @@ import com.trading.adapter.pool.ChanExpert;
 import com.trading.adapter.learning.MetaLearner;
 import com.trading.adapter.risk.PreTradeRiskChecker;
 import com.trading.adapter.execution.ExecutionEngine;
+import com.trading.adapter.execution.BinanceExchangeAdapter;
 import com.trading.domain.market.model.MarketData;
 import com.trading.domain.market.model.MarketRegime;
 import com.trading.domain.signal.CompositeAlphaSignal;
@@ -32,6 +33,7 @@ import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.model.TradeIntent;
 import com.trading.adapter.pool.PositionLifecycleManager;
 import com.trading.adapter.pool.PositionSignalManager;
+import com.trading.infrastructure.execution.ws.UserDataWebSocketClient;
 
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -115,9 +117,11 @@ public class ChanWebSocketLauncher {
 
     // Execution components
     private ExecutionEngine executionEngine;
+    private BinanceExchangeAdapter exchangeAdapter;
     private PreTradeRiskChecker riskChecker;
     private PositionLifecycleManager lifecycleManager;
     private PositionSignalManager positionSignalManager;
+    private UserDataWebSocketClient userDataWsClient;
 
     // Market context for signal generation
     private MarketContext lastMarketContext;
@@ -329,8 +333,8 @@ public class ChanWebSocketLauncher {
         log.info("[Launcher] ExecutionEngine initialized (paper={})", testnet);
 
         // Set position change callback to attach RiskModel when position opens
-        var exchangeAdapter = executionEngine.getExchangeAdapter();
-        if (exchangeAdapter != null) {
+        this.exchangeAdapter = executionEngine.getExchangeAdapter();
+        if (this.exchangeAdapter != null) {
             exchangeAdapter.setPositionChangeCallback(event -> {
                 if (event.wasOpened && lastMarketContext != null) {
                     // Position opened - create PositionState with RiskModel
@@ -349,6 +353,11 @@ public class ChanWebSocketLauncher {
                 }
             });
             log.info("[Launcher] Position change callback registered");
+
+            // Start UserData WebSocket for real-time position/balance updates
+            if (!testnet) {
+                startUserDataWebSocket();
+            }
         }
 
         // Initialize REST client for kline polling fallback
@@ -545,6 +554,52 @@ public class ChanWebSocketLauncher {
                 log.error("[Heartbeat] Error: {}", e.getMessage());
             }
         }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void startUserDataWebSocket() {
+        try {
+            String listenKey = exchangeAdapter.getUserDataListenKey();
+            if (listenKey == null || listenKey.isEmpty()) {
+                log.warn("[Launcher] UserData listenKey not available yet");
+                return;
+            }
+
+            log.info("[Launcher] Starting UserData WebSocket...");
+
+            // Create UserData WebSocket client with the listenKey from exchange adapter
+            userDataWsClient = new UserDataWebSocketClient(
+                listenKey,
+                null,  // PositionCache - not used directly
+                null   // AccountStateStore - not used directly
+            );
+
+            // Set up callbacks to update BinanceExchangeAdapter
+            userDataWsClient.setOnOrderUpdate(event -> {
+                log.info("[Launcher] UserData WS order update: {} {} {} qty={} price={}",
+                    event.clientOrderId, event.status, event.symbol, event.filledQty, event.avgFillPrice);
+                // Forward to exchange adapter
+                exchangeAdapter.onOrderUpdate(
+                    event.clientOrderId, event.status, event.filledQty, event.avgFillPrice);
+            });
+
+            userDataWsClient.setOnAccountUpdate(event -> {
+                log.debug("[Launcher] UserData WS balance update: wallet={} avail={} pnl={}",
+                    event.walletBalance, event.availableBalance, event.unrealizedPnl);
+                // Forward to exchange adapter
+                exchangeAdapter.onWebSocketBalanceUpdate(
+                    event.walletBalance, event.availableBalance, event.unrealizedPnl);
+            });
+
+            userDataWsClient.setOnStateChange(state -> {
+                log.info("[Launcher] UserData WS state: {}", state);
+            });
+
+            userDataWsClient.start();
+            log.info("[Launcher] UserData WebSocket started");
+
+        } catch (Exception e) {
+            log.error("[Launcher] Failed to start UserData WebSocket: {}", e.getMessage());
+        }
     }
 
     private void subscribeKlineStream(String symbolLower) {
@@ -972,6 +1027,17 @@ public class ChanWebSocketLauncher {
             return;
         }
 
+        // Pre-check: skip if already have position in this direction
+        double currentPos = exchangeAdapter != null ? exchangeAdapter.getCurrentPosition() : 0.0;
+        if (currentPos > 0 && signal.getDirection() == TradeDirection.LONG) {
+            log.debug("[Launcher] Skipping LONG signal: already have LONG position {}", currentPos);
+            return;
+        }
+        if (currentPos < 0 && signal.getDirection() == TradeDirection.SHORT) {
+            log.debug("[Launcher] Skipping SHORT signal: already have SHORT position {}", currentPos);
+            return;
+        }
+
         // Dynamic quantity based on ATR, confidence, and urgency
         double quantity = calculateDynamicQuantity(signal, lastMarketContext);
 
@@ -1035,13 +1101,15 @@ public class ChanWebSocketLauncher {
     private void checkPositionLifecycle(MarketContext context) {
         try {
             // Get current position state from exchange adapter
-            var exchangeAdapter = executionEngine.getExchangeAdapter();
-            if (exchangeAdapter == null) {
+            if (this.exchangeAdapter == null) {
+                this.exchangeAdapter = executionEngine.getExchangeAdapter();
+            }
+            if (this.exchangeAdapter == null) {
                 log.warn("[Launcher] LIFECYCLE: no exchange adapter");
                 return;
             }
 
-            PositionState posState = exchangeAdapter.getPositionState();
+            PositionState posState = this.exchangeAdapter.getPositionState();
             log.debug("[Launcher] LIFECYCLE: posState hasPosition={}, qty=%.4f",
                 posState.hasPosition(), posState.getQuantity());
             positionSignalManager.updatePosition(posState);

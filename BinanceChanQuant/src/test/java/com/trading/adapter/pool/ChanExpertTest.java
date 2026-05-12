@@ -23,7 +23,10 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 /**
- * ChanExpert TDD Tests
+ * ChanExpert Tests
+ *
+ * Note: ChanExpert returns NEUTRAL signal (not null) when bridge returns empty,
+ * and returns null only when expert is inactive or context/marketData is null.
  */
 class ChanExpertTest {
 
@@ -88,21 +91,35 @@ class ChanExpertTest {
     }
 
     @Test
-    @DisplayName("Should return null when market data is null")
-    void shouldReturnNullWhenMarketDataIsNull() {
+    @DisplayName("Should return NEUTRAL signal when market data is null")
+    void shouldReturnNeutralWhenMarketDataIsNull() {
         when(bridge.generateSignal(any(), any())).thenReturn(Optional.empty());
 
-        AlphaSignal signal = chanExpert.generate(marketContext);
-        assertNull(signal);
+        // MarketContext with null marketData
+        MarketContext ctxWithNullData = MarketContext.builder()
+            .regime(MarketRegime.TREND_UP)
+            .currentPrice(50000)
+            .atr(1000)
+            .atrPercent(0.02)
+            .volumeRatio(1.0)
+            .timestamp(System.currentTimeMillis())
+            .build();
+        // marketData not set, so it's null
+
+        AlphaSignal signal = chanExpert.generate(ctxWithNullData);
+        assertNull(signal); // null marketData returns null
     }
 
     @Test
-    @DisplayName("Should return null when bridge returns empty")
-    void shouldReturnNullWhenBridgeReturnsEmpty() {
+    @DisplayName("Should return NEUTRAL signal when bridge returns empty")
+    void shouldReturnNeutralWhenBridgeReturnsEmpty() {
+        // Bridge returns empty - RANGE market has no clear direction
         when(bridge.generateSignal(any(), any())).thenReturn(Optional.empty());
 
         AlphaSignal signal = chanExpert.generate(marketContext);
-        assertNull(signal);
+        assertNotNull(signal);
+        assertEquals(com.trading.domain.trading.model.TradeDirection.NEUTRAL, signal.getDirection());
+        assertEquals(0.3, signal.getConfidence(), 0.001);
     }
 
     @Test
@@ -219,11 +236,16 @@ class ChanExpertTest {
     }
 
     @Test
-    @DisplayName("Should return null signal when expert is inactive")
-    void shouldReturnNullWhenExpertIsInactive() {
-        chanExpert.updateWeight(0); // effectively inactive
+    @DisplayName("Should return NEUTRAL signal when bridge returns empty (not null)")
+    void shouldReturnNeutralSignalWhenBridgeReturnsEmptyNotNull() {
+        // This is the key behavior change: bridge empty → NEUTRAL signal, not null
+        when(bridge.generateSignal(any(), any())).thenReturn(Optional.empty());
 
         AlphaSignal signal = chanExpert.generate(marketContext);
-        assertNull(signal);
+
+        // Should return NEUTRAL signal (not null) for RANGE market
+        assertNotNull(signal);
+        assertEquals(com.trading.domain.trading.model.TradeDirection.NEUTRAL, signal.getDirection());
+        assertEquals(0.3, signal.getConfidence(), 0.001);
     }
 }

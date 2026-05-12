@@ -42,8 +42,8 @@ public class BinanceOrderSender {
     private volatile BinanceExchangeAdapter.PositionMode positionMode =
             BinanceExchangeAdapter.PositionMode.ONE_WAY;
 
-    // Current position (for close order detection)
-    private volatile double currentPosition = 0.0;
+    // Current position snapshot (immutable, set at construction time)
+    private final double currentPosition;
 
     public BinanceOrderSender(String symbol, boolean paperTrading,
                               String apiKey, String apiSecret,
@@ -53,20 +53,32 @@ public class BinanceOrderSender {
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.client = client;
+        this.currentPosition = 0.0; // Default
+    }
+
+    public BinanceOrderSender(String symbol, boolean paperTrading,
+                              String apiKey, String apiSecret,
+                              UMFuturesClientImpl client,
+                              PositionSnapshot positionSnapshot) {
+        this.symbol = symbol;
+        this.paperTrading = paperTrading;
+        this.apiKey = apiKey;
+        this.apiSecret = apiSecret;
+        this.client = client;
+        this.currentPosition = positionSnapshot != null ? positionSnapshot.getPosition() : 0.0;
     }
 
     public void setPositionMode(BinanceExchangeAdapter.PositionMode mode) {
         this.positionMode = mode;
     }
 
+    @Deprecated
     public void setCurrentPosition(double position) {
-        this.currentPosition = position;
+        // Deprecated: position is now set via constructor with PositionSnapshot
     }
 
     public void setPositionSnapshot(PositionSnapshot snapshot) {
-        if (snapshot != null) {
-            this.currentPosition = snapshot.getPosition();
-        }
+        // Deprecated: position is now set via constructor
     }
 
     // ========== Order Operations ==========

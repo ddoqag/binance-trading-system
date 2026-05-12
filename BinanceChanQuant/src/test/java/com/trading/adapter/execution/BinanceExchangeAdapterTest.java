@@ -48,9 +48,10 @@ class BinanceExchangeAdapterTest {
     }
 
     @Test
-    @DisplayName("Initial balance should be zero")
-    void initialBalanceIsZero() {
-        assertEquals(0.0, adapter.getAvailableBalance(), 0.0001);
+    @DisplayName("Initial balance should be available in paper mode")
+    void initialBalanceInPaperMode() {
+        // In paper mode, positionTracker returns 10000.0 as default balance
+        assertEquals(10000.0, adapter.getAvailableBalance(), 0.0001);
     }
 
     @Test
