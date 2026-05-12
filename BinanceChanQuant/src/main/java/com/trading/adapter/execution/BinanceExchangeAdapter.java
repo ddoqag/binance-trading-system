@@ -155,9 +155,15 @@ public class BinanceExchangeAdapter {
             return simulateFill(order);
         }
 
-        // Sync position before sending
-        positionTracker.syncPositionsFromExchange(true);
-        orderSender.setCurrentPosition(positionTracker.getCurrentPosition());
+        // Use cached position - NO sync in critical path
+        // Background sync keeps the cache fresh
+        PositionSnapshot snapshot = PositionSnapshot.fromTracker(positionTracker);
+        orderSender.setPositionSnapshot(snapshot);
+
+        // Log if position is stale but still usable
+        if (snapshot.getFreshness() == PositionSnapshot.Freshness.STALE) {
+            log.warn("[BinanceAdapter] Using stale position: {}", snapshot);
+        }
 
         ExecutionReport report = orderSender.sendOrder(order);
 

@@ -63,6 +63,12 @@ public class BinanceOrderSender {
         this.currentPosition = position;
     }
 
+    public void setPositionSnapshot(PositionSnapshot snapshot) {
+        if (snapshot != null) {
+            this.currentPosition = snapshot.getPosition();
+        }
+    }
+
     // ========== Order Operations ==========
 
     /**
