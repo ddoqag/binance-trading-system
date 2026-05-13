@@ -294,6 +294,8 @@ public class ChanWebSocketLauncher {
         log.info("[Launcher] Initializing Chan components...");
 
         chanToggle = ChanFeatureToggle.defaults();
+        // P0: Enable real trading (set resonance to ENABLED)
+        chanToggle.setResonanceMode(ChanFeatureToggle.Mode.ENABLED);
         chanBridge = new ChanMetaLearnerBridge(chanToggle, MAX_KLINES);
         chanValidator = new ChanSignalValidator();
         chanExecutor = new ChanShadowExecutor(chanBridge, chanValidator, chanToggle);

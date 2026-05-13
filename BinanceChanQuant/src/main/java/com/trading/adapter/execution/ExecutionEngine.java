@@ -7,6 +7,8 @@ import com.trading.domain.trading.risk.RiskManager;
 import com.trading.domain.market.model.MarketData;
 import com.trading.domain.signal.ExecutionEvent;
 import com.trading.domain.signal.ExecutionEvent.ExecutionEventType;
+import com.trading.infrastructure.execution.StartupRecoveryService;
+import com.trading.infrastructure.execution.TradingGuard;
 import com.trading.messaging.MessageBus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +55,11 @@ public class ExecutionEngine {
     private final ExecutionOrderProcessor orderProcessor;
     private final ExecutionReporter reportProcessor;
     private final SignalCooldownManager cooldownManager = new SignalCooldownManager();
+    private final ProtectionOrderManager protectionManager;
+
+    // Survival layer - P0
+    private final TradingGuard tradingGuard = new TradingGuard();
+    private StartupRecoveryService recoveryService;
 
     // Queues
     private final BlockingQueue<Order> orderQueue = new LinkedBlockingQueue<>(1000);
@@ -120,6 +127,10 @@ public class ExecutionEngine {
                 orderRouter, algoEngine, orderQueue, cooldownManager,
                 this::publishEvent, (s, o) -> {});
         this.reportProcessor = new ExecutionReporter(riskManager, exchangeAdapter, cooldownManager);
+        this.protectionManager = new ProtectionOrderManager(exchangeAdapter, paperTrading);
+
+        // Initialize recovery service (P0 survival layer)
+        this.recoveryService = new StartupRecoveryService(exchangeAdapter, protectionManager, tradingGuard);
 
         // Register algo completion listener
         algoEngine.addListener(new AlgoExecutionListener() {
@@ -156,6 +167,12 @@ public class ExecutionEngine {
             log.info("[ExecutionEngine] Starting...");
             stateMachine.start();
             algoEngine.start();
+
+            // P0: Perform startup recovery before accepting orders
+            log.info("[ExecutionEngine] Running startup recovery...");
+            recoveryService.performRecovery();
+            recoveryService.startPeriodicReconcile();
+
             executor.submit(this::orderProcessingLoop);
             executor.submit(this::reportProcessingLoop);
             executor.submit(this::monitoringLoop);
@@ -166,6 +183,7 @@ public class ExecutionEngine {
     public void stop() {
         if (isRunning.compareAndSet(true, false)) {
             log.info("[ExecutionEngine] Stopping...");
+            recoveryService.stopPeriodicReconcile();
             stateMachine.shutdown();
             algoEngine.stop();
             executor.shutdownNow();
@@ -181,6 +199,13 @@ public class ExecutionEngine {
      */
     public boolean submitOrder(Order order) {
         if (!isRunning.get()) {
+            return false;
+        }
+
+        // P0: TradingGuard check - reject new positions during safe mode
+        // Exit orders (reduceOnly) are still allowed
+        if (!tradingGuard.canTrade() && !order.isReduceOnly()) {
+            log.warn("[ExecutionEngine] Order rejected - TradingGuard active: {}", order.getOrderId());
             return false;
         }
 
@@ -313,10 +338,36 @@ public class ExecutionEngine {
                 ExecutionReport report = reportQueue.take();
                 reportProcessor.processExecutionReport(report);
 
+                // P0: Attach stop loss protection on entry fill
+                if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.FILLED) {
+                    // Create a minimal Order object for protection manager
+                    Order fillOrder = new Order(
+                        report.getOrderId(),
+                        report.getSymbol(),
+                        report.getSide(),
+                        com.trading.domain.trading.model.OrderType.MARKET,
+                        report.getFilledQuantity(),
+                        report.getAvgFillPrice(),
+                        "protection",
+                        1.0
+                    );
+                    protectionManager.onEntryFilled(fillOrder, report);
+                }
+
                 // Update active executions
                 if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.FILLED) {
                     filledOrders.incrementAndGet();
                     activeExecutions.remove(report.getSymbol());
+
+                    // P0.1: Detect position close and cancel protection orders
+                    double posAfter = exchangeAdapter.getCurrentPosition();
+                    double posBefore = posAfter - (report.getSide() == TradeDirection.LONG ?
+                            -report.getFilledQuantity() : report.getFilledQuantity());
+                    boolean wasLongClosed = (report.getSide() == TradeDirection.SHORT && Math.abs(posBefore) > 0.0001 && Math.abs(posAfter) < 0.0001);
+                    boolean wasShortClosed = (report.getSide() == TradeDirection.LONG && Math.abs(posBefore) > 0.0001 && Math.abs(posAfter) < 0.0001);
+                    if (wasLongClosed || wasShortClosed) {
+                        protectionManager.onPositionClosed(report.getSymbol());
+                    }
                 } else if (report.getStatus() == com.trading.domain.trading.model.OrderStatus.REJECTED) {
                     rejectedOrders.incrementAndGet();
                     activeExecutions.remove(report.getSymbol());
@@ -411,6 +462,8 @@ public class ExecutionEngine {
     public SmartOrderRouter getOrderRouter() { return orderRouter; }
     public AlgoExecutionEngine getAlgoEngine() { return algoEngine; }
     public BinanceExchangeAdapter getExchangeAdapter() { return exchangeAdapter; }
+    public TradingGuard getTradingGuard() { return tradingGuard; }
+    public StartupRecoveryService getRecoveryService() { return recoveryService; }
 
     // ========== Internal Classes ==========
 

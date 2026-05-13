@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.trading.config.ConfigUtil;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.ExecutionReport;
+import com.trading.domain.trading.model.OrderIntent;
+import com.trading.domain.trading.model.BinanceExecutionSpec;
 import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.trading.model.TradeDirection;
 import org.slf4j.Logger;
@@ -13,7 +15,9 @@ import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 
 /**
  * Binance Order Sender
@@ -139,6 +143,27 @@ public class BinanceOrderSender {
         }
     }
 
+    /**
+     * Query all open orders from Binance
+     * Note: getOpenOrders() may not be available in this connector version.
+     * Returns empty list as fallback - position sync will handle orphan detection.
+     */
+    public List<Order> queryAllOpenOrders() {
+        if (paperTrading) {
+            return new java.util.ArrayList<>();
+        }
+
+        try {
+            // Fallback: use positionInformation to check positions, skip open orders for now
+            // TODO: Implement proper open orders query when connector API is confirmed
+            log.warn("[OrderSender] getOpenOrders not available in connector, skipping open order query");
+            return new java.util.ArrayList<>();
+        } catch (Exception e) {
+            log.error("[OrderSender] Query open orders failed: {}", e.getMessage());
+            return new java.util.ArrayList<>();
+        }
+    }
+
     // ========== Internal Methods ==========
 
     private ExecutionReport simulateFill(Order order) {
@@ -165,6 +190,19 @@ public class BinanceOrderSender {
         try {
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             params.put("symbol", order.getSymbol());
+
+            // P1: Use explicit intent if available (preferred path)
+            // Legacy orders without intent will fall back to position inference
+            if (order.hasIntent()) {
+                return sendOrderWithIntent(order, order.getIntent(), params);
+            }
+
+            // Legacy fallback: infer from currentPosition + side
+            // WARNING: This path has position synchronization issues
+            log.warn("[OrderSender] LEGACY_ORDER_WITHOUT_INTENT: orderId={}, side={}",
+                    order.getOrderId(), order.getSide());
+
+            // Fallback logic below...
             params.put("side", order.getSide() == TradeDirection.LONG ? "BUY" : "SELL");
 
             // Position handling
@@ -186,7 +224,15 @@ public class BinanceOrderSender {
                 }
             } else {
                 // HEDGE MODE
-                if (currentPosition < 0) {
+                // P0 fix: reduceOnly STOP_MARKET - do NOT set positionSide
+                // reduceOnly orders only need side + type + stopPrice + reduceOnly
+                if (order.isReduceOnly()) {
+                    // Emergency stop: only side and reduceOnly flag needed
+                    log.info("[OrderSender] reduceOnly STOP_MARKET: skipping positionSide");
+                } else if (order.isClosePosition()) {
+                    // closePosition=true: do NOT set positionSide
+                    log.info("[OrderSender] closePosition=true: skipping positionSide");
+                } else if (currentPosition < 0) {
                     if (order.getSide() == TradeDirection.LONG) {
                         positionSide = "SHORT";
                         orderQty = Math.min(orderQty, Math.abs(currentPosition));
@@ -209,7 +255,7 @@ public class BinanceOrderSender {
                     positionSide = order.getSide() == TradeDirection.LONG ? "LONG" : "SHORT";
                 }
 
-                if (positionSide != null) {
+                if (positionSide != null && !order.isClosePosition() && !order.isReduceOnly()) {
                     params.put("positionSide", positionSide);
                 }
             }
@@ -220,16 +266,55 @@ public class BinanceOrderSender {
             params.put("quantity", formatQuantity(orderQty));
 
             // Type-specific parameters
-            if (order.getOrderType() == com.trading.domain.trading.model.OrderType.LIMIT ||
-                order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP_LIMIT) {
+            if (order.getOrderType() == com.trading.domain.trading.model.OrderType.LIMIT) {
                 params.put("price", formatPrice(order.getPrice()));
                 params.put("timeInForce", "GTC");
+            } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP_LIMIT) {
+                // STOP_LIMIT maps to STOP_MARKET in Binance
+                // P0 fix: closePosition=true requires stopPrice and NO positionSide
+                double stopPrice = order.getStopPrice();
+                if (stopPrice > 0) {
+                    params.put("stopPrice", formatPrice(stopPrice));
+                }
+                // Emergency stop uses closePosition=true to close entire position
+                if (order.isClosePosition()) {
+                    params.put("closePosition", true);
+                    // Do NOT set positionSide with closePosition - it's invalid
+                }
             } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.IOC) {
                 params.put("price", formatPrice(order.getPrice()));
                 params.put("timeInForce", "IOC");
             } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.FOK) {
                 params.put("price", formatPrice(order.getPrice()));
                 params.put("timeInForce", "FOK");
+            } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP_MARKET) {
+                // STOP_MARKET: triggers MARKET when stopPrice triggered
+                // Used for emergency stop - closePosition=true to close entire position
+                double stopPrice = order.getStopPrice();
+                if (stopPrice > 0) {
+                    params.put("stopPrice", formatPrice(stopPrice));
+                }
+                if (order.isClosePosition()) {
+                    params.put("closePosition", true);
+                } else if (order.isReduceOnly()) {
+                    params.put("reduceOnly", true);
+                }
+            } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP) {
+                // STOP order needs stopPrice
+                double stopPrice = order.getStopPrice();
+                if (stopPrice > 0) {
+                    params.put("stopPrice", formatPrice(stopPrice));
+                }
+                // STOP orders can use closePosition=true to close entire position
+                // This is preferred over reduceOnly+qty for survival layer
+                // P0 fix: closePosition=true requires NO positionSide in hedge mode
+                if (order.isClosePosition()) {
+                    params.put("closePosition", true);
+                    // In hedge mode, closePosition=true means close entire position
+                    // Do NOT set positionSide when closePosition=true - it's invalid
+                } else if (order.isReduceOnly()) {
+                    params.put("reduceOnly", true);
+                }
             }
 
             params.put("newClientOrderId", order.getOrderId());
@@ -327,14 +412,150 @@ public class BinanceOrderSender {
         );
     }
 
+    /**
+     * P1: Send order with explicit OrderIntent.
+     * This is the preferred path - no position inference needed.
+     *
+     * Mapping table (single source of truth):
+     * | Intent        | side | positionSide | reduceOnly |
+     * |---------------|------|--------------|------------|
+     * | OPEN_LONG     | BUY  | LONG         | false      |
+     * | CLOSE_LONG    | SELL | LONG         | true       |
+     * | OPEN_SHORT    | SELL | SHORT        | false      |
+     * | CLOSE_SHORT   | BUY  | SHORT        | true       |
+     */
+    private ExecutionReport sendOrderWithIntent(Order order, OrderIntent intent,
+                                                  LinkedHashMap<String, Object> params) {
+        // P1: Use BinanceExecutionSpec as SINGLE source of truth for Binance parameters
+        BinanceExecutionSpec spec = BinanceExecutionSpec.from(intent);
+
+        // Set side from spec (not order.getSide())
+        params.put("side", spec.side());
+
+        // Set quantity
+        double orderQty = order.getQuantity();
+
+        // For closing orders, reduceOnly=true
+        if (spec.reduceOnly()) {
+            params.put("reduceOnly", true);
+
+            // In hedge mode, set positionSide for reduceOnly to work correctly
+            if (positionMode == BinanceExchangeAdapter.PositionMode.HEDGE) {
+                params.put("positionSide", spec.positionSide());
+            }
+
+            log.info("[OrderSender] INTENT_CLOSE: {} -> spec={}", intent, spec);
+        } else {
+            // Opening orders - positionSide needed in hedge mode
+            if (positionMode == BinanceExchangeAdapter.PositionMode.HEDGE) {
+                params.put("positionSide", spec.positionSide());
+            }
+        }
+
+        // Order type mapping
+        String binanceType = mapOrderType(order.getOrderType());
+        params.put("type", binanceType);
+        params.put("quantity", formatQuantity(orderQty));
+
+        // Handle order-type specific params (same as legacy)
+        addOrderTypeParams(order, params);
+
+        params.put("newClientOrderId", order.getOrderId());
+
+        log.info("[OrderSender] Sending with INTENT: {} {} {} @ {} posMode={} {}",
+                intent, binanceType, formatQuantity(orderQty),
+                formatPrice(order.getPrice()), positionMode, spec);
+
+        try {
+            Object resp = client.account().newOrder(params);
+
+            // Parse response (same as legacy path)
+            long binanceOrderId = 0;
+            double filledQty = 0;
+            double avgFillPrice = 0;
+            String status = "NEW";
+
+            String respStr = resp instanceof String ? (String) resp : resp.toString();
+            JsonNode respNode = objectMapper.readTree(respStr);
+
+            if (respNode.has("orderId")) {
+                binanceOrderId = respNode.get("orderId").asLong();
+            }
+            if (respNode.has("executedQty")) {
+                filledQty = respNode.get("executedQty").asDouble();
+            }
+            if (respNode.has("avgPrice")) {
+                avgFillPrice = respNode.get("avgPrice").asDouble();
+            }
+            if (respNode.has("status")) {
+                status = respNode.get("status").asText();
+            }
+
+            return new ExecutionReport(
+                order.getOrderId(),
+                order.getSymbol(),
+                order.getSide(),
+                order.getOrderType(),
+                order.getQuantity(),
+                order.getPrice(),
+                filledQty,
+                avgFillPrice,
+                parseStatus(status),
+                System.currentTimeMillis(),
+                binanceOrderId,
+                0.0
+            );
+        } catch (Exception e) {
+            log.error("[OrderSender] sendOrderWithIntent failed: {}", e.getMessage());
+            return createRejectedReport(order, e.getMessage());
+        }
+    }
+
+    private void addOrderTypeParams(Order order, LinkedHashMap<String, Object> params) {
+        if (order.getOrderType() == com.trading.domain.trading.model.OrderType.LIMIT) {
+            params.put("price", formatPrice(order.getPrice()));
+            params.put("timeInForce", "GTC");
+        } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP_LIMIT) {
+            double stopPrice = order.getStopPrice();
+            if (stopPrice > 0) {
+                params.put("stopPrice", formatPrice(stopPrice));
+            }
+            if (order.isClosePosition()) {
+                params.put("closePosition", true);
+            }
+        } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP_MARKET) {
+            double stopPrice = order.getStopPrice();
+            if (stopPrice > 0) {
+                params.put("stopPrice", formatPrice(stopPrice));
+            }
+            if (order.isClosePosition()) {
+                params.put("closePosition", true);
+            } else if (order.isReduceOnly()) {
+                params.put("reduceOnly", true);
+            }
+        } else if (order.getOrderType() == com.trading.domain.trading.model.OrderType.STOP) {
+            double stopPrice = order.getStopPrice();
+            if (stopPrice > 0) {
+                params.put("stopPrice", formatPrice(stopPrice));
+            }
+            if (order.isClosePosition()) {
+                params.put("closePosition", true);
+            } else if (order.isReduceOnly()) {
+                params.put("reduceOnly", true);
+            }
+        }
+    }
+
     private String mapOrderType(com.trading.domain.trading.model.OrderType type) {
         // Java 11 compatible
         if (type == com.trading.domain.trading.model.OrderType.MARKET) {
             return "MARKET";
         } else if (type == com.trading.domain.trading.model.OrderType.STOP) {
             return "STOP";
-        } else if (type == com.trading.domain.trading.model.OrderType.STOP_LIMIT) {
+        } else if (type == com.trading.domain.trading.model.OrderType.STOP_MARKET) {
             return "STOP_MARKET";
+        } else if (type == com.trading.domain.trading.model.OrderType.STOP_LIMIT) {
+            return "STOP_LIMIT";
         } else {
             return "LIMIT";
         }

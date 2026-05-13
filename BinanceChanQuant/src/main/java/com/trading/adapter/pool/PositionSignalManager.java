@@ -2,6 +2,7 @@ package com.trading.adapter.pool;
 
 import com.trading.domain.signal.CompositeAlphaSignal;
 import com.trading.domain.signal.MarketContext;
+import com.trading.domain.trading.model.OrderIntent;
 import com.trading.domain.trading.model.PositionState;
 import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
@@ -145,7 +146,7 @@ public class PositionSignalManager {
             TradeDirection closeDirection = intent.getCloseDirection();
             double qty = Math.abs(currentPosition.getQuantity());
 
-            return new Order(
+            Order order = new Order(
                 orderId,
                 currentSymbol,
                 closeDirection,
@@ -155,6 +156,16 @@ public class PositionSignalManager {
                 "POSITION_MANAGER",
                 1.0  // Maximum urgency for exits
             );
+
+            // P1: Set explicit OrderIntent for unambiguous execution
+            // P0 still has reduceOnly=true as safety net
+            OrderIntent orderIntent = lifecycleManager.toOrderIntent(intent);
+            if (orderIntent != null) {
+                order.setIntent(orderIntent);
+            }
+            order.setReduceOnly(true);
+
+            return order;
         }
 
         return null;

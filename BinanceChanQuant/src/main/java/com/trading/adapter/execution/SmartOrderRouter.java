@@ -125,7 +125,7 @@ public class SmartOrderRouter {
     }
 
     private Order createSliceOrder(Order original, int sliceIndex, double quantity, double urgencyFactor) {
-        return new Order(
+        Order slice = new Order(
             original.getOrderId() + "_slice_" + sliceIndex,
             original.getSymbol(),
             original.getSide(),
@@ -135,6 +135,15 @@ public class SmartOrderRouter {
             original.getStrategy(),
             original.getUrgency() * urgencyFactor
         );
+
+        // P1: CRITICAL - Preserve intent across all slices
+        // Slices MUST NOT lose semantic intent
+        // Parent CLOSE_SHORT → all children CLOSE_SHORT
+        if (original.hasIntent()) {
+            slice.setIntent(original.getIntent());
+        }
+
+        return slice;
     }
 
     private String selectExchangeForSlice(int sliceIndex, String symbol) {

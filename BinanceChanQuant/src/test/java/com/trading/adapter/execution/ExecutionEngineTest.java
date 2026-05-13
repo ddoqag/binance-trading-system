@@ -32,6 +32,9 @@ class ExecutionEngineTest {
     @BeforeEach
     void setUp() {
         riskChecker = PreTradeRiskChecker.defaults();
+        // Initialize balance to simulate a synced exchange account
+        // Without this, availableBalance=0.0 causes BALANCE_TOO_LOW for all new positions
+        riskChecker.updateBalance(10000.0);
         engine = new ExecutionEngine(riskChecker);
         // SignalCooldownManager has its own default values suitable for testing
     }

@@ -124,6 +124,7 @@ public class UserDataWebSocketClient {
 
         if (proxy != null && proxy != Proxy.NO_PROXY) {
             builder.proxy(proxy);
+            log.info("[UserDataWS] Using proxy: {}", proxy);
         }
 
         return builder.build();
@@ -202,6 +203,10 @@ public class UserDataWebSocketClient {
 
         try {
             String wsUrl = WS_BASE_URL + listenKey;
+
+            log.info("[UserDataWS] Connecting to: {}", wsUrl);
+            log.info("[UserDataWS] Proxy: {}", proxy);
+            log.info("[UserDataWS] Connect timeout: {}ms", connectTimeoutMs);
 
             OkHttpClient okHttpClient = createOkHttpClient();
 

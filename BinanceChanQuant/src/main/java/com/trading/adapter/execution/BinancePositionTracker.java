@@ -56,10 +56,20 @@ public class BinancePositionTracker {
     private static final int MAX_SYNC_RETRIES = 3;
     private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 
+    // Balance sync callback
+    private volatile BalanceSyncNotifier balanceNotifier;
+
     public BinancePositionTracker(String symbol, boolean paperTrading, UMFuturesClientImpl client) {
         this.symbol = symbol;
         this.paperTrading = paperTrading;
         this.client = client;
+    }
+
+    /**
+     * Set the balance sync notifier callback
+     */
+    public void setBalanceNotifier(BalanceSyncNotifier notifier) {
+        this.balanceNotifier = notifier;
     }
 
     // ========== Position Operations ==========
@@ -237,49 +247,64 @@ public class BinancePositionTracker {
             return 10000.0; // Fallback for paper
         }
 
-        try {
-            syncBalanceFromExchange();
-        } catch (Exception e) {
-            log.error("[PositionTracker] Balance sync failed: {}", e.getMessage());
-        }
-
+        syncBalanceWithRetry();
         return availableBalance;
     }
 
     /**
-     * Sync balance from exchange
+     * Sync balance from exchange with retry
      */
-    private void syncBalanceFromExchange() {
-        try {
-            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
-            Object resp = client.account().accountInformation(params);
-            String respStr = resp instanceof String ? (String) resp : resp.toString();
-
-            JsonNode node = objectMapper.readTree(respStr);
-
-            double balance = 0;
-            if (node.has("totalCrossWalletBalance")) {
-                balance = node.get("totalCrossWalletBalance").asDouble();
-            } else if (node.has("crossWalletBalance")) {
-                balance = node.get("crossWalletBalance").asDouble();
+    public void syncBalanceWithRetry() {
+        for (int attempt = 0; attempt < MAX_SYNC_RETRIES; attempt++) {
+            try {
+                syncBalanceFromExchange();
+                // Notify callback on success
+                if (balanceNotifier != null) {
+                    balanceNotifier.onBalanceUpdated(availableBalance, walletBalance);
+                }
+                return; // Success
+            } catch (Exception e) {
+                long delay = INITIAL_RETRY_DELAY_MS * (1 << attempt);
+                if (attempt < MAX_SYNC_RETRIES - 1) {
+                    log.warn("[PositionTracker] Balance sync failed (attempt {}), retry in {}ms: {}",
+                            attempt + 1, delay, e.getMessage());
+                } else {
+                    log.error("[PositionTracker] Balance sync failed after {} attempts: {}",
+                            MAX_SYNC_RETRIES, e.getMessage());
+                }
             }
-
-            double unrealizedPnl = 0;
-            if (node.has("totalCrossUnrealizedPnl")) {
-                unrealizedPnl = node.get("totalCrossUnrealizedPnl").asDouble();
-            } else if (node.has("crossUnrealizedPnl")) {
-                unrealizedPnl = node.get("crossUnrealizedPnl").asDouble();
-            }
-
-            this.walletBalance = balance;
-            this.availableBalance = balance; // Use full balance
-            this.lastBalanceSyncTime = System.currentTimeMillis();
-
-            log.debug("[PositionTracker] Balance: wallet={} avail={}", balance, availableBalance);
-
-        } catch (Exception e) {
-            log.error("[PositionTracker] Balance sync failed: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Sync balance from exchange (internal, no retry)
+     */
+    private void syncBalanceFromExchange() throws Exception {
+        LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+        Object resp = client.account().accountInformation(params);
+        String respStr = resp instanceof String ? (String) resp : resp.toString();
+
+        JsonNode node = objectMapper.readTree(respStr);
+
+        double balance = 0;
+        if (node.has("totalCrossWalletBalance")) {
+            balance = node.get("totalCrossWalletBalance").asDouble();
+        } else if (node.has("crossWalletBalance")) {
+            balance = node.get("crossWalletBalance").asDouble();
+        }
+
+        double unrealizedPnl = 0;
+        if (node.has("totalCrossUnrealizedPnl")) {
+            unrealizedPnl = node.get("totalCrossUnrealizedPnl").asDouble();
+        } else if (node.has("crossUnrealizedPnl")) {
+            unrealizedPnl = node.get("crossUnrealizedPnl").asDouble();
+        }
+
+        this.walletBalance = balance;
+        this.availableBalance = balance;
+        this.lastBalanceSyncTime = System.currentTimeMillis();
+
+        log.debug("[PositionTracker] Balance: wallet={} avail={}", balance, availableBalance);
     }
 
     /**

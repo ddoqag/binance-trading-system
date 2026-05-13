@@ -2,6 +2,9 @@ package com.trading.domain.trading.model;
 
 /**
  * Order domain object
+ *
+ * Key principle: Order creation must have 100% semantic completeness.
+ * Execution layer must NEVER infer intent from position state.
  */
 public class Order {
     private final String orderId;
@@ -14,10 +17,13 @@ public class Order {
     private final String strategy;
     private final double urgency;
 
+    // P1: Explicit intent for unambiguous execution
+    private OrderIntent intent;  // null = legacy order (backward compatible during transition)
+
     private double confidence = 0.0;
     private double stopPrice = 0.0;  // For STOP orders
     private boolean closePosition = false;  // For STOP orders - close entire position
-    private boolean reduceOnly = false;  // For STOP orders - only reduce/close position
+    private boolean reduceOnly = false;  // Set by execution layer based on intent
     private long createTime;
     private OrderStatus status = OrderStatus.NEW;
 
@@ -56,12 +62,25 @@ public class Order {
     public OrderStatus getStatus() { return status; }
     public void setStatus(OrderStatus status) { this.status = status; }
 
+    // P1: Intent getter/setter
+    public OrderIntent getIntent() { return intent; }
+    public void setIntent(OrderIntent intent) { this.intent = intent; }
+
+    public boolean hasIntent() { return intent != null; }
+
+    public boolean isOpeningIntent() { return intent != null && intent.isOpening(); }
+    public boolean isClosingIntent() { return intent != null && intent.isClosing(); }
+
     /**
      * Check if this is an exit order based on urgency
      * Exit orders should always be allowed even in KILL_SWITCH mode
      */
     public boolean isExitOrder() {
         // Orders with MAX_urgency (1.0) are exit orders created by PositionLifecycleManager
+        // P1: Also check explicit intent
+        if (intent != null && intent.isClosing()) {
+            return true;
+        }
         return urgency >= 1.0 && quantity > 0;
     }
 }

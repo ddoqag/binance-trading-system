@@ -131,6 +131,15 @@ public class ExecutionStateMachine {
                 return; // Don't check other conditions while in KILL_SWITCH
             }
 
+            // P0-4: STANDBY auto-recovery - if balance recovered, switch to PASSIVE
+            if (currentModeValue == ExecutionMode.STANDBY) {
+                if (availableBalance >= STANDBY_THRESHOLD_BALANCE * 1.5) {  // 50% above threshold
+                    log.info("[ExecutionStateMachine] Balance recovered to {}, STANDBY -> PASSIVE", availableBalance);
+                    forceMode(ExecutionMode.PASSIVE);
+                }
+                return; // Don't execute while recovering from STANDBY
+            }
+
             // Enter STANDBY if balance is too low
             if (availableBalance > 0 && availableBalance < STANDBY_THRESHOLD_BALANCE) {
                 if (currentModeValue != ExecutionMode.STANDBY) {

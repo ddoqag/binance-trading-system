@@ -1,6 +1,7 @@
 package com.trading.adapter.pool;
 
 import com.trading.domain.signal.MarketContext;
+import com.trading.domain.trading.model.OrderIntent;
 import com.trading.domain.trading.model.PositionState;
 import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
@@ -257,6 +258,32 @@ public class PositionLifecycleManager {
         public double getQuantity() { return quantity; }
         public double getPrice() { return price; }
         public TradeDirection getCloseDirection() { return intent.getCloseDirection(); }
+    }
+
+    // ========== P1: OrderIntent conversion (strategy → execution layer) ==========
+
+    /**
+     * Convert TradeIntent to OrderIntent.
+     * This is the ONE-WAY bridge from strategy layer to execution layer.
+     *
+     * PositionLifecycleManager is the correct place for this conversion
+     * because it knows the position direction from lifecycle analysis.
+     */
+    public OrderIntent toOrderIntent(TradeIntent intent) {
+        if (intent == null) {
+            return null;
+        }
+        return OrderIntent.fromTradeIntent(intent);
+    }
+
+    /**
+     * Determine OrderIntent based on position state and market context.
+     * Returns null if intent should be HOLD.
+     */
+    public OrderIntent determineOrderIntent(PositionState position, double signalConfidence,
+                                            MarketContext context, TradeDirection signalDirection) {
+        TradeIntent tradeIntent = determineIntent(position, signalConfidence, context, signalDirection);
+        return toOrderIntent(tradeIntent);
     }
 
     // ========== Getters ==========

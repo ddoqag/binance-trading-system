@@ -78,15 +78,16 @@ public class BinanceAlgoClient {
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
             params.put("symbol", order.getSymbol());
             // Map our close direction to Binance side
+            // To close SHORT position: BUY (we buy to close short)
+            // To close LONG position: SELL (we sell to close long)
             params.put("side", order.getSide() == TradeDirection.LONG ? "BUY" : "SELL");
             params.put("type", "STOP_MARKET");
             params.put("algoType", "CONDITIONAL");
             // triggerPrice must be sent as a number string for STOP_MARKET
             params.put("triggerPrice", String.format("%.0f", order.getStopPrice()));
-            // positionSide must match the ACTUAL position for closePosition validation
-            // order.getSide() = close direction
-            // order.getSide() = LONG means we buy, meaning actual position is SHORT
-            // So positionSide = order.getSide() (LONG → SHORT, SHORT → LONG)
+            // P0 FIX: For closePosition=true in hedge mode, positionSide must be the ACTUAL position side
+            // We want to close a SHORT position, so positionSide=SHORT
+            // order.getSide() = close direction (LONG means buy to close short, so actual position is SHORT)
             params.put("positionSide", order.getSide() == TradeDirection.LONG ? "SHORT" : "LONG");
             params.put("closePosition", "true");
             params.put("clientAlgoId", order.getOrderId());

@@ -204,6 +204,8 @@ public class BinanceWsApiClient {
 
             Request request = new Request.Builder()
                     .url(wsUrl)
+                    .addHeader("Origin", "https://www.binance.com")
+                    .addHeader("Host", "fapi.binance.com")
                     .build();
 
             webSocket = client.newWebSocket(request, createListener());
