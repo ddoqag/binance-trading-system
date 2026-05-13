@@ -106,8 +106,8 @@ public class StartupRecoveryService {
                     if (Math.abs(pos.size) > 0.0001) {
                         snapshot.positions.add(pos);
                         String direction = pos.size > 0 ? "LONG" : "SHORT";
-                        log.info("[Recovery] Exchange position: {} {} @ {} (entry: {})",
-                                direction, Math.abs(pos.size), pos.unrealizedPnl, pos.entryPrice);
+                        log.info("[Recovery] Exchange position: {} {} contracts @ entry={} (unrealizedPnl={})",
+                                direction, Math.abs(pos.size), pos.entryPrice, pos.unrealizedPnl);
                     }
                 }
             }
