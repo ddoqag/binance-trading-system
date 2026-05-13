@@ -133,6 +133,11 @@ public class ChanWebSocketLauncher {
     private volatile double lowerTimeframeResistance = 0;
     private static final int LOWER_KLINE_COUNT = 20; // 20 * 5min = ~100min of data
 
+    // K-line cache file for offline backup
+    private static final String KLINE_CACHE_FILE = "kline_cache.json";
+    private volatile long lastCacheSaveTime = 0;
+    private static final long CACHE_SAVE_INTERVAL_MS = 300000; // 5 minutes
+
     static {
         String symbol = ConfigUtil.get("symbol");
         SYMBOL = (symbol != null) ? symbol : "BTCUSDT";
@@ -401,12 +406,6 @@ public class ChanWebSocketLauncher {
         log.info("[Launcher] Loading historical K-line data...");
 
         try {
-            // Proxy disabled - enable if you have a proxy running on Windows
-            // System.setProperty("https.proxyHost", "127.0.0.1");
-            // System.setProperty("https.proxyPort", "7897");
-            // System.setProperty("http.proxyHost", "127.0.0.1");
-            // System.setProperty("http.proxyPort", "7897");
-
             // Create REST client for historical data
             UMFuturesClientImpl restClient = new UMFuturesClientImpl(
                 ConfigUtil.get("api.key"),
@@ -414,15 +413,24 @@ public class ChanWebSocketLauncher {
                 ConfigUtil.isTestNet()
             );
 
-            // Proxy disabled
-            // try {
-            //     java.net.InetSocketAddress proxyAddr = new java.net.InetSocketAddress("127.0.0.1", 7897);
-            //     java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.HTTP, proxyAddr);
-            //     com.binance.connector.futures.client.utils.ProxyAuth proxyAuth = new com.binance.connector.futures.client.utils.ProxyAuth(proxy, null);
-            //     restClient.setProxy(proxyAuth);
-            // } catch (Exception e) {
-            //     log.warn("[Launcher] Proxy not set for REST client: {}", e.getMessage());
-            // }
+            // Enable proxy if configured
+            String proxyHost = ConfigUtil.get("PROXY_HOST");
+            if (proxyHost != null && !proxyHost.isEmpty()) {
+                try {
+                    String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+                    int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+                    java.net.Proxy proxy = new java.net.Proxy(
+                        java.net.Proxy.Type.HTTP,
+                        new java.net.InetSocketAddress(proxyHost, proxyPort)
+                    );
+                    com.binance.connector.futures.client.utils.ProxyAuth proxyAuth =
+                        new com.binance.connector.futures.client.utils.ProxyAuth(proxy, null);
+                    restClient.setProxy(proxyAuth);
+                    log.info("[Launcher] REST client proxy set: {}:{}", proxyHost, proxyPort);
+                } catch (Exception e) {
+                    log.warn("[Launcher] Failed to set proxy for REST client: {}", e.getMessage());
+                }
+            }
 
             // Request 500 historical K-lines (15m interval for Chan theory)
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
@@ -477,12 +485,86 @@ public class ChanWebSocketLauncher {
 
             log.info("[Launcher] Loaded {} K-lines into Chan processor", added);
 
+            // Save to cache for offline backup
+            saveKLineCache(klines);
+
             // Print current Chan structure status
             printChanStructureStatus();
 
         } catch (Exception e) {
             log.error("[Launcher] Failed to load historical data: {}", e.getMessage(), e);
+            // Try loading from cache as fallback
+            loadKLineCache();
         }
+    }
+
+    /**
+     * Save K-lines to cache file for offline backup
+     */
+    private void saveKLineCache(List<?> klines) {
+        try {
+            String cachePath = getCacheDir() + "/" + KLINE_CACHE_FILE;
+            com.fasterxml.jackson.databind.ObjectMapper cacheMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            cacheMapper.writeValue(new java.io.File(cachePath), klines);
+            lastCacheSaveTime = System.currentTimeMillis();
+            log.info("[Launcher] K-line cache saved: {} entries", klines.size());
+        } catch (Exception e) {
+            log.warn("[Launcher] Failed to save K-line cache: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Load K-lines from cache file as fallback when network fails
+     */
+    private void loadKLineCache() {
+        try {
+            String cachePath = getCacheDir() + "/" + KLINE_CACHE_FILE;
+            java.io.File cacheFile = new java.io.File(cachePath);
+            if (!cacheFile.exists()) {
+                log.warn("[Launcher] No K-line cache found");
+                return;
+            }
+
+            com.fasterxml.jackson.databind.ObjectMapper cacheMapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.core.type.TypeReference<java.util.List<java.util.List<?>>> typeRef =
+                new com.fasterxml.jackson.core.type.TypeReference<java.util.List<java.util.List<?>>>() {};
+            java.util.List<java.util.List<?>> klines = cacheMapper.readValue(cacheFile, typeRef);
+
+            log.info("[Launcher] Loaded {} K-lines from cache", klines.size());
+
+            int added = 0;
+            for (java.util.List<?> klineData : klines) {
+                if (klineData.size() >= 6) {
+                    long timestamp = ((Number) klineData.get(0)).longValue();
+                    double open = Double.parseDouble(klineData.get(1).toString());
+                    double high = Double.parseDouble(klineData.get(2).toString());
+                    double low = Double.parseDouble(klineData.get(3).toString());
+                    double close = Double.parseDouble(klineData.get(4).toString());
+                    double volume = Double.parseDouble(klineData.get(5).toString());
+
+                    ChanKLineProcessor.KLine kline = new ChanKLineProcessor.KLine(
+                        timestamp, open, high, low, close, volume
+                    );
+                    chanProcessor.addKLine(kline);
+                    added++;
+                }
+            }
+
+            log.info("[Launcher] Loaded {} K-lines from cache into Chan processor", added);
+            printChanStructureStatus();
+
+        } catch (Exception e) {
+            log.error("[Launcher] Failed to load K-line cache: {}", e.getMessage());
+        }
+    }
+
+    private String getCacheDir() {
+        String baseDir = System.getProperty("user.home") + "/.trading_cache";
+        java.io.File dir = new java.io.File(baseDir);
+        if (!dir.exists()) {
+            dir.mkdirs();
+        }
+        return baseDir;
     }
 
     private void printChanStructureStatus() {
@@ -584,6 +666,18 @@ public class ChanWebSocketLauncher {
                 null,  // PositionCache - not used directly
                 null   // AccountStateStore - not used directly
             );
+
+            // Configure proxy from config
+            String proxyHost = ConfigUtil.get("PROXY_HOST");
+            String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+            if (proxyHost != null && !proxyHost.isEmpty()) {
+                int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+                userDataWsClient.setProxy(proxyHost, proxyPort);
+                log.info("[Launcher] UserData WS proxy set: {}:{}", proxyHost, proxyPort);
+            }
+
+            // Configure timeouts (20s connect, 30s read)
+            userDataWsClient.setTimeout(20000, 30000);
 
             // Set up callbacks to update BinanceExchangeAdapter
             userDataWsClient.setOnOrderUpdate(event -> {

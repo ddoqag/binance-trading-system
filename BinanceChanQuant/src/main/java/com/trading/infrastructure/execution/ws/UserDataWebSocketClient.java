@@ -8,6 +8,8 @@ import okhttp3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -73,6 +75,11 @@ public class UserDataWebSocketClient {
     // 是否运行
     private volatile boolean running = false;
 
+    // Proxy 配置
+    private Proxy proxy;
+    private int connectTimeoutMs = 20000;
+    private int readTimeoutMs = 30000;
+
     public enum ConnectionState {
         DISCONNECTED,
         CONNECTING,
@@ -87,6 +94,39 @@ public class UserDataWebSocketClient {
         this.listenKey = listenKey;
         this.positionCache = positionCache;
         this.accountStateStore = accountStateStore;
+        // 默认无代理
+        this.proxy = Proxy.NO_PROXY;
+    }
+
+    // ========== Proxy 配置 ==========
+
+    public void setProxy(String host, int port) {
+        if (host == null || host.isEmpty() || port <= 0) {
+            this.proxy = Proxy.NO_PROXY;
+            log.info("[UserDataWS] Proxy disabled");
+        } else {
+            this.proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(host, port));
+            log.info("[UserDataWS] Proxy set: {}:{}", host, port);
+        }
+    }
+
+    public void setTimeout(int connectTimeoutMs, int readTimeoutMs) {
+        this.connectTimeoutMs = connectTimeoutMs;
+        this.readTimeoutMs = readTimeoutMs;
+        log.info("[UserDataWS] Timeout: connect={}ms, read={}ms", connectTimeoutMs, readTimeoutMs);
+    }
+
+    private OkHttpClient createOkHttpClient() {
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                .pingInterval(30, TimeUnit.SECONDS)
+                .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS);
+
+        if (proxy != null && proxy != Proxy.NO_PROXY) {
+            builder.proxy(proxy);
+        }
+
+        return builder.build();
     }
 
     // ========== 公共接口 ==========
@@ -163,9 +203,7 @@ public class UserDataWebSocketClient {
         try {
             String wsUrl = WS_BASE_URL + listenKey;
 
-            OkHttpClient okHttpClient = new OkHttpClient.Builder()
-                    .pingInterval(30, TimeUnit.SECONDS)
-                    .build();
+            OkHttpClient okHttpClient = createOkHttpClient();
 
             Request request = new Request.Builder()
                     .url(wsUrl)
@@ -189,9 +227,7 @@ public class UserDataWebSocketClient {
         try {
             String wsUrl = WS_BASE_URL + listenKey;
 
-            OkHttpClient okHttpClient = new OkHttpClient.Builder()
-                    .pingInterval(30, TimeUnit.SECONDS)
-                    .build();
+            OkHttpClient okHttpClient = createOkHttpClient();
 
             Request request = new Request.Builder()
                     .url(wsUrl)
