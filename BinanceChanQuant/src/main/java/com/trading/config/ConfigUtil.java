@@ -86,11 +86,21 @@ public class ConfigUtil {
         return Integer.parseInt(get(key));
     }
 
+    public static boolean getBoolean(String key) {
+        String value = get(key);
+        return "true".equalsIgnoreCase(value);
+    }
+
     public static double getDouble(String key) {
         return Double.parseDouble(get(key));
     }
 
     public static boolean isTestNet() {
-        return "true".equalsIgnoreCase(get("testnet"));
+        // Check USE_TESTNET first (from .env), then testnet (from config.properties)
+        String value = get("USE_TESTNET");
+        if (value == null) {
+            value = get("testnet");
+        }
+        return "true".equalsIgnoreCase(value);
     }
 }

@@ -62,8 +62,8 @@ public class BinanceWsApiClient {
 
     // Proxy
     private Proxy proxy;
-    private int connectTimeoutMs = 20_000;
-    private int readTimeoutMs = 30_000;
+    private int connectTimeoutMs = 60_000;
+    private int readTimeoutMs = 90_000;
 
     // WebSocket
     private WebSocket webSocket;
@@ -217,11 +217,16 @@ public class BinanceWsApiClient {
     }
 
     private OkHttpClient createOkHttpClient() {
-        return new OkHttpClient.Builder()
+        OkHttpClient.Builder builder = new OkHttpClient.Builder()
                 .pingInterval(20, TimeUnit.SECONDS) // Binance pings every 20s
                 .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
-                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
-                .build();
+                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS);
+
+        if (proxy != null && proxy != Proxy.NO_PROXY) {
+            builder.proxy(proxy);
+        }
+
+        return builder.build();
     }
 
     private WebSocketListener createListener() {

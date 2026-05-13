@@ -355,6 +355,14 @@ public class ChanWebSocketLauncher {
             riskChecker.updateBalance(initialBalance);
             log.info("[Launcher] Initial balance: {} USDT", String.format("%.4f", initialBalance));
 
+            // Enable WebSocket trading (WS-API v3) with REST fallback
+            if (ConfigUtil.getBoolean("trading.ws-api.enabled")) {
+                exchangeAdapter.enableWebSocketTrading();
+                log.info("[Launcher] WebSocket trading enabled: {}", exchangeAdapter.isWebSocketTradingEnabled());
+            } else {
+                log.info("[Launcher] WebSocket trading disabled (trading.ws-api.enabled=false), using REST only");
+            }
+
             exchangeAdapter.setPositionChangeCallback(event -> {
                 if (event.wasOpened && lastMarketContext != null) {
                     // Position opened - create PositionState with RiskModel
