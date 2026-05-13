@@ -56,6 +56,9 @@ public class BinanceExchangeAdapter {
     // Algo client for protection orders (P0 survival layer - bypasses connector limitations)
     private final BinanceAlgoClient algoClient;
 
+    // WebSocket Order Router (optional - for WS-API trading)
+    private WsOrderRouter wsOrderRouter;
+
     // Position mode
     private volatile PositionMode positionMode = PositionMode.UNKNOWN;
 
@@ -142,6 +145,62 @@ public class BinanceExchangeAdapter {
         log.info("[BinanceAdapter] Proxy enabled: {}:{}", proxyHost, proxyPort);
     }
 
+    // ========== WebSocket Trading (WS-API v3) ==========
+
+    /**
+     * Enable WebSocket trading (WS-API v3).
+     * Falls back to REST if WS fails.
+     */
+    public void enableWebSocketTrading() {
+        if (paperTrading) {
+            log.info("[BinanceAdapter] WebSocket trading disabled: paper mode");
+            return;
+        }
+
+        if (wsOrderRouter == null) {
+            boolean isTestnet = ConfigUtil.isTestNet();
+            wsOrderRouter = new WsOrderRouter(apiKey, apiSecret, isTestnet);
+
+            // Apply proxy settings
+            String proxyHost = ConfigUtil.get("PROXY_HOST");
+            if (proxyHost != null && !proxyHost.isEmpty()) {
+                String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+                int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+                wsOrderRouter.setProxy(proxyHost, proxyPort);
+            }
+
+            wsOrderRouter.connect();
+            log.info("[BinanceAdapter] WebSocket trading enabled (WS-API v3)");
+        }
+    }
+
+    /**
+     * Disable WebSocket trading
+     */
+    public void disableWebSocketTrading() {
+        if (wsOrderRouter != null) {
+            wsOrderRouter.setEnabled(false);
+            log.info("[BinanceAdapter] WebSocket trading disabled");
+        }
+    }
+
+    /**
+     * Check if WebSocket trading is enabled and connected
+     */
+    public boolean isWebSocketTradingEnabled() {
+        return wsOrderRouter != null && wsOrderRouter.isEnabled() && wsOrderRouter.isWsConnected();
+    }
+
+    /**
+     * Get WebSocket trading statistics
+     */
+    public String getWebSocketTradingStats() {
+        if (wsOrderRouter != null) {
+            return wsOrderRouter.getStats();
+        }
+        return "WS not enabled";
+    }
+
     private static final int MAX_POSITION_MODE_RETRIES = 3;
     private static final long INITIAL_RETRY_DELAY_MS = 1_000;
 
@@ -209,9 +268,22 @@ public class BinanceExchangeAdapter {
             return simulateFill(order);
         }
 
-        // Position is set via constructor with PositionSnapshot - no sync in critical path
-        // Background sync keeps the cache fresh via positionTracker
+        // Try WebSocket API first if enabled and connected
+        if (wsOrderRouter != null && wsOrderRouter.isEnabled() && wsOrderRouter.isWsConnected()) {
+            ExecutionReport wsReport = wsOrderRouter.sendOrder(order);
+            if (wsReport != null) {
+                log.info("[BinanceAdapter] Order via WS: {} {} {} -> {}",
+                        order.getOrderId(), order.getSide(), order.getSymbol(), wsReport.getStatus());
+                if (wsReport.getStatus() == OrderStatus.FILLED) {
+                    totalFills.incrementAndGet();
+                    updateLocalPosition(order, wsReport.getFilledQuantity(), wsReport.getAvgFillPrice());
+                }
+                return wsReport;
+            }
+            log.debug("[BinanceAdapter] WS failed, fallback to REST");
+        }
 
+        // REST fallback
         ExecutionReport report = orderSender.sendOrder(order);
 
         if (report != null && report.getStatus() == OrderStatus.FILLED) {
