@@ -8,6 +8,7 @@ import com.trading.config.ConfigUtil;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.OrderStatus;
+import com.trading.domain.trading.model.OrderType;
 import com.trading.domain.trading.model.PositionState;
 import com.trading.domain.trading.model.RiskModel;
 import com.trading.domain.trading.model.TradeDirection;
@@ -17,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -50,6 +52,9 @@ public class BinanceExchangeAdapter {
     // Delegated components
     private final BinanceOrderSender orderSender;
     private final BinancePositionTracker positionTracker;
+
+    // Algo client for protection orders (P0 survival layer - bypasses connector limitations)
+    private final BinanceAlgoClient algoClient;
 
     // Position mode
     private volatile PositionMode positionMode = PositionMode.UNKNOWN;
@@ -91,6 +96,7 @@ public class BinanceExchangeAdapter {
             this.positionTracker = new BinancePositionTracker(symbol, true, null);
             this.orderSender = new BinanceOrderSender(symbol, true, apiKey, apiSecret, null,
                     PositionSnapshot.fromTracker(positionTracker));
+            this.algoClient = null;  // Algo API only used in live trading
             this.positionMode = PositionMode.ONE_WAY;
             log.info("[BinanceAdapter] Paper trading mode");
         } else {
@@ -98,6 +104,11 @@ public class BinanceExchangeAdapter {
             this.positionTracker = new BinancePositionTracker(symbol, false, client);
             this.orderSender = new BinanceOrderSender(symbol, false, apiKey, apiSecret, client,
                     PositionSnapshot.fromTracker(positionTracker));
+
+            // Initialize proxy for algo client
+            Proxy proxy = getProxy();
+            this.algoClient = new BinanceAlgoClient(apiKey, apiSecret, baseUrl, proxy);
+
             setProxy();
             fetchPositionMode();
             orderSender.setPositionMode(this.positionMode);
@@ -106,14 +117,25 @@ public class BinanceExchangeAdapter {
         }
     }
 
+    private Proxy getProxy() {
+        String proxyHost = ConfigUtil.get("PROXY_HOST");
+        if (proxyHost == null || proxyHost.isEmpty()) {
+            return Proxy.NO_PROXY;
+        }
+        String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+        int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+        return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
+    }
+
     private void setProxy() {
-        String proxyHost = System.getenv("PROXY_HOST");
+        String proxyHost = ConfigUtil.get("PROXY_HOST");
         // Only enable proxy if PROXY_HOST is explicitly set (for China users behind VPN)
         if (proxyHost == null || proxyHost.isEmpty()) {
             log.info("[BinanceAdapter] Proxy disabled (PROXY_HOST not set)");
             return;
         }
-        int proxyPort = Integer.parseInt(System.getenv("PROXY_PORT") != null ? System.getenv("PROXY_PORT") : "7897");
+        String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+        int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
         ProxyAuth proxyAuth = new ProxyAuth(proxy, null);
         client.setProxy(proxyAuth);
@@ -200,6 +222,40 @@ public class BinanceExchangeAdapter {
         return report;
     }
 
+    /**
+     * Send protection order via Algo API (P0 survival layer).
+     * Uses Binance's Algo Order API which supports STOP_MARKET with closePosition.
+     * Falls back to regular order API if Algo API is unavailable.
+     */
+    public ExecutionReport sendProtectionOrder(Order order) {
+        log.info("[BinanceAdapter] sendProtectionOrder called: type={}, closePosition={}, algoClient={}",
+                order.getOrderType(), order.isClosePosition(), algoClient);
+        if (paperTrading) {
+            return simulateFill(order);
+        }
+
+        // Try Algo API first (supports closePosition for guaranteed exit)
+        if (order.getOrderType() == OrderType.STOP_MARKET && algoClient != null) {
+            ExecutionReport report = algoClient.sendStopOrder(order, order.isClosePosition());
+            log.info("[BinanceAdapter] sendProtectionOrder result: status={}, report={}", report != null ? report.getStatus() : "null", report);
+            if (report != null && report.getStatus() == OrderStatus.NEW) {
+                log.info("[BinanceAdapter] Protection order sent via Algo API: {} {} @ {}",
+                        order.getSymbol(), order.getQuantity(), order.getStopPrice());
+                return report;
+            }
+            // Algo API failed (returned null on known error) - fall through to regular order API
+            if (report == null) {
+                log.warn("[BinanceAdapter] Algo API returned null (likely rejected), falling back to regular order API");
+            } else {
+                log.warn("[BinanceAdapter] Algo API failed with status {}, falling back to regular order API", report.getStatus());
+            }
+        }
+
+        // Fallback: use regular order API for protection orders
+        log.info("[BinanceAdapter] Using regular order API for protection: type={}", order.getOrderType());
+        return sendOrder(order);
+    }
+
     public boolean cancelOrder(String orderId, long binanceOrderId) {
         return orderSender.cancelOrder(orderId, binanceOrderId);
     }
@@ -218,6 +274,13 @@ public class BinanceExchangeAdapter {
             };
         }
         return new PositionInfo[0];
+    }
+
+    /**
+     * Query all open orders from exchange
+     */
+    public List<Order> queryOpenOrders() {
+        return orderSender.queryAllOpenOrders();
     }
 
     // ========== Paper Simulation ==========
@@ -318,6 +381,13 @@ public class BinanceExchangeAdapter {
         // Delegate to positionTracker for balance sync
         positionTracker.syncPositionsFromExchange();
         return positionTracker.getAvailableBalance();
+    }
+
+    /**
+     * Get the position tracker for external access (e.g., balance sync notifier)
+     */
+    public BinancePositionTracker getPositionTracker() {
+        return positionTracker;
     }
 
     public void setLeverage(int leverage) {

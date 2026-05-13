@@ -1,6 +1,6 @@
 # Contributing Guide
 
-**Last Updated:** 2026-05-12
+**Last Updated:** 2026-05-13
 **Project:** BinanceChanQuant
 
 ---

@@ -324,17 +324,32 @@ public class ChanWebSocketLauncher {
         String apiKey = ConfigUtil.get("api.key");
         String apiSecret = ConfigUtil.get("api.secret");
         boolean testnet = ConfigUtil.isTestNet();
-        executionEngine = new ExecutionEngine(riskChecker, testnet, apiKey, apiSecret);
+        // Paper trading: default true if not set, can be overridden to false for live trading
+        String paperStr = ConfigUtil.get("PAPER_TRADING");
+        boolean paperTrading = !"false".equalsIgnoreCase(paperStr);
+        executionEngine = new ExecutionEngine(riskChecker, paperTrading, apiKey, apiSecret);
         executionEngine.start();
 
         // V6: Wire AlphaPool and ExecutionEngine for closed-loop feedback
         executionEngine.setEventListener(event -> alphaPool.onExecutionEvent(event));
 
-        log.info("[Launcher] ExecutionEngine initialized (paper={})", testnet);
+        log.info("[Launcher] ExecutionEngine initialized (testnet={}, paper={})", testnet, paperTrading);
 
         // Set position change callback to attach RiskModel when position opens
         this.exchangeAdapter = executionEngine.getExchangeAdapter();
         if (this.exchangeAdapter != null) {
+            // Wire balance sync to risk checker for pre-trade balance check
+            this.exchangeAdapter.getPositionTracker().setBalanceNotifier((available, wallet) -> {
+                riskChecker.updateBalance(available);
+                log.debug("[Launcher] Balance synced to RiskChecker: available={}", available);
+            });
+
+            // Force initial balance sync before trading starts
+            log.info("[Launcher] Syncing initial balance...");
+            double initialBalance = this.exchangeAdapter.syncBalanceFromExchange();
+            riskChecker.updateBalance(initialBalance);
+            log.info("[Launcher] Initial balance: {} USDT", String.format("%.4f", initialBalance));
+
             exchangeAdapter.setPositionChangeCallback(event -> {
                 if (event.wasOpened && lastMarketContext != null) {
                     // Position opened - create PositionState with RiskModel
@@ -487,15 +502,12 @@ public class ChanWebSocketLauncher {
 
         try {
             // Enable proxy for WSL2 to use Windows VPN
-            String proxyHost = System.getenv("PROXY_HOST");
-            String proxyPort = System.getenv("PROXY_PORT");
-
-            if (proxyHost == null) {
+            String proxyHost = ConfigUtil.get("PROXY_HOST");
+            if (proxyHost == null || proxyHost.isEmpty()) {
                 proxyHost = "127.0.0.1"; // Localhost proxy
             }
-            if (proxyPort == null) {
-                proxyPort = "7897";
-            }
+            String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+            String proxyPort = proxyPortStr != null ? proxyPortStr : "7897";
 
             System.setProperty("https.proxyHost", proxyHost);
             System.setProperty("https.proxyPort", proxyPort);
@@ -1087,6 +1099,9 @@ public class ChanWebSocketLauncher {
         double equityLimit = 0.002;  // Max 0.002 BTC (~2% of $80 equity at $40k)
 
         qty = Math.max(0.0001, Math.min(Math.min(qty, maxQty), equityLimit));
+
+        // Format to 3 decimal places for Binance precision
+        qty = Math.floor(qty * 1000) / 1000.0;
 
         if (lastMarketContext != null && lastMarketContext.getAtr() > 0) {
             log.trace("[Launcher] QTY: conf=%.2f atrFactor=%.2f urgency=%.2f → qty=%.4f",

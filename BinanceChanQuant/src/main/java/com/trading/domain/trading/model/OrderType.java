@@ -6,8 +6,9 @@ package com.trading.domain.trading.model;
 public enum OrderType {
     MARKET,
     LIMIT,
-    STOP,
-    STOP_LIMIT,
-    IOC,    // Immediate Or Cancel
-    FOK     // Fill Or Kill
+    STOP,       // Conditional stop with price
+    STOP_MARKET, // Stop that triggers MARKET order (no price needed)
+    STOP_LIMIT, // Conditional stop with limit price
+    IOC,        // Immediate Or Cancel
+    FOK         // Fill Or Kill
 }

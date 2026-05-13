@@ -1,6 +1,6 @@
 # Operations Runbook
 
-**Last Updated:** 2026-05-12
+**Last Updated:** 2026-05-13
 **Project:** BinanceChanQuant
 
 ---
@@ -254,6 +254,54 @@ System handles graceful shutdown via Ctrl+C or SIGTERM:
 6. **Time Stop** - 30 minute hold limit
 7. **Catastrophic** - -5% equity circuit breaker
 8. **Take Profit** - Optional TP
+
+---
+
+## Survival Layer (P0 Protection)
+
+### Purpose
+Every real position MUST have emergency stop protection at the exchange level. This is P0 - without it, a position can "forget" to stop loss on restart.
+
+### Key Components
+- `StartupRecoveryService` - Detects orphan positions on startup
+- `ProtectionOrderManager` - Manages protection orders per symbol
+- `BinanceAlgoClient` - Direct API client for `POST /fapi/v1/algoOrder`
+
+### How It Works
+1. **Startup**: `StartupRecoveryService.performRecovery()` queries exchange positions
+2. **Detection**: Compares exchange positions vs local state → orphan detected if position exists on exchange but not in local state
+3. **Attachment**: `ProtectionOrderManager.attachEmergencyStop()` creates STOP_MARKET with `closePosition=true`
+4. **Reconciliation**: Runs every 30 seconds to detect positions that lost protection
+
+### Orphan Position Detection
+```
+[Recovery][CRITICAL] ORPHAN POSITION detected: SHORT 0.001 @ 80415.1
+[Recovery] Orphan position BTCUSDT has NO stop protection - attaching emergency stop
+```
+
+### Emergency Stop Attachment
+```
+[BinanceAlgo] POST /fapi/v1/algoOrder -> 200 | body: {"algoId":1000001633231467,...}
+[Protection] EMERGENCY STOP attached: BTCUSDT 0.001 @ 82023.402
+```
+
+### Algo API Parameters (STOP_MARKET with closePosition=true)
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `algoType` | CONDITIONAL | Required |
+| `type` | STOP_MARKET | Required |
+| `side` | BUY/SELL | BUY closes SHORT, SELL closes LONG |
+| `positionSide` | SHORT/LONG | Must match actual position direction |
+| `triggerPrice` | stopPrice | Trigger price |
+| `closePosition` | true | Closes entire position |
+| `quantity` | NOT SENT | closePosition=true means close all |
+
+### Error Code Reference
+| Code | Meaning | Action |
+|------|---------|--------|
+| -4061 | positionSide mismatch | Check positionSide matches actual position |
+| -4120 | Order type not supported | STOP_MARKET must use Algo API |
+| -4130 | Existing order in direction | Stop already exists (protection working) |
 
 ---
 

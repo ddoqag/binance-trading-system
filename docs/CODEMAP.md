@@ -1,6 +1,6 @@
 # Component Codemap
 
-**Last Updated:** 2026-05-12
+**Last Updated:** 2026-05-13
 **Project:** BinanceChanQuant v2.0.0
 
 ---
@@ -70,6 +70,8 @@
 | `SmartOrderRouter` | Order routing optimization | `routeOrder()`, `getOptimalPrice()` |
 | `ExecutionStateMachine` | Order state transitions | `transition()`, `getState()` |
 | `SignalCooldownManager` | Signal rate limiting | `canTrade()`, `recordTrade()` |
+| `BinanceAlgoClient` | Direct Algo API client for STOP_MARKET orders | `sendStopOrder()`, `sendStopWithReduceOnly()`, `queryAlgoOrder()` |
+| `ProtectionOrderManager` | Survival layer - ensures all positions have stop protection | `onEntryFilled()`, `attachEmergencyStop()`, `reconcile()` |
 
 ### Risk (`com/trading/adapter/risk/`)
 
@@ -180,6 +182,8 @@ AlphaSignal (abstract)
 | `monitoring/` | Execution monitoring |
 | `rollback/` | Safe deployment rollback |
 | `messaging/shm/` | Shared memory communication |
+| `StartupRecoveryService` | P0 survival layer - orphan position detection on startup, periodic reconciliation |
+| `TradingGuard` | Prevents trading during recovery and unsafe states |
 
 ---
 
@@ -234,6 +238,22 @@ Entry Order Filled → PositionSignalManager.createPositionFromEntry()
                     PositionLifecycleManager
                           ↓
                     Exit Conditions → PositionSignalManager.createOrderFromIntent()
+```
+
+### 4. Survival Layer (P0 Protection) Flow
+
+```
+Startup/Periodic → StartupRecoveryService.performRecovery()
+                          ↓
+                    snapshotExchangePositions() → detect orphans
+                          ↓
+                    ProtectionOrderManager.attachEmergencyStop()
+                          ↓
+                    BinanceExchangeAdapter.sendProtectionOrder()
+                          ↓
+                    BinanceAlgoClient → POST /fapi/v1/algoOrder
+                          ↓
+                    (Orphan position now has emergency stop attached)
 ```
 
 ---

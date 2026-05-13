@@ -112,9 +112,10 @@ public class PreTradeRiskChecker implements RiskManager {
             return RiskCheckResult.reject("Rate limit exceeded", "RATE_LIMIT_EXCEEDED");
         }
 
-        // Balance check - don't open new positions if balance too low
+        // Balance check - don't open new positions if balance too low or unknown
         // Exit orders (reduce-only) bypass this check
-        if (availableBalance > 0 && availableBalance < MIN_BALANCE_FOR_NEW_POSITION) {
+        // Conservative: if balance == 0 (not synced yet), assume insufficient
+        if (availableBalance < MIN_BALANCE_FOR_NEW_POSITION) {
             // Only block new positions (non-reduce-only orders)
             if (!order.isReduceOnly()) {
                 dailyRejects.incrementAndGet();

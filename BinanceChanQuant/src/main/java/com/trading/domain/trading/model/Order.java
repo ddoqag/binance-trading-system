@@ -15,6 +15,9 @@ public class Order {
     private final double urgency;
 
     private double confidence = 0.0;
+    private double stopPrice = 0.0;  // For STOP orders
+    private boolean closePosition = false;  // For STOP orders - close entire position
+    private boolean reduceOnly = false;  // For STOP orders - only reduce/close position
     private long createTime;
     private OrderStatus status = OrderStatus.NEW;
 
@@ -43,15 +46,21 @@ public class Order {
     public double getUrgency() { return urgency; }
     public double getConfidence() { return confidence; }
     public void setConfidence(double confidence) { this.confidence = confidence; }
+    public double getStopPrice() { return stopPrice; }
+    public void setStopPrice(double stopPrice) { this.stopPrice = stopPrice; }
+    public boolean isClosePosition() { return closePosition; }
+    public void setClosePosition(boolean closePosition) { this.closePosition = closePosition; }
+    public boolean isReduceOnly() { return reduceOnly; }
+    public void setReduceOnly(boolean reduceOnly) { this.reduceOnly = reduceOnly; }
     public long getCreateTime() { return createTime; }
     public OrderStatus getStatus() { return status; }
     public void setStatus(OrderStatus status) { this.status = status; }
 
     /**
-     * Check if this is a reduce-only / exit order
+     * Check if this is an exit order based on urgency
      * Exit orders should always be allowed even in KILL_SWITCH mode
      */
-    public boolean isReduceOnly() {
+    public boolean isExitOrder() {
         // Orders with MAX_urgency (1.0) are exit orders created by PositionLifecycleManager
         return urgency >= 1.0 && quantity > 0;
     }
