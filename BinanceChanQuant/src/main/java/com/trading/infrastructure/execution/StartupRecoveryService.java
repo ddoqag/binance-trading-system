@@ -46,7 +46,11 @@ public class StartupRecoveryService {
     private final TradingGuard tradingGuard;
 
     // Reconciliation interval (scheduleWithFixedDelay prevents task stacking on REST timeouts)
-    private static final long RECONCILE_INTERVAL_MS = 30_000; // 30 seconds delay BETWEEN runs
+    private static final long RECONCILE_INTERVAL_MS = 5 * 60_000; // 5 minutes (was 30s - too frequent)
+
+    // Bounded snapshot retry
+    private static final int MAX_SNAPSHOT_RETRY = 3;
+    private static final long SNAPSHOT_RETRY_DELAY_MS = 100;
 
     // Emergency stop distance (conservative - wider than strategy stop for survival layer)
     private static final double EMERGENCY_STOP_DISTANCE_PCT = 0.02; // 2% from current price
@@ -54,6 +58,11 @@ public class StartupRecoveryService {
     // Running flag
     private volatile boolean running = false;
     private ScheduledExecutorService reconcileScheduler;
+
+    // Escalation decay: reset mismatch count after 30min quiet
+    private volatile long lastMismatchTime = 0;
+    private volatile int mismatchCount = 0;
+    private static final long MISMATCH_DECAY_MS = 30 * 60 * 1000;
 
     public StartupRecoveryService(BinanceExchangeAdapter exchangeAdapter,
                                   ProtectionOrderManager protectionManager,
@@ -74,7 +83,7 @@ public class StartupRecoveryService {
         tradingGuard.enterSafeMode("STARTUP_RECOVERY");
 
         try {
-            // Step 2: Snapshot exchange positions
+            // Step 2: Snapshot exchange positions with bounded retry
             PositionSnapshot snapshot = snapshotExchangePositions();
 
             // Step 3: Check for orphan positions
@@ -86,41 +95,83 @@ public class StartupRecoveryService {
             log.info("[Recovery] Recovery complete: {} positions, {} open orders",
                     snapshot.positions.size(), snapshot.openOrders.size());
 
+            // Decay mismatch count on successful recovery
+            onSuccessfulRecovery();
+
         } catch (Exception e) {
             log.error("[Recovery] Recovery failed: {}", e.getMessage(), e);
             // Exit safe mode even on failure - don't stay stuck
             tradingGuard.exitSafeMode();
+
+            // Escalate on failure
+            onConsistencyMismatch("Recovery failed: " + e.getMessage());
         }
     }
 
     /**
-     * Snapshot current exchange state
+     * Snapshot current exchange state with bounded retry.
+     * Retries up to MAX_SNAPSHOT_RETRY times if snapshot appears unstable.
      */
     private PositionSnapshot snapshotExchangePositions() {
+        PositionSnapshot snapshot1 = null;
+        PositionSnapshot snapshot2 = null;
+        PositionSnapshot snapshot3 = null;
+
+        for (int i = 0; i < MAX_SNAPSHOT_RETRY; i++) {
+            try {
+                snapshot1 = doSnapshot();
+                Thread.sleep(SNAPSHOT_RETRY_DELAY_MS);
+                snapshot2 = doSnapshot();
+                Thread.sleep(SNAPSHOT_RETRY_DELAY_MS);
+                snapshot3 = doSnapshot();
+
+                if (stable(snapshot1, snapshot3)) {
+                    log.info("[Recovery] Snapshot stable after {} attempts", i + 1);
+                    return merge(snapshot1, snapshot2);
+                }
+
+                log.warn("[Recovery] Snapshot unstable, retry {}/{}", i + 1, MAX_SNAPSHOT_RETRY);
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                log.error("[Recovery] Snapshot attempt {} failed: {}", i + 1, e.getMessage());
+            }
+        }
+
+        // Fallback: return last snapshot even if unstable
+        if (snapshot3 != null) {
+            log.warn("[Recovery] Using unstable snapshot after {} retries", MAX_SNAPSHOT_RETRY);
+            return merge(snapshot3, snapshot3);
+        }
+        if (snapshot2 != null) {
+            return merge(snapshot2, snapshot2);
+        }
+        if (snapshot1 != null) {
+            return snapshot1;
+        }
+
+        // Last resort: empty snapshot
+        return new PositionSnapshot();
+    }
+
+    private PositionSnapshot doSnapshot() {
         PositionSnapshot snapshot = new PositionSnapshot();
 
         try {
-            // Query positions from exchange
             BinanceExchangeAdapter.PositionInfo[] positions = exchangeAdapter.getPositions();
             if (positions != null) {
                 for (BinanceExchangeAdapter.PositionInfo pos : positions) {
                     if (Math.abs(pos.size) > 0.0001) {
                         snapshot.positions.add(pos);
-                        String direction = pos.size > 0 ? "LONG" : "SHORT";
-                        log.info("[Recovery] Exchange position: {} {} contracts @ entry={} (unrealizedPnl={})",
-                                direction, Math.abs(pos.size), pos.entryPrice, pos.unrealizedPnl);
                     }
                 }
             }
 
-            // Query open orders from exchange
             List<Order> openOrders = exchangeAdapter.queryOpenOrders();
             if (openOrders != null) {
                 snapshot.openOrders.addAll(openOrders);
-                for (Order order : openOrders) {
-                    log.info("[Recovery] Open order: {} {} {} @ {}",
-                            order.getSide(), order.getQuantity(), order.getOrderType(), order.getPrice());
-                }
             }
 
         } catch (Exception e) {
@@ -128,6 +179,62 @@ public class StartupRecoveryService {
         }
 
         return snapshot;
+    }
+
+    // ========== Escalation Decay ==========
+
+    private void onSuccessfulRecovery() {
+        long now = System.currentTimeMillis();
+        if (now - lastMismatchTime > MISMATCH_DECAY_MS) {
+            mismatchCount = 0;
+            log.debug("[Recovery] Mismatch count decayed to 0");
+        }
+    }
+
+    private void onConsistencyMismatch(String reason) {
+        long now = System.currentTimeMillis();
+        if (now - lastMismatchTime > MISMATCH_DECAY_MS) {
+            mismatchCount = 0;
+        }
+        lastMismatchTime = now;
+        mismatchCount++;
+
+        log.warn("[Recovery] Consistency mismatch #{}: {}", mismatchCount, reason);
+
+        // Escalation levels based on consecutive mismatches
+        if (mismatchCount >= 5) {
+            log.error("[Recovery] Too many mismatches ({}) - entering DEGRADED mode", mismatchCount);
+            tradingGuard.setTradingState(
+                com.trading.infrastructure.execution.state.StateStore.TradingState.DEGRADED);
+        }
+    }
+
+    private boolean stable(PositionSnapshot s1, PositionSnapshot s2) {
+        if (s1.positions.size() != s2.positions.size()) {
+            return false;
+        }
+        if (s1.openOrders.size() != s2.openOrders.size()) {
+            return false;
+        }
+        // Compare position sizes (allow small float tolerance)
+        for (int i = 0; i < s1.positions.size(); i++) {
+            BinanceExchangeAdapter.PositionInfo p1 = s1.positions.get(i);
+            BinanceExchangeAdapter.PositionInfo p2 = s2.positions.get(i);
+            if (!p1.symbol.equals(p2.symbol)) {
+                return false;
+            }
+            if (Math.abs(p1.size - p2.size) > 0.0001) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private PositionSnapshot merge(PositionSnapshot positions, PositionSnapshot orders) {
+        PositionSnapshot merged = new PositionSnapshot();
+        merged.positions.addAll(positions.positions);
+        merged.openOrders.addAll(orders.openOrders);
+        return merged;
     }
 
     /**

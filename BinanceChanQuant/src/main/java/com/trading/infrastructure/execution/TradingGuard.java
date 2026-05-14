@@ -1,18 +1,21 @@
 package com.trading.infrastructure.execution;
 
+import com.trading.domain.trading.model.OrderIntent;
+import com.trading.infrastructure.execution.state.StateStore;
+import com.trading.infrastructure.execution.state.StateStore.TradingState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 
 /**
- * TradingGuard - 交易熔断保护器
+ * TradingGuard - Trading circuit breaker with intent draining support.
  *
- * <p>Simple global trading guard that disables new position entries during
- * critical operations like startup recovery, orphan position detection, etc.
- *
- * <p>This is NOT a state machine - just a simple AtomicBoolean guard.
- * Using simple boolean to avoid over-engineering at P0 stage.
+ * <p>Integrates with StateStore for TradingState awareness.
+ * Replaces simple AtomicBoolean with state machine for production.
  *
  * <p>Usage:
  * <pre>
@@ -25,70 +28,187 @@ public class TradingGuard {
 
     private static final Logger log = LoggerFactory.getLogger(TradingGuard.class);
 
-    private final AtomicBoolean tradingDisabled = new AtomicBoolean(false);
-    private final AtomicBoolean safeMode = new AtomicBoolean(false);
+    // Reference to StateStore (optional - can work standalone)
+    private final StateStore stateStore;
 
-    private volatile String disableReason = "";
-    private volatile long disableTimestamp = 0;
+    // Pending intents for draining
+    private final List<PendingIntent> pendingIntents = new CopyOnWriteArrayList<>();
+
+    // Callbacks
+    private volatile Consumer<PendingIntent> onIntentDrain;
+
+    public TradingGuard() {
+        this(null);
+    }
+
+    public TradingGuard(StateStore stateStore) {
+        this.stateStore = stateStore;
+    }
+
+    // ========== State Store Integration ==========
 
     /**
-     * Enter safe mode - disables all new position entries
+     * Check if trading is allowed based on StateStore TradingState.
+     */
+    public boolean canTrade() {
+        if (stateStore != null) {
+            return stateStore.canTrade();
+        }
+        // Fallback: check if in NORMAL state
+        return true;
+    }
+
+    /**
+     * Get current trading state.
+     */
+    public TradingState getTradingState() {
+        if (stateStore != null) {
+            return stateStore.getTradingState();
+        }
+        return TradingState.NORMAL;
+    }
+
+    /**
+     * Transition to a new trading state.
+     */
+    public void setTradingState(TradingState newState) {
+        if (stateStore != null) {
+            stateStore.setTradingState(newState);
+            log.info("[TradingGuard] State → {}", newState);
+        }
+    }
+
+    // ========== Backward Compatibility (for gradual migration) ==========
+
+    /**
+     * Enter safe mode - disables all new position entries (legacy method).
+     * Maps to SAFE_MODE state.
      */
     public void enterSafeMode(String reason) {
-        tradingDisabled.set(true);
-        safeMode.set(true);
-        disableReason = reason;
-        disableTimestamp = System.currentTimeMillis();
+        setTradingState(TradingState.SAFE_MODE);
         log.warn("[TradingGuard] SAFE_MODE ENTERED: {}", reason);
     }
 
     /**
-     * Exit safe mode - re-enables trading
+     * Exit safe mode - re-enables trading (legacy method).
+     * Maps to NORMAL state.
      */
     public void exitSafeMode() {
-        if (tradingDisabled.compareAndSet(true, false)) {
-            long duration = System.currentTimeMillis() - disableTimestamp;
-            log.info("[TradingGuard] SAFE_MODE EXITED: was disabled for {}ms - {}",
-                    duration, disableReason);
-            safeMode.set(false);
+        setTradingState(TradingState.NORMAL);
+        log.info("[TradingGuard] SAFE_MODE EXITED");
+    }
+
+    // ========== Intent Draining ==========
+
+    /**
+     * Add pending intent for tracking/draining.
+     */
+    public void addPendingIntent(PendingIntent intent) {
+        pendingIntents.add(intent);
+        log.debug("[TradingGuard] Intent added: {} ({} pending)", intent.orderId, pendingIntents.size());
+    }
+
+    /**
+     * Remove pending intent (cancelled/filled).
+     */
+    public void removePendingIntent(String orderId) {
+        pendingIntents.removeIf(i -> i.orderId.equals(orderId));
+        log.debug("[TradingGuard] Intent removed: {} ({} remaining)", orderId, pendingIntents.size());
+    }
+
+    /**
+     * Get pending intents count.
+     */
+    public int getPendingCount() {
+        return pendingIntents.size();
+    }
+
+    /**
+     * Drain all pending intents with idempotency check.
+     * Only cancels orders that are still in NEW/PARTIALLY_FILLED state.
+     *
+     * @param checker order status checker (queries exchange)
+     */
+    public void drainPendingIntents(OrderStatusChecker checker) {
+        if (pendingIntents.isEmpty()) {
+            return;
+        }
+
+        log.info("[TradingGuard] Draining {} pending intents", pendingIntents.size());
+
+        List<PendingIntent> toRemove = new ArrayList<>();
+
+        for (PendingIntent intent : pendingIntents) {
+            try {
+                long binanceId = 0;
+                try {
+                    binanceId = Long.parseLong(intent.binanceOrderId);
+                } catch (NumberFormatException ignored) {}
+                OrderStatusResult status = checker.check(intent.orderId, binanceId);
+
+                switch (status) {
+                    case NEW:
+                    case PARTIALLY_FILLED:
+                        // Safe to cancel
+                        log.info("[TradingGuard] Cancelling pending: {} ({})", intent.orderId, status);
+                        intent.cancelAction.run();
+                        toRemove.add(intent);
+                        break;
+
+                    case FILLED:
+                    case CANCELLED:
+                    case REJECTED:
+                        // Already terminal, just remove
+                        log.info("[TradingGuard] Intent {} already terminal: {}", intent.orderId, status);
+                        toRemove.add(intent);
+                        break;
+
+                    case UNKNOWN:
+                        // Cannot verify, keep for next drain cycle
+                        log.warn("[TradingGuard] Intent {} status unknown, keeping", intent.orderId);
+                        break;
+                }
+            } catch (Exception e) {
+                log.error("[TradingGuard] Error checking intent {}: {}", intent.orderId, e.getMessage());
+            }
+        }
+
+        pendingIntents.removeAll(toRemove);
+    }
+
+    public void setOnIntentDrain(Consumer<PendingIntent> callback) {
+        this.onIntentDrain = callback;
+    }
+
+    // ========== Pending Intent Record ==========
+
+    public static final class PendingIntent {
+        public final String orderId;
+        public final String binanceOrderId;
+        public final String symbol;
+        public final OrderIntent intent;
+        public final long createTime;
+        public final Runnable cancelAction;
+
+        public PendingIntent(String orderId, String binanceOrderId, String symbol,
+                            OrderIntent intent, Runnable cancelAction) {
+            this.orderId = orderId;
+            this.binanceOrderId = binanceOrderId;
+            this.symbol = symbol;
+            this.intent = intent;
+            this.createTime = System.currentTimeMillis();
+            this.cancelAction = cancelAction;
         }
     }
 
-    /**
-     * Check if trading is allowed
-     */
-    public boolean canTrade() {
-        return !tradingDisabled.get();
+    // ========== Order Status Check ==========
+
+    public enum OrderStatusResult {
+        NEW, PARTIALLY_FILLED, FILLED, CANCELLED, REJECTED, UNKNOWN
     }
 
-    /**
-     * Check if in safe mode
-     */
-    public boolean isSafeMode() {
-        return safeMode.get();
-    }
-
-    /**
-     * Check if trading is currently disabled
-     */
-    public boolean isDisabled() {
-        return tradingDisabled.get();
-    }
-
-    /**
-     * Get current disable reason
-     */
-    public String getDisableReason() {
-        return disableReason;
-    }
-
-    /**
-     * Get duration since trading was disabled (ms)
-     */
-    public long getDisableDurationMs() {
-        if (disableTimestamp == 0) {
-            return 0;
-        }
-        return System.currentTimeMillis() - disableTimestamp;
+    @FunctionalInterface
+    public interface OrderStatusChecker {
+        OrderStatusResult check(String clientOrderId, long binanceOrderId);
     }
 }

@@ -10,10 +10,13 @@ import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
 import java.net.Proxy;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -80,6 +83,16 @@ public class UserDataWebSocketClient {
     private Proxy proxy;
     private int connectTimeoutMs = 20000;
     private int readTimeoutMs = 30000;
+
+    // ========== Epoch Fencing + Event Buffering ==========
+    // Epoch increments on each reconnect to fence late packets
+    private final AtomicLong currentEpoch = new AtomicLong(0);
+    // Event buffer during RECONNECT_SYNC state
+    private final Queue<WSEvent> reconnectBuffer = new ConcurrentLinkedQueue<>();
+    // True when buffering events (during reconnect)
+    private volatile boolean buffering = false;
+    // Callback when snapshot is complete (for replaying buffered events)
+    private Runnable onSnapshotComplete;
 
     public enum ConnectionState {
         DISCONNECTED,
@@ -194,6 +207,45 @@ public class UserDataWebSocketClient {
         this.onStateChange = callback;
     }
 
+    public void setOnSnapshotComplete(Runnable callback) {
+        this.onSnapshotComplete = callback;
+    }
+
+    /**
+     * Get current epoch for fencing.
+     */
+    public long getCurrentEpoch() {
+        return currentEpoch.get();
+    }
+
+    /**
+     * Called by recovery service after snapshot is applied.
+     * Stops buffering and replays buffered events.
+     */
+    public void onSnapshotApplied() {
+        buffering = false;
+
+        log.info("[UserDataWS] Replaying {} buffered events", reconnectBuffer.size());
+
+        WSEvent evt;
+        while ((evt = reconnectBuffer.poll()) != null) {
+            try {
+                JsonNode node = objectMapper.readTree(evt.data);
+                if (evt.type == WSEvent.Type.ORDER_UPDATE) {
+                    handleOrderTradeUpdate(node);
+                } else if (evt.type == WSEvent.Type.ACCOUNT_UPDATE) {
+                    handleAccountUpdate(node);
+                }
+            } catch (Exception e) {
+                log.error("[UserDataWS] Replay error for event {}: {}", evt.type, e.getMessage());
+            }
+        }
+
+        if (onSnapshotComplete != null) {
+            onSnapshotComplete.run();
+        }
+    }
+
     // ========== 连接管理 ==========
 
     private void connectPrimary() {
@@ -252,11 +304,14 @@ public class UserDataWebSocketClient {
         return new WebSocketListener() {
             @Override
             public void onOpen(WebSocket webSocket, Response response) {
-                log.info("[UserDataWS] {} connected", isPrimary ? "Primary" : "Secondary");
+                log.info("[UserDataWS] {} connected (epoch={})", isPrimary ? "Primary" : "Secondary", currentEpoch.get());
                 reconnectAttempts.set(0);
                 currentReconnectDelay = INITIAL_RECONNECT_DELAY_MS;
 
                 if (isPrimary) {
+                    // Increment epoch on primary reconnect
+                    currentEpoch.incrementAndGet();
+                    buffering = true; // Start buffering until snapshot arrives
                     connectionState.set(ConnectionState.PRIMARY_ACTIVE);
                     fireStateChange("PRIMARY_ACTIVE");
                     // 启动 Secondary 作为备用
@@ -385,6 +440,13 @@ public class UserDataWebSocketClient {
 
             if (node.has("e")) {
                 String eventType = node.get("e").asText();
+                long eventEpoch = node.has("E") ? node.get("E").asLong() : 0;
+
+                // Epoch fencing: discard events from old epoch
+                if (eventEpoch > 0 && eventEpoch < currentEpoch.get()) {
+                    log.debug("[UserDataWS] Discarding late event: epoch={} < currentEpoch={}", eventEpoch, currentEpoch.get());
+                    return;
+                }
 
                 if ("ORDER_TRADE_UPDATE".equals(eventType)) {
                     handleOrderTradeUpdate(node);
@@ -422,6 +484,13 @@ public class UserDataWebSocketClient {
                 status, filledQty, avgFillPrice, transactTime
         );
 
+        // Buffer event during reconnect (will be replayed after snapshot)
+        if (buffering) {
+            reconnectBuffer.add(new WSEvent(WSEvent.Type.ORDER_UPDATE, transactTime, node.toString()));
+            log.debug("[UserDataWS] Buffered ORDER_UPDATE: {} {} qty={}", clientOrderId, symbol, filledQty);
+            return;
+        }
+
         // 更新 PositionCache
         if (positionCache != null && filledQty > 0) {
             PositionCache.PositionUpdate update = new PositionCache.PositionUpdate(
@@ -443,6 +512,15 @@ public class UserDataWebSocketClient {
         JsonNode a = node.get("a");
 
         if (a == null) return;
+
+        long transactTime = a.has("E") ? a.get("E").asLong() : System.currentTimeMillis();
+
+        // Buffer event during reconnect (will be replayed after snapshot)
+        if (buffering) {
+            reconnectBuffer.add(new WSEvent(WSEvent.Type.ACCOUNT_UPDATE, transactTime, node.toString()));
+            log.debug("[UserDataWS] Buffered ACCOUNT_UPDATE");
+            return;
+        }
 
         double walletBalance = 0;
         double totalMargin = 0;
@@ -506,6 +584,22 @@ public class UserDataWebSocketClient {
     }
 
     // ========== 事件类 ==========
+
+    /**
+     * Buffered WS event during reconnect.
+     */
+    static final class WSEvent {
+        enum Type { ORDER_UPDATE, ACCOUNT_UPDATE }
+        final Type type;
+        final long timestamp;
+        final String data; // JSON string for replay
+
+        WSEvent(Type type, long timestamp, String data) {
+            this.type = type;
+            this.timestamp = timestamp;
+            this.data = data;
+        }
+    }
 
     public static class OrderUpdateEvent {
         public final String symbol;

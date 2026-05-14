@@ -160,4 +160,37 @@ public class PositionState {
             0
         );
     }
+
+    // ========== Ownership DAG Cleanup ==========
+    // P1: When position closes, pending orders must be cancelled
+    // Protection remains on exchange (exchange-native) - just detach
+
+    /**
+     * Cleanup callback interface for cascade cleanup.
+     * Called when position enters terminal state.
+     */
+    @FunctionalInterface
+    public interface PositionCleanup {
+        void cleanup();
+    }
+
+    private static PositionCleanup cleanupHandler;
+
+    /**
+     * Register cleanup handler for position closure.
+     * Called with the orderId of the entry order.
+     */
+    public static void setCleanupHandler(PositionCleanup handler) {
+        PositionState.cleanupHandler = handler;
+    }
+
+    /**
+     * Trigger cascade cleanup on position close.
+     * Cancels pending entry order if exists.
+     */
+    public void triggerCleanup() {
+        if (cleanupHandler != null && !orderId.isEmpty()) {
+            cleanupHandler.cleanup();
+        }
+    }
 }
