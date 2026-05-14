@@ -156,9 +156,56 @@ mvn test -Dtest=PreTradeRiskCheckerTest
 - **Error Handling** - Handle errors explicitly at every level, never silently swallow
 - **Input Validation** - Validate at system boundaries, fail fast with clear messages
 
+### Alpha Temporal Dynamics Engine (Phase 2A-2C)
+
+**Architecture:** Immutable hypothesis + mutable runtime + independent analyzer
+
+**Core Components:**
+- `AlphaHypothesis` - Immutable "world view" at signal generation (alphaId, entryPrice, direction, TTL params)
+- `AlphaTrajectoryRuntime` - Mutable "worldline" tracking (MFE, MAE, realizedPnl, snapshots)
+- `AlphaTrajectoryTracker` - Service managing trajectory lifecycle, TTL enforcement, queries
+- `AlphaTrajectoryAnalyzer` - Computes temporal dynamics from closed trajectories
+- `TrajectoryMetrics` - Single trajectory computed metrics (half-life, MFE/MAE, decay rate)
+- `DecayAttribution` - Probabilistic cause attribution (replaces single-label DecayCause)
+- `PnlSnapshot` - Event-sampled trajectory point (REGIME_CHANGE, PNL_CROSSING_R, TIME_BUCKET, CLOSE)
+
+**Three-Layer Cognitive Structure:**
+```
+Layer 1: Event Layer        - FILLED, REJECTED, BLOCKED (what happened)
+Layer 2: Trajectory Layer   - MFE, MAE, half-life, decay (how market evolved)
+Layer 3: Observation Confidence - variance, P50/P90, reliability, decay attribution (should we believe conclusions)
+```
+
+**Key Metrics:**
+- Edge Half-Life: Time for edge to decay 50% (with stdDev, P50, P90 confidence intervals)
+- MFE/MAE Distribution: Path quality assessment (is the signal "tradeable"?)
+- Decay Regime Sensitivity: Half-life varies by market regime
+- `DecayAttribution`: Multi-factor probabilistic attribution (REGIME_SHIFT=0.6, VOLATILITY_EXPLOSION=0.3, ...)
+
+**Observation vs Control:**
+- Current: Observation Layer only (stable data required before control)
+- System learns market time structure, NOT strategy taxonomy
+- `hasReliableHalfLife()` - CV < 0.5 means usable for execution intelligence
+- `isStructuralDecay()` - distinguishes market structure change from natural alpha decay
+
+**DecayCause Classification:**
+```java
+NATURE_DECAY, REGIME_SHIFT, VOLATILITY_EXPLOSION, TREND_BREAK,
+STOP_HIT, TARGET_HIT, TIMEOUT, UNKNOWN
+```
+
+**Phase Status:**
+- Phase 2A (Alpha Time Dynamics Engine) ✅ Complete
+- Phase 2B (Edge Half-Life, MFE/MAE Distribution) ✅ Complete
+- Phase 2C (Observation Stabilization) ✅ Complete
+  - Variance/confidence intervals
+  - Decay cause classification
+  - DecayAttribution with entropy
+  - Recommends 2-4 week observation window before control layer
+
 ## Key Notes
 
-- **Paper trading:** `TradingSystemLauncher` defaults to paper mode; check `secret.isEmpty()`
+- **Paper trading:** `ChanWebSocketLauncher` defaults to paper mode
 - **Not thread-safe:** `TradeState.position` (static mutable singleton) — avoid concurrent access
 - **Shared memory path:** Must match between Java engine and Python integrator if used (default: `D:/binance/new/data/hft_trading_shm`)
 - **OFI:** Order Flow Imbalance — key signal computed by `OFICalculator`

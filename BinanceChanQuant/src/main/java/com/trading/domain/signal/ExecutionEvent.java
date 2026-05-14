@@ -20,8 +20,11 @@ public final class ExecutionEvent {
         SIGNAL_GENERATED("信号已生成"),
         SIGNAL_BLOCKED_BY_COOLDOWN("信号被冷却拦截"),
         SIGNAL_BLOCKED_BY_RISK("信号被风控拦截"),
+        SIGNAL_BLOCKED_BY_SIZE("信号被尺寸/容量拦截 (Hard Floor/MinNotional)"),
+        SIGNAL_BLOCKED_BY_TOXICITY("信号被市场毒性拦截"),
+        SIGNAL_BLOCKED_BY_LATENCY("信号因延迟超时被拦截"),
         SIGNAL_BLOCKED_BY_DIRECTION("信号被方向过滤器拦截"),
-        SIGNAL_ABSTAINED("信号主动弃权"),
+        SIGNAL_ABSTAINED("信号主动弃权 (AI vs Chan 冲突)"),
         SIGNAL_LOW_CONFIDENCE("信号置信度不足"),
 
         // ===== 订单级事件 =====
@@ -31,6 +34,11 @@ public final class ExecutionEvent {
         ORDER_FILLED("订单完全成交"),
         ORDER_CANCELLED("订单已取消"),
 
+        // ===== Shadow/理论盈亏事件 =====
+        SHADOW_TRACKED("信号进入Shadow Book跟踪"),
+        SHADOW_PROFITABLE("Shadow模拟盈利"),
+        SHADOW_LOSS("Shadow模拟亏损"),
+
         // ===== 盈亏反馈事件 =====
         SIGNAL_PROFITABLE("信号产生盈利"),
         SIGNAL_LOSS("信号产生亏损"),
@@ -38,6 +46,33 @@ public final class ExecutionEvent {
         // ===== 元学习事件 =====
         EXPERT_PARTICIPATION_UPDATED("专家参与度更新"),
         COOLDOWN_STATUS_UPDATED("冷却状态更新");
+
+        // 语义分类: 是否为阻塞事件
+        public boolean isBlocked() {
+            return this == SIGNAL_BLOCKED_BY_COOLDOWN
+                || this == SIGNAL_BLOCKED_BY_RISK
+                || this == SIGNAL_BLOCKED_BY_SIZE
+                || this == SIGNAL_BLOCKED_BY_TOXICITY
+                || this == SIGNAL_BLOCKED_BY_LATENCY
+                || this == SIGNAL_BLOCKED_BY_DIRECTION
+                || this == SIGNAL_ABSTAINED
+                || this == SIGNAL_LOW_CONFIDENCE;
+        }
+
+        // 语义分类: 是否为Shadow跟踪事件
+        public boolean isShadow() {
+            return this == SHADOW_TRACKED
+                || this == SHADOW_PROFITABLE
+                || this == SHADOW_LOSS;
+        }
+
+        // 语义分类: 是否为真实执行事件
+        public boolean isRealized() {
+            return this == ORDER_FILLED
+                || this == ORDER_PARTIALLY_FILLED
+                || this == SIGNAL_PROFITABLE
+                || this == SIGNAL_LOSS;
+        }
 
         private final String description;
 

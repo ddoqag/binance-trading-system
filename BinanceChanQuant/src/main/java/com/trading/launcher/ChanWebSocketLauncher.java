@@ -22,7 +22,10 @@ import com.trading.adapter.execution.ExecutionEngine;
 import com.trading.adapter.execution.BinanceExchangeAdapter;
 import com.trading.domain.market.model.MarketData;
 import com.trading.domain.market.model.MarketRegime;
+import com.trading.domain.market.RegimeCalculator;
 import com.trading.domain.signal.CompositeAlphaSignal;
+import com.trading.domain.signal.ExecutionEvent;
+import com.trading.domain.signal.ExecutionEvent.ExecutionEventType;
 import com.trading.domain.signal.MarketContext;
 import com.trading.domain.signal.VolatilityRegime;
 import com.trading.domain.signal.TrendStrength;
@@ -127,6 +130,11 @@ public class ChanWebSocketLauncher {
 
     // Market context for signal generation
     private MarketContext lastMarketContext;
+
+    // Cached equity for position sizing (synced periodically, not every tick)
+    private volatile double cachedEquity = 0.0;
+    private long lastEquitySyncTime = 0;
+    private static final long EQUITY_SYNC_INTERVAL_MS = 60000; // Sync balance every 60s
 
     // 5-minute K-line tracking for faster stop detection
     private final java.util.concurrent.ConcurrentLinkedQueue<ChanKLineProcessor.KLine> kline5mQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
@@ -373,11 +381,13 @@ public class ChanWebSocketLauncher {
                     double qty = Math.abs(event.newPosition);
                     double price = lastMarketContext.getCurrentPrice();
                     String orderId = "entry-" + System.currentTimeMillis();
-                    double equity = 10.0; // Approximate equity
+                    // Use cached equity (synced every 60s) instead of hardcoded 10.0
+                    double equity = cachedEquity > 0 ? cachedEquity : exchangeAdapter.syncBalanceFromExchange();
                     PositionState posWithRisk = positionSignalManager.createPositionFromEntry(
                         event.newPosition, price, orderId, equity, lastMarketContext);
                     positionSignalManager.updatePosition(posWithRisk);
-                    log.info("[Launcher] Position opened with RiskModel: qty={} price={}", qty, price);
+                    log.info("[Launcher] Position opened with RiskModel: qty={} price={} equity={}",
+                        qty, price, String.format("%.4f", equity));
                 } else if (event.wasClosed) {
                     // Position closed - reset to empty
                     positionSignalManager.updatePosition(PositionState.empty());
@@ -854,7 +864,7 @@ public class ChanWebSocketLauncher {
 
         // Process through Chan strategy
         MarketData marketData = createMarketData(close);
-        MarketRegime regime = determineRegime();
+        MarketRegime regime = RegimeCalculator.calculate(chanProcessor.getCurrentContext());
         chanExecutor.processShadow(marketData, regime);
 
         // Generate AlphaPool signals with real data
@@ -869,7 +879,7 @@ public class ChanWebSocketLauncher {
 
             // Debug first few contexts
             if (kc <= 3) {
-                log.trace("Context: price={} regime={} atr={}", close, regime, context.getAtr());
+                log.trace("Context: price={} regime={} atr={}", close, context.getRegime(), context.getAtr());
             }
 
             // Generate composite signal
@@ -990,6 +1000,11 @@ public class ChanWebSocketLauncher {
     }
 
     private MarketContext buildMarketContext(double price, MarketRegime regime) {
+        // Regime computed from KlineContext via RegimeCalculator (Single Source of Truth)
+        // The passed regime parameter is ignored - we recompute from Chan components
+        ChanKLineProcessor.KlineContext klineCtx = chanProcessor.getCurrentContext();
+        MarketRegime computedRegime = RegimeCalculator.calculate(klineCtx);
+
         // Calculate ATR from recent K-lines
         double atr = calculateATR();
         double atrPercent = price > 0 ? atr / price : 0.01;
@@ -1006,14 +1021,14 @@ public class ChanWebSocketLauncher {
 
         // Determine trend strength
         TrendStrength trendStrength = TrendStrength.NONE;
-        if (regime == MarketRegime.TREND_UP || regime == MarketRegime.TREND_DOWN) {
+        if (computedRegime == MarketRegime.TREND_UP || computedRegime == MarketRegime.TREND_DOWN) {
             trendStrength = TrendStrength.MODERATE;
         }
 
         MarketData data = createMarketData(price);
 
         return MarketContext.builder()
-            .regime(regime)
+            .regime(computedRegime)
             .volatilityRegime(volRegime)
             .trendStrength(trendStrength)
             .currentPrice(price)
@@ -1103,7 +1118,7 @@ public class ChanWebSocketLauncher {
 
             // Process through AlphaPool
             MarketData marketData = createMarketData(close);
-            MarketRegime regime = determineRegime();
+            MarketRegime regime = RegimeCalculator.calculate(chanProcessor.getCurrentContext());
             chanExecutor.processShadow(marketData, regime);
 
             if (alphaPool != null && alphaPool.getExpertCount() > 0) {
@@ -1159,6 +1174,25 @@ public class ChanWebSocketLauncher {
         // Dynamic quantity based on ATR, confidence, and urgency
         double quantity = calculateDynamicQuantity(signal, lastMarketContext);
 
+        // P0: Hard Floor abandonment - emit SIZE_BLOCKED event for learning semantics
+        if (quantity <= 0) {
+            // Signal was blocked by capacity/sizing constraints, not a signal quality issue
+            ExecutionEvent blockedEvent = ExecutionEvent.builder()
+                .correlationId(signal.getAlphaId())
+                .expertId(signal.getSource())
+                .type(ExecutionEventType.SIGNAL_BLOCKED_BY_SIZE)
+                .symbol(SYMBOL)
+                .direction(signal.getDirection())
+                .putMeta("reason", "HardFloor_minNotional")
+                .putMeta("confidence", signal.getConfidence())
+                .putMeta("entryPrice", signal.getEntryPrice())
+                .build();
+            alphaPool.onExecutionEvent(blockedEvent);
+            log.info("[Launcher] SIZE_BLOCKED: {} conf={} price={} - not a signal failure",
+                signal.getDirection(), signal.getConfidence(), signal.getEntryPrice());
+            return;
+        }
+
         Order order = new Order(
             "ws-" + System.currentTimeMillis(),
             SYMBOL,
@@ -1184,6 +1218,7 @@ public class ChanWebSocketLauncher {
      * High volatility → smaller position
      * High confidence → larger position
      * High urgency → larger position
+     * Hard Floor: Ensures Binance exchange compliance (minQty, minNotional, stepSize)
      */
     private double calculateDynamicQuantity(CompositeAlphaSignal signal, MarketContext context) {
         double baseQty = 0.001;  // Base: 0.001 BTC
@@ -1198,112 +1233,90 @@ public class ChanWebSocketLauncher {
         // Urgency factor: 1.0-1.5
         double urgencyFactor = 1.0 + signal.getUrgency() * 0.5;
 
-        double qty = baseQty * confidenceFactor * atrFactor * urgencyFactor;
+        double rawQty = baseQty * confidenceFactor * atrFactor * urgencyFactor;
 
         // Risk check: don't exceed risk-based limit
         double maxQty = riskChecker.getDynamicPositionLimit() * 0.1;  // 10% of limit
         double equityLimit = 0.002;  // Max 0.002 BTC (~2% of $80 equity at $40k)
 
-        qty = Math.max(0.0001, Math.min(Math.min(qty, maxQty), equityLimit));
+        rawQty = Math.max(0.0001, Math.min(Math.min(rawQty, maxQty), equityLimit));
 
-        // Format to 3 decimal places for Binance precision
-        qty = Math.floor(qty * 1000) / 1000.0;
+        // Apply Hard Floor and stepSize rounding via QuantityCalculator
+        double currentPrice = (context != null) ? context.getCurrentPrice() : lastPrice;
+        double safeQty = com.trading.util.QuantityCalculator.calculateSafeQuantity(
+            rawQty, currentPrice, signal.getConfidence());
 
         if (lastMarketContext != null && lastMarketContext.getAtr() > 0) {
-            log.trace("[Launcher] QTY: conf=%.2f atrFactor=%.2f urgency=%.2f → qty=%.4f",
-                signal.getConfidence(), atrFactor, signal.getUrgency(), qty);
+            log.trace("[Launcher] QTY: raw={:.4f} conf={:.2f} atrFactor={:.2f} urgency={:.2f} → safe={:.4f}",
+                rawQty, signal.getConfidence(), atrFactor, signal.getUrgency(), safeQty);
         }
-        return qty;
+        return safeQty;
     }
 
     /**
      * Check position lifecycle and generate exit orders if needed
+     *
+     * Unified flow: PositionSignalManager -> LifecycleManager (no redundant AlphaPool calls)
+     * 5-minute fast stop also routes through PositionSignalManager to ensure RiskChecker coverage
      */
     private void checkPositionLifecycle(MarketContext context) {
         try {
-            // Get current position state from exchange adapter
-            if (this.exchangeAdapter == null) {
-                this.exchangeAdapter = executionEngine.getExchangeAdapter();
-            }
-            if (this.exchangeAdapter == null) {
-                log.warn("[Launcher] LIFECYCLE: no exchange adapter");
+            if (positionSignalManager == null) {
+                log.warn("[Launcher] LIFECYCLE: no positionSignalManager");
                 return;
             }
 
-            PositionState posState = this.exchangeAdapter.getPositionState();
-            log.debug("[Launcher] LIFECYCLE: posState hasPosition={}, qty=%.4f",
-                posState.hasPosition(), posState.getQuantity());
-            positionSignalManager.updatePosition(posState);
-
+            PositionState posState = positionSignalManager.getPosition();
             if (!posState.hasPosition()) {
                 log.trace("[Launcher] LIFECYCLE: no position to manage");
-                return; // No position to manage
+                return;
             }
 
-            // ========== P0: 5分钟支撑/阻力检查 (区间套快速止损) ==========
             double currentPrice = lastPrice;
             if (currentPrice <= 0 && context != null) {
                 currentPrice = context.getCurrentPrice();
             }
 
+            // ========== P0: 5分钟支撑/阻力检查 (区间套快速止损) ==========
+            // Route through PositionSignalManager to ensure RiskChecker coverage
             if (currentPrice > 0) {
+                boolean fastStopTriggered = false;
+                TradeIntent fastStopIntent = null;
+
                 if (posState.isLong() && lowerTimeframeSupport > 0 && currentPrice < lowerTimeframeSupport) {
-                    // Price跌破5min支撑，立即止损
                     log.warn("[Lifecycle][5m快速止损] LONG position: price=%.2f < 5min_support=%.2f",
                         currentPrice, lowerTimeframeSupport);
-                    // Create MARKET exit order directly
-                    Order exitOrder = new Order(
-                        "5m-stop-" + System.currentTimeMillis(),
-                        SYMBOL,
-                        TradeDirection.SHORT, // 平多
-                        OrderType.MARKET,
-                        Math.abs(posState.getQuantity()),
-                        currentPrice,
-                        "5m_stop",
-                        1.0
-                    );
-                    executionEngine.submitOrder(exitOrder);
-                    return;
-                }
-                if (posState.isShort() && lowerTimeframeResistance > 0 && currentPrice > lowerTimeframeResistance) {
-                    // Price突破5min阻力，立即止损
+                    fastStopIntent = TradeIntent.EXIT_LONG;
+                    fastStopTriggered = true;
+                } else if (posState.isShort() && lowerTimeframeResistance > 0 && currentPrice > lowerTimeframeResistance) {
                     log.warn("[Lifecycle][5m快速止损] SHORT position: price=%.2f > 5min_resistance=%.2f",
                         currentPrice, lowerTimeframeResistance);
-                    // Create MARKET exit order directly
-                    Order exitOrder = new Order(
-                        "5m-stop-" + System.currentTimeMillis(),
-                        SYMBOL,
-                        TradeDirection.LONG, // 平空
-                        OrderType.MARKET,
-                        Math.abs(posState.getQuantity()),
-                        currentPrice,
-                        "5m_stop",
-                        1.0
-                    );
-                    executionEngine.submitOrder(exitOrder);
+                    fastStopIntent = TradeIntent.EXIT_SHORT;
+                    fastStopTriggered = true;
+                }
+
+                if (fastStopTriggered) {
+                    Order exitOrder = positionSignalManager.createOrderFromIntent(
+                        fastStopIntent, context, "5m-stop-" + System.currentTimeMillis());
+                    if (exitOrder != null) {
+                        executionEngine.submitOrder(exitOrder);
+                        log.info("[Launcher] 5M FAST STOP ORDER: {} {} @ {}",
+                            fastStopIntent, exitOrder.getQuantity(), currentPrice);
+                    }
                     return;
                 }
             }
 
-            // Ask lifecycle manager for intent
-            double signalConfidence = 0.5; // Default confidence
-            TradeDirection signalDirection = null;
-            var signal = alphaPool.generateCompositeSignal(context);
-            if (signal != null) {
-                signalConfidence = signal.getConfidence();
-                signalDirection = signal.getDirection();
-            }
-
-            TradeIntent intent = lifecycleManager.determineIntent(posState, signalConfidence, context, signalDirection);
-            log.debug("[Launcher] LIFECYCLE: signalConf=%.2f, signalDir=%s, intent=%s",
-                signalConfidence, signalDirection, intent);
+            // ========== Standard lifecycle via PositionSignalManager (eliminates redundant AlphaPool call) ==========
+            // Uses cached signal from determineTradeIntent instead of re-calling AlphaPool
+            TradeIntent intent = positionSignalManager.determineTradeIntent(context);
 
             if (intent != TradeIntent.HOLD) {
                 log.info("[Launcher] LIFECYCLE: {} position, executing {}",
                     formatPosition(posState), intent);
 
-                // Create exit order
-                var exitOrder = positionSignalManager.createOrderFromIntent(intent, context, "lifecycle-" + System.currentTimeMillis());
+                Order exitOrder = positionSignalManager.createOrderFromIntent(
+                    intent, context, "lifecycle-" + System.currentTimeMillis());
                 if (exitOrder != null) {
                     executionEngine.submitOrder(exitOrder);
                     log.info("[Launcher] EXIT ORDER: {} {} @ {}",
@@ -1323,31 +1336,9 @@ public class ChanWebSocketLauncher {
     }
 
     private MarketRegime determineRegime() {
-        // Use Chan processor's context to determine regime
+        // Uses RegimeCalculator for Single Source of Truth consistency
         ChanKLineProcessor.KlineContext ctx = chanProcessor.getCurrentContext();
-
-        // If no zhongshu, check recent fenxing pattern
-        if (ctx == null || ctx.zhongshu == null) {
-            if (ctx != null && ctx.lastFenxing != null) {
-                if (ctx.lastFenxing.type == ChanKLineProcessor.Fenxing.Type.TOP) {
-                    return MarketRegime.TREND_DOWN;
-                } else {
-                    return MarketRegime.TREND_UP;
-                }
-            }
-            return MarketRegime.RANGE;
-        }
-
-        // If has zhongshu, check recent bi direction
-        if (ctx.lastBi != null) {
-            if (ctx.lastBi.direction == ChanKLineProcessor.Bi.Direction.UP) {
-                return MarketRegime.TREND_UP;
-            } else {
-                return MarketRegime.TREND_DOWN;
-            }
-        }
-
-        return MarketRegime.RANGE;
+        return RegimeCalculator.calculate(ctx);
     }
 
     private void mainLoop() throws InterruptedException {

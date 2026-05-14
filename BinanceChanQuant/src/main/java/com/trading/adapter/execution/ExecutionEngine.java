@@ -126,7 +126,7 @@ public class ExecutionEngine {
         this.orderProcessor = new ExecutionOrderProcessor(riskManager, exchangeAdapter,
                 orderRouter, algoEngine, orderQueue, cooldownManager,
                 this::publishEvent, (s, o) -> {});
-        this.reportProcessor = new ExecutionReporter(riskManager, exchangeAdapter, cooldownManager);
+        this.reportProcessor = new ExecutionReporter(riskManager, exchangeAdapter, cooldownManager, this::publishEvent);
         this.protectionManager = new ProtectionOrderManager(exchangeAdapter, paperTrading);
 
         // Initialize recovery service (P0 survival layer)

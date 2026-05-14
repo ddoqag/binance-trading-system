@@ -496,7 +496,11 @@ public class AlphaPool {
         private final AtomicInteger signalsGenerated = new AtomicInteger(0);
         private final AtomicInteger signalsBlockedByCooldown = new AtomicInteger(0);
         private final AtomicInteger signalsBlockedByRisk = new AtomicInteger(0);
+        private final AtomicInteger signalsBlockedBySize = new AtomicInteger(0);
+        private final AtomicInteger signalsBlockedByToxicity = new AtomicInteger(0);
+        private final AtomicInteger signalsBlockedByLatency = new AtomicInteger(0);
         private final AtomicInteger signalsAbstained = new AtomicInteger(0);
+        private final AtomicInteger signalsShadowTracked = new AtomicInteger(0);
         private final AtomicInteger signalsProfitable = new AtomicInteger(0);
         private final AtomicInteger signalsLoss = new AtomicInteger(0);
         private final long windowStartTime = System.currentTimeMillis();
@@ -505,29 +509,88 @@ public class AlphaPool {
         private volatile long lastCooldownBlockTime = 0;
         private static final long COOLDOWN_BLOCK_WINDOW_MS = 60_000; // 60 seconds sliding window
 
+        // P0: Theoretical vs Realized PnL separation
+        // This is the KEY semantic split: what SHOULD have happened vs what ACTUALLY happened
+        private double theoreticalPnl = 0.0;
+        private double realizedPnl = 0.0;
+
         public ExpertTelemetry(String expertId) {
             this.expertId = expertId;
         }
 
+        // ===== Blocked event recorders =====
         public void recordGenerated() { signalsGenerated.incrementAndGet(); }
         public void recordBlockedByCooldown() {
             signalsBlockedByCooldown.incrementAndGet();
             lastCooldownBlockTime = System.currentTimeMillis();
         }
         public void recordBlockedByRisk() { signalsBlockedByRisk.incrementAndGet(); }
+        public void recordBlockedBySize() { signalsBlockedBySize.incrementAndGet(); }
+        public void recordBlockedByToxicity() { signalsBlockedByToxicity.incrementAndGet(); }
+        public void recordBlockedByLatency() { signalsBlockedByLatency.incrementAndGet(); }
         public void recordAbstained() { signalsAbstained.incrementAndGet(); }
+        public void recordShadowTracked() { signalsShadowTracked.incrementAndGet(); }
         public void recordProfitable() { signalsProfitable.incrementAndGet(); }
         public void recordLoss() { signalsLoss.incrementAndGet(); }
 
+        // ===== P0: PnL tracking - THEORETICAL vs REALIZED =====
+        public void recordTheoreticalPnl(double pnl) { this.theoreticalPnl += pnl; }
+        public void recordRealizedPnl(double pnl) { this.realizedPnl += pnl; }
+
+        // ===== Getters =====
         public int getSignalsGenerated() { return signalsGenerated.get(); }
         public int getSignalsBlockedByCooldown() { return signalsBlockedByCooldown.get(); }
         public int getSignalsBlockedByRisk() { return signalsBlockedByRisk.get(); }
+        public int getSignalsBlockedBySize() { return signalsBlockedBySize.get(); }
+        public int getSignalsBlockedByToxicity() { return signalsBlockedByToxicity.get(); }
+        public int getSignalsBlockedByLatency() { return signalsBlockedByLatency.get(); }
         public int getSignalsAbstained() { return signalsAbstained.get(); }
+        public int getSignalsShadowTracked() { return signalsShadowTracked.get(); }
+        public double getTheoreticalPnl() { return theoreticalPnl; }
+        public double getRealizedPnl() { return realizedPnl; }
 
         // V6: Participation rate - signals generated / (generated + blocked)
+        // EXPANDED to include all block types
         public double getParticipationRate() {
-            int total = signalsGenerated.get() + signalsBlockedByCooldown.get() + signalsBlockedByRisk.get();
+            int total = signalsGenerated.get()
+                + signalsBlockedByCooldown.get()
+                + signalsBlockedByRisk.get()
+                + signalsBlockedBySize.get()
+                + signalsBlockedByToxicity.get()
+                + signalsBlockedByLatency.get();
             return total > 0 ? (double) signalsGenerated.get() / total : 1.0;
+        }
+
+        // P0: Alpha Quality = Theoretical PnL / Signals Generated
+        // Represents: "Did this expert's signals have merit, regardless of execution?"
+        public double getAlphaQuality() {
+            int total = signalsGenerated.get() + signalsShadowTracked.get();
+            return total > 0 ? theoreticalPnl / total : 0.0;
+        }
+
+        // P0: Execution Feasibility = Realized PnL / Theoretical PnL
+        // Represents: "What fraction of theoretical alpha was actually captured?"
+        // Low value = expert generates good signals but can't execute them (capacity issue)
+        public double getExecutionFeasibility() {
+            return Math.abs(theoreticalPnl) > 0.0001 ? realizedPnl / theoreticalPnl : 0.0;
+        }
+
+        // P0: Block rate breakdown - total blocked / (generated + blocked)
+        public double getBlockRate() {
+            int total = signalsGenerated.get()
+                + signalsBlockedByCooldown.get()
+                + signalsBlockedByRisk.get()
+                + signalsBlockedBySize.get()
+                + signalsBlockedByToxicity.get()
+                + signalsBlockedByLatency.get()
+                + signalsAbstained.get();
+            int blocked = signalsBlockedByCooldown.get()
+                + signalsBlockedByRisk.get()
+                + signalsBlockedBySize.get()
+                + signalsBlockedByToxicity.get()
+                + signalsBlockedByLatency.get()
+                + signalsAbstained.get();
+            return total > 0 ? (double) blocked / total : 0.0;
         }
 
         // P2 FIX: Has cooldown block within sliding window? Used for single-signal penalty exemption
@@ -547,6 +610,7 @@ public class AlphaPool {
 
     /**
      * V6: Handle execution event from ExecutionEngine
+     * Routes events to appropriate ExpertTelemetry buckets
      */
     public void onExecutionEvent(ExecutionEvent event) {
         if (event == null || event.expertId() == null) return;
@@ -554,24 +618,72 @@ public class AlphaPool {
         String expertId = event.expertId();
         ExpertTelemetry tel = expertTelemetry.computeIfAbsent(expertId, ExpertTelemetry::new);
 
+        // Extract PnL from metadata if present
+        double pnl = 0.0;
+        if (event.metadata() != null && event.metadata().containsKey("pnl")) {
+            Object pnlObj = event.metadata().get("pnl");
+            if (pnlObj instanceof Number) {
+                pnl = ((Number) pnlObj).doubleValue();
+            }
+        }
+
         switch (event.type()) {
+            // Signal generation
             case SIGNAL_GENERATED:
                 tel.recordGenerated();
                 break;
+            // Blocked events - separate by ROOT CAUSE (critical for learning semantics)
             case SIGNAL_BLOCKED_BY_COOLDOWN:
                 tel.recordBlockedByCooldown();
                 break;
             case SIGNAL_BLOCKED_BY_RISK:
                 tel.recordBlockedByRisk();
                 break;
+            case SIGNAL_BLOCKED_BY_SIZE:
+                tel.recordBlockedBySize();
+                // SIZE blocked signals still carry theoretical PnL - record it
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
+                break;
+            case SIGNAL_BLOCKED_BY_TOXICITY:
+                tel.recordBlockedByToxicity();
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
+                break;
+            case SIGNAL_BLOCKED_BY_LATENCY:
+                tel.recordBlockedByLatency();
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
+                break;
             case SIGNAL_ABSTAINED:
                 tel.recordAbstained();
+                // Abstained signals may still have theoretical value
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
                 break;
+            // Shadow tracking - THEORETICAL alpha (not yet realized)
+            case SHADOW_TRACKED:
+                tel.recordShadowTracked();
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
+                break;
+            case SHADOW_PROFITABLE:
+                tel.recordShadowTracked();
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
+                break;
+            case SHADOW_LOSS:
+                tel.recordShadowTracked();
+                if (pnl != 0.0) tel.recordTheoreticalPnl(pnl);
+                break;
+            // Realized PnL events
             case SIGNAL_PROFITABLE:
                 tel.recordProfitable();
+                if (pnl != 0.0) {
+                    tel.recordRealizedPnl(pnl);
+                    tel.recordTheoreticalPnl(pnl); // Also record as theoretical for comparison
+                }
                 break;
             case SIGNAL_LOSS:
                 tel.recordLoss();
+                if (pnl != 0.0) {
+                    tel.recordRealizedPnl(pnl);
+                    tel.recordTheoreticalPnl(pnl);
+                }
                 break;
             default:
                 // Other event types - ignore for telemetry

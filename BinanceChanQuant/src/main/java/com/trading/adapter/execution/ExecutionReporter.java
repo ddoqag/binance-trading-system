@@ -4,11 +4,14 @@ import com.trading.domain.trading.model.ExecutionReport;
 import com.trading.domain.trading.model.OrderStatus;
 import com.trading.domain.trading.model.TradeDirection;
 import com.trading.domain.trading.risk.RiskManager;
+import com.trading.domain.signal.ExecutionEvent;
+import com.trading.domain.signal.ExecutionEvent.ExecutionEventType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * ExecutionReporter - 成交回报处理
@@ -28,6 +31,9 @@ public class ExecutionReporter {
     private final BinanceExchangeAdapter exchangeAdapter;
     private final SignalCooldownManager cooldownManager;
 
+    // V6: Event publisher for closed-loop feedback
+    private final Consumer<ExecutionEvent> eventPublisher;
+
     // Statistics
     private final AtomicLong filledOrders = new AtomicLong(0);
 
@@ -36,18 +42,39 @@ public class ExecutionReporter {
 
     public ExecutionReporter(RiskManager riskManager, BinanceExchangeAdapter exchangeAdapter,
                             SignalCooldownManager cooldownManager) {
+        this(riskManager, exchangeAdapter, cooldownManager, null);
+    }
+
+    public ExecutionReporter(RiskManager riskManager, BinanceExchangeAdapter exchangeAdapter,
+                            SignalCooldownManager cooldownManager,
+                            Consumer<ExecutionEvent> eventPublisher) {
         this.riskManager = riskManager;
         this.exchangeAdapter = exchangeAdapter;
         this.cooldownManager = cooldownManager;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
      * Process execution report
      */
     public void processExecutionReport(ExecutionReport report) {
+        ExecutionEvent event = null;
+
         if (report.getStatus() == OrderStatus.FILLED) {
             filledOrders.incrementAndGet();
             handleFill(report);
+            event = buildFillEvent(report);
+        } else if (report.getStatus() == OrderStatus.PARTIALLY_FILLED) {
+            event = buildPartiallyFilledEvent(report);
+        } else if (report.getStatus() == OrderStatus.REJECTED) {
+            event = buildRejectedEvent(report);
+        } else if (report.getStatus() == OrderStatus.CANCELLED) {
+            event = buildCancelledEvent(report);
+        }
+
+        // Publish V6 execution event for closed-loop feedback
+        if (event != null && eventPublisher != null) {
+            eventPublisher.accept(event);
         }
 
         // Notify risk manager
@@ -56,10 +83,61 @@ public class ExecutionReporter {
         }
 
         // Log fill
-        log.info("[ExecutionReporter] Fill: {} {} {} @ {}", report.getOrderId(), report.getSide(), report.getFilledQuantity(), report.getAvgFillPrice());
+        if (report.getStatus() == OrderStatus.FILLED) {
+            log.info("[ExecutionReporter] Fill: {} {} {} @ {}", report.getOrderId(), report.getSide(), report.getFilledQuantity(), report.getAvgFillPrice());
+        }
 
         // Remove from active executions on completion
         removeOnCompletion(report);
+    }
+
+    private ExecutionEvent buildFillEvent(ExecutionReport report) {
+        return ExecutionEvent.builder()
+            .correlationId(report.getOrderId())
+            .expertId("execution")
+            .type(ExecutionEventType.ORDER_FILLED)
+            .symbol(report.getSymbol())
+            .direction(report.getSide())
+            .putMeta("filledQty", report.getFilledQuantity())
+            .putMeta("avgFillPrice", report.getAvgFillPrice())
+            .putMeta("orderId", report.getOrderId())
+            .build();
+    }
+
+    private ExecutionEvent buildPartiallyFilledEvent(ExecutionReport report) {
+        return ExecutionEvent.builder()
+            .correlationId(report.getOrderId())
+            .expertId("execution")
+            .type(ExecutionEventType.ORDER_PARTIALLY_FILLED)
+            .symbol(report.getSymbol())
+            .direction(report.getSide())
+            .putMeta("filledQty", report.getFilledQuantity())
+            .putMeta("avgFillPrice", report.getAvgFillPrice())
+            .putMeta("orderId", report.getOrderId())
+            .build();
+    }
+
+    private ExecutionEvent buildRejectedEvent(ExecutionReport report) {
+        return ExecutionEvent.builder()
+            .correlationId(report.getOrderId())
+            .expertId("execution")
+            .type(ExecutionEventType.ORDER_REJECTED_BY_EXCHANGE)
+            .symbol(report.getSymbol())
+            .direction(report.getSide())
+            .putMeta("rejectReason", report.getRejectReason())
+            .putMeta("orderId", report.getOrderId())
+            .build();
+    }
+
+    private ExecutionEvent buildCancelledEvent(ExecutionReport report) {
+        return ExecutionEvent.builder()
+            .correlationId(report.getOrderId())
+            .expertId("execution")
+            .type(ExecutionEventType.ORDER_CANCELLED)
+            .symbol(report.getSymbol())
+            .direction(report.getSide())
+            .putMeta("orderId", report.getOrderId())
+            .build();
     }
 
     private void handleFill(ExecutionReport report) {
