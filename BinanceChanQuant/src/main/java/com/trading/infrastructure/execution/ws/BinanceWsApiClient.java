@@ -54,6 +54,8 @@ public class BinanceWsApiClient {
 
     // Connection lifetime (24h max per Binance)
     private static final long CONNECTION_LIFETIME_MS = 23 * 60 * 60 * 1000; // 23h
+    private static final long MESSAGE_TIMEOUT_MS = 120_000; // 2min before warning
+    private long lastMessageWarningTime = 0; // Throttle warnings
 
     // Dependencies
     private final WsApiRequestBuilder requestBuilder;
@@ -335,9 +337,12 @@ public class BinanceWsApiClient {
             return;
         }
 
-        // Check message timeout
-        if (lastMessageTime > 0 && (now - lastMessageTime) > 60_000) {
-            log.warn("[WsApi] No messages for {}s, checking...", (now - lastMessageTime) / 1000);
+        // Check message timeout (throttled to every 60s)
+        if (lastMessageTime > 0 && (now - lastMessageTime) > MESSAGE_TIMEOUT_MS) {
+            if (now - lastMessageWarningTime > 60_000) {
+                log.warn("[WsApi] No messages for {}s, checking...", (now - lastMessageTime) / 1000);
+                lastMessageWarningTime = now;
+            }
             lastMessageTime = now;
         }
     }

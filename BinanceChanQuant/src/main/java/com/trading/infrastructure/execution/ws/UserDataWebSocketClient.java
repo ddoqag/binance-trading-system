@@ -50,6 +50,7 @@ public class UserDataWebSocketClient {
     private static final long MAX_RECONNECT_DELAY_MS = 30_000;
     private static final double BACKOFF_MULTIPLIER = 2.0;
     private static final int MAX_RECONNECT_ATTEMPTS = 10;
+    private static final long RECONNECT_JITTER_MS = 500; // Reduce thundering herd
 
     // The listenKey - created externally (e.g., by BinanceExchangeAdapter)
     private final String listenKey;
@@ -388,11 +389,15 @@ public class UserDataWebSocketClient {
 
         log.info("[UserDataWS] Scheduling reconnect attempt {} in {}ms", attempts, currentReconnectDelay);
 
+        // Add jitter to reduce thundering herd on reconnection storms
+        long jitter = (long) (Math.random() * RECONNECT_JITTER_MS);
+        long delayWithJitter = currentReconnectDelay + jitter;
+
         scheduler.schedule(() -> {
             if (running) {
                 connectPrimary();
             }
-        }, currentReconnectDelay, TimeUnit.MILLISECONDS);
+        }, delayWithJitter, TimeUnit.MILLISECONDS);
 
         // 指数退避
         currentReconnectDelay = Math.min(

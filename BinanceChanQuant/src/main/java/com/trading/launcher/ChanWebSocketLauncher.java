@@ -99,6 +99,7 @@ public class ChanWebSocketLauncher {
     private long lastMessageTime = 0;
     private long lastKlineTime = System.currentTimeMillis(); // Initialize to now - don't trigger immediate REST fallback
     private static final long MESSAGE_TIMEOUT_MS = 60000; // 60 seconds without message = likely disconnected
+    private static final long SILENT_WARNING_INTERVAL_MS = 30000; // Warn every 30s, not every second
     private int reconnectAttempts = 0;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private ScheduledFuture<?> heartbeatTask;
@@ -108,6 +109,7 @@ public class ChanWebSocketLauncher {
     private static final long KLINE_GAP_THRESHOLD_MS = 30000; // 30s gap = concerning
     private int messagesLastMinute = 0;
     private long messagesCheckTime = System.currentTimeMillis();
+    private long lastSilentWarningTime = 0; // Throttle silent warnings
 
     // AlphaPool and experts
     private AlphaPool alphaPool;
@@ -1358,30 +1360,30 @@ public class ChanWebSocketLauncher {
         // Track last kline timestamp to avoid duplicate processing
         final long[] lastKlineTimestamp = {0};
 
-        // REST polling as FALLBACK only - when WebSocket hasn't received data for >20s
-        // REST polling as backup when kline stream is inactive
+        // REST polling as FALLBACK only - when WebSocket hasn't received data for >60s
+        // Primary source is WebSocket K-line stream; REST is backup
         scheduler.scheduleAtFixedRate(() -> {
             if (!running.get()) return;
 
             try {
-                // Always poll REST as backup - don't rely on lastKlineTime
-                // This ensures we get kline data even if WebSocket callback is silent
                 if (restClient != null) {
                     long timeSinceKline = lastKlineTime > 0
                         ? System.currentTimeMillis() - lastKlineTime
                         : Long.MAX_VALUE;
 
-                    // Log WebSocket health every 60s (debug only - WebSocket via SOCKS proxy is known limited)
-                    if (timeSinceKline > 30_000) {
-                        log.debug("[Launcher] WebSocket kline silent for {}s, REST backup active",
-                            timeSinceKline / 1000);
+                    // Only poll REST if WebSocket kline is silent for >60s (save API quota)
+                    if (timeSinceKline > 60_000) {
+                        if (timeSinceKline > 120_000) {
+                            log.debug("[Launcher] WebSocket kline silent for {}s, REST backup active",
+                                timeSinceKline / 1000);
+                        }
+                        pollLatestKlineRest(lastKlineTimestamp);
                     }
-                    pollLatestKlineRest(lastKlineTimestamp);
                 }
             } catch (Exception e) {
                 // Silent - polling failure is expected
             }
-        }, 10, 10, TimeUnit.SECONDS);
+        }, 60, 60, TimeUnit.SECONDS); // Changed from 10s to 60s to reduce API calls
 
         while (running.get()) {
             try {
@@ -1399,9 +1401,12 @@ public class ChanWebSocketLauncher {
                     // Check if connection is still alive (receiving messages)
                     if (lastMessageTime > 0) {
                         long silentTime = System.currentTimeMillis() - lastMessageTime;
-                        // Early warning at 30s
+                        // Early warning at 30s, throttled to every 30s
                         if (silentTime > 30000 && silentTime < MESSAGE_TIMEOUT_MS) {
-                            log.warn("[WebSocket] Warning: silent for {}s, checking connection...", silentTime/1000);
+                            if (System.currentTimeMillis() - lastSilentWarningTime > SILENT_WARNING_INTERVAL_MS) {
+                                log.warn("[WebSocket] Warning: silent for {}s, checking connection...", silentTime/1000);
+                                lastSilentWarningTime = System.currentTimeMillis();
+                            }
                         }
                         // Full timeout triggers reconnect
                         if (silentTime > MESSAGE_TIMEOUT_MS) {
