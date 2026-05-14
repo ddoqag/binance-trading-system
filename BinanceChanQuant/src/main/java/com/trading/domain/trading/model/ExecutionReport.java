@@ -22,28 +22,41 @@ public class ExecutionReport {
     private final long signalTimestamp;
     private final String rejectReason;
 
+    // Exchange-assigned order ID (algoId for algo orders, orderId for regular orders)
+    private final String exchangeOrderId;
+
     public ExecutionReport(String orderId, String symbol, TradeDirection side,
                          OrderType orderType, double quantity, double price,
                          double filledQuantity, double avgFillPrice,
                          OrderStatus status, long timestamp, double pnl, double fee) {
         this(orderId, symbol, side, orderType, quantity, price, filledQuantity, avgFillPrice,
-             status, timestamp, pnl, fee, 0.0, 0L, null);
+             status, timestamp, pnl, fee, 0.0, 0L, null, null);
     }
 
     public ExecutionReport(String orderId, String symbol, TradeDirection side,
                          OrderType orderType, double quantity, double price,
                          double filledQuantity, double avgFillPrice,
                          OrderStatus status, long timestamp, double pnl, double fee,
-                         double signalPrice, long signalTimestamp) {
+                         String exchangeOrderId) {
         this(orderId, symbol, side, orderType, quantity, price, filledQuantity, avgFillPrice,
-             status, timestamp, pnl, fee, signalPrice, signalTimestamp, null);
+             status, timestamp, pnl, fee, 0.0, 0L, null, exchangeOrderId);
     }
 
     public ExecutionReport(String orderId, String symbol, TradeDirection side,
                          OrderType orderType, double quantity, double price,
                          double filledQuantity, double avgFillPrice,
                          OrderStatus status, long timestamp, double pnl, double fee,
-                         double signalPrice, long signalTimestamp, String rejectReason) {
+                         double signalPrice, long signalTimestamp, String exchangeOrderId) {
+        this(orderId, symbol, side, orderType, quantity, price, filledQuantity, avgFillPrice,
+             status, timestamp, pnl, fee, signalPrice, signalTimestamp, null, exchangeOrderId);
+    }
+
+    public ExecutionReport(String orderId, String symbol, TradeDirection side,
+                         OrderType orderType, double quantity, double price,
+                         double filledQuantity, double avgFillPrice,
+                         OrderStatus status, long timestamp, double pnl, double fee,
+                         double signalPrice, long signalTimestamp, String rejectReason,
+                         String exchangeOrderId) {
         this.orderId = orderId;
         this.symbol = symbol;
         this.side = side;
@@ -59,6 +72,7 @@ public class ExecutionReport {
         this.signalPrice = signalPrice;
         this.signalTimestamp = signalTimestamp;
         this.rejectReason = rejectReason;
+        this.exchangeOrderId = exchangeOrderId;
     }
 
     // Getters
@@ -77,6 +91,7 @@ public class ExecutionReport {
     public double getSignalPrice() { return signalPrice; }
     public long getSignalTimestamp() { return signalTimestamp; }
     public String getRejectReason() { return rejectReason; }
+    public String getExchangeOrderId() { return exchangeOrderId; }
 
     // Builder
     public static class Builder {
@@ -94,6 +109,7 @@ public class ExecutionReport {
         private double fee;
         private double signalPrice;
         private long signalTimestamp;
+        private String exchangeOrderId;
 
         public Builder orderId(String orderId) { this.orderId = orderId; return this; }
         public Builder symbol(String symbol) { this.symbol = symbol; return this; }
@@ -109,10 +125,12 @@ public class ExecutionReport {
         public Builder fee(double fee) { this.fee = fee; return this; }
         public Builder signalPrice(double price) { this.signalPrice = price; return this; }
         public Builder signalTimestamp(long ts) { this.signalTimestamp = ts; return this; }
+        public Builder exchangeOrderId(String id) { this.exchangeOrderId = id; return this; }
 
         public ExecutionReport build() {
             return new ExecutionReport(orderId, symbol, side, orderType, quantity, price,
-                filledQuantity, avgFillPrice, status, timestamp, pnl, fee, signalPrice, signalTimestamp);
+                filledQuantity, avgFillPrice, status, timestamp, pnl, fee, signalPrice, signalTimestamp,
+                exchangeOrderId);
         }
     }
 }

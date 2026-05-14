@@ -4,6 +4,7 @@ import com.trading.adapter.execution.BinanceExchangeAdapter;
 import com.trading.adapter.execution.ProtectionOrderManager;
 import com.trading.domain.trading.model.Order;
 import com.trading.domain.trading.model.OrderType;
+import com.trading.domain.trading.model.ProtectionState;
 import com.trading.domain.trading.model.TradeDirection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -130,52 +131,38 @@ public class StartupRecoveryService {
     }
 
     /**
-     * Detect orphan positions and remediate
+     * Detect orphan positions and remediate using validated reconciliation
      */
     private void detectAndRemediateOrphans(PositionSnapshot snapshot) {
         for (BinanceExchangeAdapter.PositionInfo pos : snapshot.positions) {
             String symbol = pos.symbol;
 
-            // Check if we already have protection for this symbol
-            if (protectionManager.hasProtection(symbol)) {
-                log.info("[Recovery] Position {} has existing protection, skipping", symbol);
-                continue;
-            }
+            // Use reconcileProtection to validate existing protection or create new
+            ProtectionState state = protectionManager.reconcileProtection(symbol, pos, snapshot.openOrders);
 
-            // Orphan detected - no local protection exists
-            log.warn("[Recovery][CRITICAL] ORPHAN POSITION detected: {} {} @ {}",
-                    pos.size > 0 ? "LONG" : "SHORT", Math.abs(pos.size), pos.entryPrice);
-
-            // Check if there's already a stop order in open orders
-            boolean hasStopOrder = hasStopOrder(symbol, snapshot.openOrders);
-
-            if (hasStopOrder) {
-                log.info("[Recovery] Orphan position {} has existing stop order, rebuilding protection", symbol);
-                // Note: In production, would rebuild protection tracking from exchange stop order
-                // For now, just log - the existing stop should work
-                protectionManager.reconcile(symbol, pos.size);
-            } else {
-                // Attach emergency stop
-                log.warn("[Recovery] Orphan position {} has NO stop protection - attaching emergency stop", symbol);
-                attachEmergencyStop(pos);
-            }
-        }
-    }
-
-    /**
-     * Check if symbol has an existing stop order in open orders
-     */
-    private boolean hasStopOrder(String symbol, List<Order> openOrders) {
-        for (Order order : openOrders) {
-            if (order.getSymbol().equals(symbol)) {
-                if (order.getOrderType() == OrderType.STOP ||
-                    order.getOrderType() == OrderType.STOP_LIMIT ||
-                    order.getStrategy() != null && order.getStrategy().contains("stop")) {
-                    return true;
-                }
+            switch (state) {
+                case VALID_ADOPTED:
+                    log.info("[Recovery] Position {} has VALID protection adopted from exchange", symbol);
+                    break;
+                case FOREIGN_IGNORED:
+                    log.warn("[Recovery] Position {} has FOREIGN protection (not ours) - will not adopt", symbol);
+                    log.info("[Recovery] Attaching backup protection for {}", symbol);
+                    attachEmergencyStop(pos);
+                    break;
+                case INVALID_RECREATED:
+                    log.warn("[Recovery] Position {} has INVALID protection - recreating", symbol);
+                    attachEmergencyStop(pos);
+                    break;
+                case STALE_CANCELLED:
+                    log.warn("[Recovery] Position {} has STALE protection - cancelling and recreating", symbol);
+                    attachEmergencyStop(pos);
+                    break;
+                case MISSING_CREATED:
+                    log.info("[Recovery] Position {} has no protection - creating emergency stop", symbol);
+                    attachEmergencyStop(pos);
+                    break;
             }
         }
-        return false;
     }
 
     /**

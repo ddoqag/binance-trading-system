@@ -110,9 +110,16 @@ public class BinanceAlgoClient {
                     // -4061: position side mismatch (try without positionSide)
                     // -1128: invalid parameter combination (try different params)
                     // -4509: time in force error (try without positionSide)
+                    // -4130: closePosition order already exists (don't retry, don't fallback)
                     if (resp.contains("-4061") || resp.contains("-1128") || resp.contains("-4509")) {
                         log.warn("[BinanceAlgo] Algo API parameter issue: {}, signaling fallback", resp);
                         return null;
+                    }
+                    // -4130: already have existing stop - this is NOT a fallback case
+                    // Signal rejection so caller can adopt existing instead of retrying
+                    if (resp.contains("-4130")) {
+                        log.warn("[BinanceAlgo] Algo API -4130: existing stop order, signaling rejection for adoption");
+                        return createRejectedReport(order, resp);
                     }
                 }
                 return parseAlgoResponse(order, resp);
@@ -236,6 +243,69 @@ public class BinanceAlgoClient {
             log.error("[BinanceAlgo] Query algo order failed: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Cancel algo order by algoId.
+     */
+    public boolean cancelAlgoOrder(String algoId) {
+        try {
+            long timestamp = System.currentTimeMillis();
+
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            params.put("symbol", "BTCUSDT");  // TODO: pass symbol
+            params.put("orderId", algoId);
+            params.put("timestamp", timestamp);
+
+            String signature = signParams(params);
+
+            String resp = executeDelete("/fapi/v1/algo/order",
+                    params, signature, timestamp);
+
+            log.info("[BinanceAlgo] Cancel algo order {} -> {}", algoId, resp);
+            return resp != null && !resp.contains("\"code\":");
+        } catch (Exception e) {
+            log.error("[BinanceAlgo] Cancel algo order failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private String executeDelete(String endpoint, LinkedHashMap<String, Object> params,
+                              String signature, long timestamp) throws IOException {
+        // Build query string
+        StringBuilder query = new StringBuilder();
+        for (Map.Entry<String, Object> entry : params.entrySet()) {
+            if (query.length() > 0) query.append("&");
+            query.append(entry.getKey()).append("=").append(entry.getValue());
+        }
+        query.append("&signature=").append(signature);
+
+        String url = baseUrl + endpoint + "?" + query.toString();
+        log.info("[BinanceAlgo] DELETE URL: {}", url);
+
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
+                new java.net.URL(url).openConnection(proxy);
+
+        conn.setRequestMethod("DELETE");
+        conn.setRequestProperty("X-MBX-APIKEY", apiKey);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(10000);
+
+        int responseCode = conn.getResponseCode();
+        java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(
+                        responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream(),
+                        StandardCharsets.UTF_8));
+
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+
+        log.info("[BinanceAlgo] DELETE {} -> {}", endpoint, responseCode);
+        return response.toString();
     }
 
     // ========== HTTP Execution ==========
@@ -375,7 +445,8 @@ public class BinanceAlgoClient {
                 parseStatus(status),
                 System.currentTimeMillis(),
                 algoId,
-                0.0
+                0.0,
+                String.valueOf(algoId)
             );
         } catch (Exception e) {
             log.error("[BinanceAlgo] Parse response failed: {}", e.getMessage());
@@ -400,7 +471,8 @@ public class BinanceAlgoClient {
                 parseStatus(status),
                 System.currentTimeMillis(),
                 algoId,
-                0.0
+                0.0,
+                String.valueOf(algoId)
             );
         } catch (Exception e) {
             log.error("[BinanceAlgo] Parse query response failed: {}", e.getMessage());
@@ -421,7 +493,8 @@ public class BinanceAlgoClient {
             System.currentTimeMillis(),
             0, 0,
             0.0, 0L,
-            reason
+            reason,
+            null
         );
     }
 

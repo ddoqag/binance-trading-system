@@ -105,11 +105,11 @@ public class BinanceExchangeAdapter {
         } else {
             this.client = new UMFuturesClientImpl(apiKey, apiSecret, ConfigUtil.isTestNet());
             this.positionTracker = new BinancePositionTracker(symbol, false, client);
+            Proxy proxy = getProxy();
             this.orderSender = new BinanceOrderSender(symbol, false, apiKey, apiSecret, client,
-                    PositionSnapshot.fromTracker(positionTracker));
+                    PositionSnapshot.fromTracker(positionTracker), proxy);
 
             // Initialize proxy for algo client
-            Proxy proxy = getProxy();
             this.algoClient = new BinanceAlgoClient(apiKey, apiSecret, baseUrl, proxy);
 
             setProxy();
@@ -315,6 +315,14 @@ public class BinanceExchangeAdapter {
                         order.getSymbol(), order.getQuantity(), order.getStopPrice());
                 return report;
             }
+            // Check if rejection was due to existing order (-4130) - don't fallback
+            if (report != null && report.getStatus() == OrderStatus.REJECTED) {
+                String rejectReason = report.getRejectReason();
+                if (rejectReason != null && rejectReason.contains("-4130")) {
+                    log.warn("[BinanceAdapter] Algo API rejected with -4130 (existing order), NOT falling back - caller should adopt");
+                    return report; // Return the rejected report so caller can adopt
+                }
+            }
             // Algo API failed (returned null on known error) - fall through to regular order API
             if (report == null) {
                 log.warn("[BinanceAdapter] Algo API returned null (likely rejected), falling back to regular order API");
@@ -330,6 +338,13 @@ public class BinanceExchangeAdapter {
 
     public boolean cancelOrder(String orderId, long binanceOrderId) {
         return orderSender.cancelOrder(orderId, binanceOrderId);
+    }
+
+    public boolean cancelAlgoOrder(String algoId) {
+        if (algoClient == null) {
+            return false;
+        }
+        return algoClient.cancelAlgoOrder(algoId);
     }
 
     public ExecutionReport queryOrder(String orderId, long binanceOrderId) {

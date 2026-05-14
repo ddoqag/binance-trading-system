@@ -591,7 +591,8 @@ public class ExecutionEngineV4 {
                 fillPrice,
                 com.trading.domain.trading.model.OrderStatus.FILLED,
                 System.currentTimeMillis(),
-                0, 0
+                0, 0,
+                (String) null
             );
 
             // 回调外层Engine的onFill

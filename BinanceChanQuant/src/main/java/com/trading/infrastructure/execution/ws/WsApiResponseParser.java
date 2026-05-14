@@ -80,7 +80,8 @@ public class WsApiResponseParser {
                     transactTime,
                     0.0, 0.0,
                     0.0, 0L,
-                    null
+                    null,
+                    (String) null
             );
 
         } catch (Exception e) {
@@ -121,7 +122,8 @@ public class WsApiResponseParser {
                     transactTime,
                     0.0, 0.0,
                     0.0, 0L,
-                    null
+                    null,
+                    (String) null
             );
 
         } catch (Exception e) {
@@ -163,7 +165,8 @@ public class WsApiResponseParser {
                     transactTime,
                     0.0, 0.0,
                     0.0, 0L,
-                    null
+                    null,
+                    (String) null
             );
 
         } catch (Exception e) {
@@ -256,7 +259,8 @@ public class WsApiResponseParser {
                 System.currentTimeMillis(),
                 0.0, 0.0,
                 0.0, 0L,
-                errorMsg
+                errorMsg,
+                (String) null
         );
     }
 

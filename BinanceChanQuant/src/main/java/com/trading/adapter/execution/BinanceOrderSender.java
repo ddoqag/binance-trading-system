@@ -18,6 +18,7 @@ import java.net.Proxy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Binance Order Sender
@@ -41,6 +42,7 @@ public class BinanceOrderSender {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String apiKey;
     private final String apiSecret;
+    private final Proxy proxy; // For algo order queries
 
     // Position mode detection
     private volatile BinanceExchangeAdapter.PositionMode positionMode =
@@ -52,24 +54,41 @@ public class BinanceOrderSender {
     public BinanceOrderSender(String symbol, boolean paperTrading,
                               String apiKey, String apiSecret,
                               UMFuturesClientImpl client) {
+        this(symbol, paperTrading, apiKey, apiSecret, client, Proxy.NO_PROXY);
+    }
+
+    public BinanceOrderSender(String symbol, boolean paperTrading,
+                              String apiKey, String apiSecret,
+                              UMFuturesClientImpl client,
+                              Proxy proxy) {
         this.symbol = symbol;
         this.paperTrading = paperTrading;
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.client = client;
+        this.proxy = proxy;
         this.currentPosition = 0.0; // Default
     }
 
     public BinanceOrderSender(String symbol, boolean paperTrading,
                               String apiKey, String apiSecret,
                               UMFuturesClientImpl client,
-                              PositionSnapshot positionSnapshot) {
+                              PositionSnapshot positionSnapshot,
+                              Proxy proxy) {
         this.symbol = symbol;
         this.paperTrading = paperTrading;
         this.apiKey = apiKey;
         this.apiSecret = apiSecret;
         this.client = client;
+        this.proxy = proxy;
         this.currentPosition = positionSnapshot != null ? positionSnapshot.getPosition() : 0.0;
+    }
+
+    public BinanceOrderSender(String symbol, boolean paperTrading,
+                              String apiKey, String apiSecret,
+                              UMFuturesClientImpl client,
+                              PositionSnapshot positionSnapshot) {
+        this(symbol, paperTrading, apiKey, apiSecret, client, positionSnapshot, Proxy.NO_PROXY);
     }
 
     public void setPositionMode(BinanceExchangeAdapter.PositionMode mode) {
@@ -145,8 +164,7 @@ public class BinanceOrderSender {
 
     /**
      * Query all open orders from Binance
-     * Note: getOpenOrders() may not be available in this connector version.
-     * Returns empty list as fallback - position sync will handle orphan detection.
+     * Uses accountInformation endpoint which returns openOrders field
      */
     public List<Order> queryAllOpenOrders() {
         if (paperTrading) {
@@ -154,14 +172,208 @@ public class BinanceOrderSender {
         }
 
         try {
-            // Fallback: use positionInformation to check positions, skip open orders for now
-            // TODO: Implement proper open orders query when connector API is confirmed
-            log.warn("[OrderSender] getOpenOrders not available in connector, skipping open order query");
-            return new java.util.ArrayList<>();
+            log.info("[OrderSender] Querying open orders from exchange");
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            Object resp = client.account().accountInformation(params);
+            String respStr = resp instanceof String ? (String) resp : resp.toString();
+
+            JsonNode root = objectMapper.readTree(respStr);
+            List<Order> openOrders = new ArrayList<>();
+
+            // Parse regular open orders
+            if (root.has("openOrders") && root.get("openOrders").isArray()) {
+                JsonNode ordersNode = root.get("openOrders");
+                for (JsonNode node : ordersNode) {
+                    try {
+                        Order order = parseOpenOrder(node);
+                        if (order != null) {
+                            openOrders.add(order);
+                        }
+                    } catch (Exception e) {
+                        log.warn("[OrderSender] Failed to parse open order: {}", e.getMessage());
+                    }
+                }
+            }
+
+            // Also query algo orders (STOP_MARKET with closePosition) - they use separate API
+            try {
+                List<Order> algoOrders = queryAlgoOpenOrders();
+                if (algoOrders != null) {
+                    openOrders.addAll(algoOrders);
+                }
+            } catch (Exception e) {
+                log.warn("[OrderSender] Failed to query algo orders: {}", e.getMessage());
+            }
+
+            log.info("[OrderSender] Found {} total open orders", openOrders.size());
+            return openOrders;
         } catch (Exception e) {
             log.error("[OrderSender] Query open orders failed: {}", e.getMessage());
             return new java.util.ArrayList<>();
         }
+    }
+
+    private Order parseOpenOrder(JsonNode node) {
+        String orderId = node.has("orderId") ? node.get("orderId").asText() : null;
+        String symbol = node.has("symbol") ? node.get("symbol").asText() : null;
+        if (symbol == null || orderId == null) {
+            return null;
+        }
+
+        String sideStr = node.has("side") ? node.get("side").asText() : "BUY";
+        TradeDirection side = "SELL".equalsIgnoreCase(sideStr) ? TradeDirection.SHORT : TradeDirection.LONG;
+
+        String typeStr = node.has("type") ? node.get("type").asText() : "LIMIT";
+        com.trading.domain.trading.model.OrderType type = mapOrderType(typeStr);
+
+        double qty = node.has("origQty") ? node.get("origQty").asDouble() : 0;
+        double price = node.has("price") ? node.get("price").asDouble() : 0;
+        double stopPrice = node.has("stopPrice") ? node.get("stopPrice").asDouble() : 0;
+
+        // Check if this is our order by newClientOrderId
+        String clientOrderId = node.has("newClientOrderId") ? node.get("newClientOrderId").asText() : null;
+        String finalOrderId = orderId;
+        if (clientOrderId != null && !clientOrderId.isEmpty()) {
+            // Use our client order ID for validateOwnership
+            finalOrderId = clientOrderId;
+        }
+
+        Order order = new Order(
+            finalOrderId,  // Use clientOrderId if ours, otherwise use exchange orderId
+            symbol,
+            side,
+            type,
+            qty,
+            price,
+            "recovery",
+            1.0
+        );
+        order.setStopPrice(stopPrice);
+
+        // Set closePosition if it's a closing order
+        String reduceOnly = node.has("reduceOnly") ? node.get("reduceOnly").asText() : "false";
+        order.setReduceOnly("true".equalsIgnoreCase(reduceOnly));
+
+        return order;
+    }
+
+    private com.trading.domain.trading.model.OrderType mapOrderType(String typeStr) {
+        switch (typeStr.toUpperCase()) {
+            case "LIMIT": return com.trading.domain.trading.model.OrderType.LIMIT;
+            case "MARKET": return com.trading.domain.trading.model.OrderType.MARKET;
+            case "STOP": return com.trading.domain.trading.model.OrderType.STOP;
+            case "STOP_MARKET": return com.trading.domain.trading.model.OrderType.STOP_MARKET;
+            case "STOP_LOSS_LIMIT": return com.trading.domain.trading.model.OrderType.STOP_LIMIT;
+            default: return com.trading.domain.trading.model.OrderType.LIMIT;
+        }
+    }
+
+    /**
+     * Query open algo orders (conditional orders like STOP_MARKET with closePosition)
+     * These are stored separately and not returned by accountInformation
+     */
+    private List<Order> queryAlgoOpenOrders() {
+        List<Order> algoOrders = new ArrayList<>();
+        try {
+            // Query current algo orders using GET /fapi/v1/algo/orders
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            params.put("symbol", symbol);
+            params.put("timestamp", System.currentTimeMillis());
+
+            String queryStr = "";
+            for (Map.Entry<String, Object> e : params.entrySet()) {
+                if (!queryStr.isEmpty()) queryStr += "&";
+                queryStr += e.getKey() + "=" + e.getValue();
+            }
+
+            // Sign the query (hex format to match Binance's expected signature)
+            javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
+            javax.crypto.spec.SecretKeySpec secretKeySpec = new javax.crypto.spec.SecretKeySpec(apiSecret.getBytes(), "HmacSHA256");
+            mac.init(secretKeySpec);
+            byte[] hmac = mac.doFinal(queryStr.getBytes());
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hmac) {
+                hex.append(String.format("%02x", b));
+            }
+            String signature = hex.toString();
+
+            String url = (ConfigUtil.isTestNet() ? "https://testnet.binancefuture.com" : "https://fapi.binance.com")
+                    + "/fapi/v1/algo/orders?symbol=" + symbol + "&timestamp=" + params.get("timestamp") + "&signature=" + signature;
+
+            java.net.URL urlObj = new java.net.URL(url);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) urlObj.openConnection(proxy);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("X-MBX-APIKEY", apiKey);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
+
+            StringBuilder response = new StringBuilder();
+            try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.InputStreamReader(conn.getInputStream()))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    response.append(line);
+                }
+            }
+
+            String respStr = response.toString();
+            JsonNode root = objectMapper.readTree(respStr);
+
+            if (root.isArray()) {
+                for (JsonNode node : root) {
+                    try {
+                        Order order = parseAlgoOrder(node);
+                        if (order != null) {
+                            algoOrders.add(order);
+                        }
+                    } catch (Exception e) {
+                        log.warn("[OrderSender] Failed to parse algo order: {}", e.getMessage());
+                    }
+                }
+            }
+            log.info("[OrderSender] Found {} algo open orders", algoOrders.size());
+        } catch (java.net.SocketTimeoutException e) {
+            log.warn("[OrderSender] queryAlgoOpenOrders timed out (proxy may be blocking): {}", e.getMessage());
+        } catch (java.io.IOException e) {
+            log.warn("[OrderSender] queryAlgoOpenOrders IO error (check proxy): {} - {}", e.getClass().getSimpleName(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("[OrderSender] queryAlgoOpenOrders failed: {} - {}", e.getClass().getSimpleName(), e.getMessage());
+        }
+        return algoOrders;
+    }
+
+    private Order parseAlgoOrder(JsonNode node) {
+        String algoId = node.has("algoId") ? node.get("algoId").asText() : null;
+        String symbol = node.has("symbol") ? node.get("symbol").asText() : null;
+        if (symbol == null || algoId == null) {
+            return null;
+        }
+
+        String sideStr = node.has("side") ? node.get("side").asText() : "BUY";
+        TradeDirection side = "SELL".equalsIgnoreCase(sideStr) ? TradeDirection.SHORT : TradeDirection.LONG;
+
+        // Algo orders are typically STOP_MARKET or TAKE_PROFIT_MARKET
+        com.trading.domain.trading.model.OrderType type = com.trading.domain.trading.model.OrderType.STOP_MARKET;
+
+        double qty = node.has("qty") ? node.get("qty").asDouble() : 0;
+        double triggerPrice = node.has("triggerPrice") ? node.get("triggerPrice").asDouble() : 0;
+
+        // Algo orders use clientAlgoId
+        String clientOrderId = node.has("clientAlgoId") ? node.get("clientAlgoId").asText() : "algo-" + algoId;
+
+        Order order = new Order(
+            clientOrderId,
+            symbol,
+            side,
+            type,
+            qty,
+            0, // No price for STOP_MARKET
+            "algo",
+            1.0
+        );
+        order.setStopPrice(triggerPrice);
+        order.setReduceOnly(true); // Algo orders with closePosition are reduceOnly
+
+        return order;
     }
 
     // ========== Internal Methods ==========
@@ -182,7 +394,8 @@ public class BinanceOrderSender {
             OrderStatus.FILLED,
             System.currentTimeMillis(),
             0.0,
-            0.0
+            0.0,
+            (String) null
         );
     }
 
@@ -226,12 +439,19 @@ public class BinanceOrderSender {
                 // HEDGE MODE
                 // P0 fix: reduceOnly STOP_MARKET - do NOT set positionSide
                 // reduceOnly orders only need side + type + stopPrice + reduceOnly
-                if (order.isReduceOnly()) {
+                // P0 FIX: isClosePosition() must be checked BEFORE currentPosition
+                // If order is marked as closePosition, derive positionSide from order direction
+                // (currentPosition may be 0 due to sync failure, but exchange still has the position)
+                if (order.isClosePosition()) {
+                    // Close position order: positionSide is OPPOSITE of order side
+                    // LONG order closes SHORT position, SHORT order closes LONG position
+                    positionSide = order.getSide() == TradeDirection.LONG ? "SHORT" : "LONG";
+                    isCloseOrder = true;
+                    orderQty = Math.min(orderQty, Math.abs(currentPosition > 0 ? currentPosition : 1)); // Use at least 1 contract if position exists
+                    log.info("[OrderSender] closePosition=true: derived positionSide={}", positionSide);
+                } else if (order.isReduceOnly()) {
                     // Emergency stop: only side and reduceOnly flag needed
                     log.info("[OrderSender] reduceOnly STOP_MARKET: skipping positionSide");
-                } else if (order.isClosePosition()) {
-                    // closePosition=true: do NOT set positionSide
-                    log.info("[OrderSender] closePosition=true: skipping positionSide");
                 } else if (currentPosition < 0) {
                     if (order.getSide() == TradeDirection.LONG) {
                         positionSide = "SHORT";
@@ -257,6 +477,10 @@ public class BinanceOrderSender {
 
                 if (positionSide != null && !order.isClosePosition() && !order.isReduceOnly()) {
                     params.put("positionSide", positionSide);
+                }
+                // P0 FIX: For HEDGE mode close orders, also set reduceOnly=true
+                if (isCloseOrder) {
+                    params.put("reduceOnly", true);
                 }
             }
 
@@ -347,6 +571,7 @@ public class BinanceOrderSender {
                 status = respNode.get("status").asText();
             }
 
+            String exchangeId = String.valueOf(binanceOrderId);
             return new ExecutionReport(
                 order.getOrderId(),
                 order.getSymbol(),
@@ -359,7 +584,8 @@ public class BinanceOrderSender {
                 parseStatus(status),
                 System.currentTimeMillis(),
                 binanceOrderId,
-                0.0
+                0.0,
+                exchangeId
             );
 
         } catch (Exception e) {
@@ -387,7 +613,8 @@ public class BinanceOrderSender {
                 parseStatus(status),
                 System.currentTimeMillis(),
                 binanceOrderId,
-                0.0
+                0.0,
+                String.valueOf(binanceOrderId)
             );
         } catch (Exception e) {
             log.error("[OrderSender] Parse query response failed: {}", e.getMessage());
@@ -408,7 +635,8 @@ public class BinanceOrderSender {
             System.currentTimeMillis(),
             0, 0,
             0.0, 0L,
-            reason
+            reason,
+            (String) null
         );
     }
 
@@ -491,6 +719,7 @@ public class BinanceOrderSender {
                 status = respNode.get("status").asText();
             }
 
+            String exchangeId = String.valueOf(binanceOrderId);
             return new ExecutionReport(
                 order.getOrderId(),
                 order.getSymbol(),
@@ -503,7 +732,8 @@ public class BinanceOrderSender {
                 parseStatus(status),
                 System.currentTimeMillis(),
                 binanceOrderId,
-                0.0
+                0.0,
+                exchangeId
             );
         } catch (Exception e) {
             log.error("[OrderSender] sendOrderWithIntent failed: {}", e.getMessage());

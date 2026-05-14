@@ -136,7 +136,8 @@ public class V4IntegrationTest {
             qty, price, qty, price,
             com.trading.domain.trading.model.OrderStatus.FILLED,
             System.currentTimeMillis(),
-            0, 0
+            0, 0,
+            (String) null
         );
     }
 }

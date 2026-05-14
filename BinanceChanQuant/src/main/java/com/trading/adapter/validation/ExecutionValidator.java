@@ -175,7 +175,8 @@ public class ExecutionValidator {
                     com.trading.domain.trading.model.OrderStatus.FILLED,
                     System.currentTimeMillis(),
                     0.0,
-                    0.0
+                    0.0,
+                    (String) null
             );
         }
     }
