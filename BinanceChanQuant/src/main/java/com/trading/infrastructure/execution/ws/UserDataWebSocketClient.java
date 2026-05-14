@@ -38,8 +38,9 @@ public class UserDataWebSocketClient {
 
     private static final Logger log = LoggerFactory.getLogger(UserDataWebSocketClient.class);
 
-    // Binance WS URL
-    private static final String WS_BASE_URL = "wss://fstream.binance.com/ws/";
+    // Binance WS URL (2026年4月后使用分拆后的URL)
+    // private 数据流使用 /private 前缀
+    private static final String WS_BASE_URL = "wss://fstream.binance.com/private/";
 
     // 重连配置
     private static final long INITIAL_RECONNECT_DELAY_MS = 1_000;

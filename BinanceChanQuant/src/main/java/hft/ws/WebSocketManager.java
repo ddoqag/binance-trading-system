@@ -88,8 +88,8 @@ public class WebSocketManager {
             System.setProperty("http.proxyPort", proxyPort);
             System.out.println("[WS] Proxy configured: " + proxyHost + ":" + proxyPort);
 
-            // Connect to fstream.binance.com for USD-M futures
-            wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com");
+            // Connect to fstream.binance.com for USD-M futures (public streams)
+            wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com/public");
 
             // Subscribe to depth stream (100ms updates)
             subscribeDepthStream();

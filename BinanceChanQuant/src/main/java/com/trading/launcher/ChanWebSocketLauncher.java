@@ -607,7 +607,7 @@ public class ChanWebSocketLauncher {
             System.setProperty("http.proxyPort", proxyPort);
             log.info("[Launcher] WebSocket proxy set: {}:{}", proxyHost, proxyPort);
 
-            wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com");
+            wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com/public");
 
             String symbolLower = SYMBOL.toLowerCase();
 

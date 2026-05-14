@@ -298,7 +298,7 @@ public class BinanceOrderSender {
             String signature = hex.toString();
 
             String url = (ConfigUtil.isTestNet() ? "https://testnet.binancefuture.com" : "https://fapi.binance.com")
-                    + "/fapi/v1/algo/orders?symbol=" + symbol + "&timestamp=" + params.get("timestamp") + "&signature=" + signature;
+                    + "/fapi/v1/openAlgoOrders?symbol=" + symbol + "&timestamp=" + params.get("timestamp") + "&signature=" + signature;
 
             java.net.URL urlObj = new java.net.URL(url);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) urlObj.openConnection(proxy);
