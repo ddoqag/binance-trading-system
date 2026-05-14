@@ -103,4 +103,38 @@ public class ConfigUtil {
         }
         return "true".equalsIgnoreCase(value);
     }
+
+    // ========== Proxy Configuration ==========
+
+    public static String getProxyHost() {
+        String host = get("PROXY_HOST");
+        if (host == null) {
+            host = get("proxy_host");
+        }
+        return host != null ? host : "127.0.0.1";
+    }
+
+    public static int getProxyPort() {
+        String port = get("PROXY_PORT");
+        if (port == null) {
+            port = get("proxy_port");
+        }
+        return port != null ? Integer.parseInt(port) : 7897;
+    }
+
+    public static String getApiKey() {
+        String key = get("BINANCE_API_KEY");
+        if (key == null) {
+            key = get("api.key");
+        }
+        return key;
+    }
+
+    public static String getApiSecret() {
+        String secret = get("BINANCE_API_SECRET");
+        if (secret == null) {
+            secret = get("api.secret");
+        }
+        return secret;
+    }
 }
