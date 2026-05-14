@@ -203,12 +203,48 @@ STOP_HIT, TARGET_HIT, TIMEOUT, UNKNOWN
   - DecayAttribution with entropy
   - Recommends 2-4 week observation window before control layer
 
+## Observation Phase (Current - 2-4 Weeks)
+
+**Current Focus:** Market Memory Accumulation
+
+**Schema Versioning:**
+```java
+SCHA_VERSION = "v2"     // Alpha Temporal Dynamics Engine
+TRAJECTORY_SCHEMA = "v1"
+DECAY_MODEL = "v2"       // Added DecayAttribution
+SAMPLING_POLICY = "v1"
+ATTRIBUTION_MODEL = "v1"
+```
+
+**Semantic Snapshot Format (Research-Grade Telemetry):**
+```
+[AlphaTemporalSummary]
+schema=v2
+alpha_id=xxx
+regime=HIGH_VOL
+half_life_p50=180s
+half_life_p90=420s
+mfe_mae_ratio=1.3
+decay_entropy=0.72
+dominant_decay=REGIME_SHIFT
+reliability=false
+```
+
+**Observation Priorities:**
+1. **Observation Logging** — Semantic snapshots, not raw logs
+2. **Drift Detection** — Past 7 days vs last 24h for half-life, entropy漂移
+3. **Survivorship Bias Audit** — Check which trajectories closed early / signals never observed
+4. **Observation Consistency** — Same market conditions yield stable statistics
+
+**Drift Detection Alerts:**
+- Half-life漂移 > 50% between periods
+- Volatility sensitivity shift
+- Entropy spike (often indicates regime transition)
+
+**Key Insight:** High entropy itself is a risk signal — market structure uncertainty
+
 ## Key Notes
 
 - **Paper trading:** `ChanWebSocketLauncher` defaults to paper mode
 - **Not thread-safe:** `TradeState.position` (static mutable singleton) — avoid concurrent access
-- **Shared memory path:** Must match between Java engine and Python integrator if used (default: `D:/binance/new/data/hft_trading_shm`)
-- **OFI:** Order Flow Imbalance — key signal computed by `OFICalculator`
-- **Toxicity:** Probability of adverse selection — blocks aggressive orders when high
-- **Kill switch:** Triggered by consecutive losses ≥ 3 (DefenseFSM) or circuit breaker hits ≥ 5 (DegradeManager)
-- **Gradual Migration:** Use `IntegrationOrchestrator.setNewEnginePercent()` to gradually shift traffic from legacy to new engine
+- **Observation before control:** Premature control introduces feedback contamination
