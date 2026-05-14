@@ -371,7 +371,9 @@ public class BinanceOrderSender {
             1.0
         );
         order.setStopPrice(triggerPrice);
-        order.setReduceOnly(true); // Algo orders with closePosition are reduceOnly
+        // Algo orders with closePosition don't need reduceOnly
+        // The closePosition=true parameter handles position closing
+        order.setReduceOnly(false);
 
         return order;
     }
@@ -478,8 +480,9 @@ public class BinanceOrderSender {
                 if (positionSide != null && !order.isClosePosition() && !order.isReduceOnly()) {
                     params.put("positionSide", positionSide);
                 }
-                // P0 FIX: For HEDGE mode close orders, also set reduceOnly=true
-                if (isCloseOrder) {
+                // P0 FIX: For HEDGE mode close orders, set reduceOnly=true ONLY if NOT using closePosition
+                // closePosition=true already handles position closing, reduceOnly would conflict
+                if (isCloseOrder && !order.isClosePosition()) {
                     params.put("reduceOnly", true);
                 }
             }
