@@ -38,9 +38,10 @@ public class BinanceWsApiClient {
 
     private static final Logger log = LoggerFactory.getLogger(BinanceWsApiClient.class);
 
-    // WS-API endpoints
-    private static final String MAINNET_URL = "wss://fapi.binance.com/ws-api/v3";
-    private static final String TESTNET_URL = "wss://testnet.binance.com/ws-api/v3";
+    // WS-API endpoints (2026年5月版)
+    // Mainnet: ws-api.binance.com (NOT fapi.binance.com)
+    private static final String MAINNET_URL = "wss://ws-api.binance.com/ws-api/v3";
+    private static final String TESTNET_URL = "wss://testnet.binanceops.com/ws-api/v3";
 
     // Reconnection config
     private static final long INITIAL_RECONNECT_DELAY_MS = 1_000;
