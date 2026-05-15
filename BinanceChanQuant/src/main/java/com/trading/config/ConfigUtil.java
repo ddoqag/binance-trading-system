@@ -35,19 +35,28 @@ public class ConfigUtil {
      */
     private static void loadEnvFile() {
         try {
-            Path envPath = Path.of(".env");
-            if (Files.exists(envPath)) {
-                Files.lines(envPath).forEach(line -> {
-                    line = line.trim();
-                    if (!line.isEmpty() && !line.startsWith("#")) {
-                        int idx = line.indexOf('=');
-                        if (idx > 0) {
-                            String key = line.substring(0, idx).trim();
-                            String value = line.substring(idx + 1).trim();
-                            prop.setProperty(key, value);
+            // Try multiple locations for .env file
+            Path[] envPaths = {
+                Path.of(".env"),
+                Path.of(System.getProperty("user.dir"), ".env"),
+                Path.of(System.getProperty("user.dir"), "BinanceChanQuant", ".env")
+            };
+
+            for (Path envPath : envPaths) {
+                if (Files.exists(envPath)) {
+                    Files.lines(envPath).forEach(line -> {
+                        line = line.trim();
+                        if (!line.isEmpty() && !line.startsWith("#")) {
+                            int idx = line.indexOf('=');
+                            if (idx > 0) {
+                                String key = line.substring(0, idx).trim();
+                                String value = line.substring(idx + 1).trim();
+                                prop.setProperty(key, value);
+                            }
                         }
-                    }
-                });
+                    });
+                    break;
+                }
             }
         } catch (IOException e) {
             // Ignore
@@ -111,7 +120,7 @@ public class ConfigUtil {
         if (host == null) {
             host = get("proxy_host");
         }
-        return host != null ? host : "127.0.0.1";
+        return host;
     }
 
     public static int getProxyPort() {
@@ -119,7 +128,7 @@ public class ConfigUtil {
         if (port == null) {
             port = get("proxy_port");
         }
-        return port != null ? Integer.parseInt(port) : 7897;
+        return port != null ? Integer.parseInt(port) : -1;
     }
 
     public static String getApiKey() {

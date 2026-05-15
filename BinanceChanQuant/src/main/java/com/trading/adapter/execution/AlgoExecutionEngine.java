@@ -373,6 +373,10 @@ public class AlgoExecutionEngine {
                 double sliceQty = order.getQuantity() / 10.0; // TWAP splits into 10 slices
                 double requiredMargin = sliceQty * price / leverage;
 
+                // P0 CRITICAL: Log actual balance vs required for -2010 debugging
+                log.info("[AlgoExecution] Margin check: available={}, required={}, leverage={}, sliceQty={}, price={}",
+                        availableBalance, requiredMargin, leverage, sliceQty, price);
+
                 // Only reject if balance is confirmed insufficient (not just un-synced)
                 // P0 FIX: Don't count margin insufficiency as failure - it's a physical limit
                 if (availableBalance > 0.01 && availableBalance < requiredMargin * 1.2) {

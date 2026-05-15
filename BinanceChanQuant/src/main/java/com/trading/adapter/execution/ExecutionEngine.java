@@ -294,9 +294,14 @@ public class ExecutionEngine {
     }
 
     private Order withAlgoType(Order order, String algoType) {
-        return new Order(order.getOrderId(), order.getSymbol(), order.getSide(),
+        Order newOrder = new Order(order.getOrderId(), order.getSymbol(), order.getSide(),
                 order.getOrderType(), order.getQuantity(), order.getPrice(),
                 algoType, order.getUrgency());
+        // P1: Preserve intent when creating new order (intent lost in withAlgoType was causing -2010)
+        if (order.hasIntent()) {
+            newOrder.setIntent(order.getIntent());
+        }
+        return newOrder;
     }
 
     private void sendOrderDirect(Order order) {

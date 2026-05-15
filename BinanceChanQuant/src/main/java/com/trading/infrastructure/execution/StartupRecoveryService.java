@@ -111,26 +111,34 @@ public class StartupRecoveryService {
     /**
      * Snapshot current exchange state with bounded retry.
      * Retries up to MAX_SNAPSHOT_RETRY times if snapshot appears unstable.
+     * Optimization: reuses position query, only re-fetches orders if position snapshot unstable.
      */
     private PositionSnapshot snapshotExchangePositions() {
-        PositionSnapshot snapshot1 = null;
-        PositionSnapshot snapshot2 = null;
-        PositionSnapshot snapshot3 = null;
+        List<Order> cachedOrders = null;
 
         for (int i = 0; i < MAX_SNAPSHOT_RETRY; i++) {
             try {
-                snapshot1 = doSnapshot();
+                // Fetch positions (cheap, deterministic)
+                PositionSnapshot snapshot1 = doSnapshotPositions();
                 Thread.sleep(SNAPSHOT_RETRY_DELAY_MS);
-                snapshot2 = doSnapshot();
+                PositionSnapshot snapshot2 = doSnapshotPositions();
                 Thread.sleep(SNAPSHOT_RETRY_DELAY_MS);
-                snapshot3 = doSnapshot();
+                PositionSnapshot snapshot3 = doSnapshotPositions();
 
+                // Only fetch orders once per cycle if positions stable
                 if (stable(snapshot1, snapshot3)) {
+                    if (cachedOrders == null) {
+                        cachedOrders = fetchOpenOrdersOnce();
+                    }
+                    PositionSnapshot result = merge(snapshot1, snapshot2);
+                    result.openOrders = cachedOrders;
                     log.info("[Recovery] Snapshot stable after {} attempts", i + 1);
-                    return merge(snapshot1, snapshot2);
+                    return result;
                 }
 
                 log.warn("[Recovery] Snapshot unstable, retry {}/{}", i + 1, MAX_SNAPSHOT_RETRY);
+                // Invalidate cached orders on instability
+                cachedOrders = null;
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -141,24 +149,23 @@ public class StartupRecoveryService {
         }
 
         // Fallback: return last snapshot even if unstable
-        if (snapshot3 != null) {
-            log.warn("[Recovery] Using unstable snapshot after {} retries", MAX_SNAPSHOT_RETRY);
-            return merge(snapshot3, snapshot3);
+        PositionSnapshot fallback = new PositionSnapshot();
+        try {
+            fallback = doSnapshot();
+            if (cachedOrders != null) {
+                fallback.openOrders = cachedOrders;
+            }
+        } catch (Exception e) {
+            log.error("[Recovery] Fallback snapshot failed: {}", e.getMessage());
         }
-        if (snapshot2 != null) {
-            return merge(snapshot2, snapshot2);
-        }
-        if (snapshot1 != null) {
-            return snapshot1;
-        }
-
-        // Last resort: empty snapshot
-        return new PositionSnapshot();
+        return fallback;
     }
 
-    private PositionSnapshot doSnapshot() {
+    /**
+     * Fetch positions only (used for stability checking)
+     */
+    private PositionSnapshot doSnapshotPositions() {
         PositionSnapshot snapshot = new PositionSnapshot();
-
         try {
             BinanceExchangeAdapter.PositionInfo[] positions = exchangeAdapter.getPositions();
             if (positions != null) {
@@ -168,16 +175,42 @@ public class StartupRecoveryService {
                     }
                 }
             }
+        } catch (Exception e) {
+            log.error("[Recovery] Failed to snapshot positions: {}", e.getMessage());
+        }
+        return snapshot;
+    }
 
+    /**
+     * Fetch open orders once (expensive - calls both accountInfo and algo orders)
+     */
+    private List<Order> fetchOpenOrdersOnce() {
+        try {
+            return exchangeAdapter.queryOpenOrders();
+        } catch (Exception e) {
+            log.error("[Recovery] Failed to fetch open orders: {}", e.getMessage());
+            return new java.util.ArrayList<>();
+        }
+    }
+
+    private PositionSnapshot doSnapshot() {
+        PositionSnapshot snapshot = new PositionSnapshot();
+        try {
+            BinanceExchangeAdapter.PositionInfo[] positions = exchangeAdapter.getPositions();
+            if (positions != null) {
+                for (BinanceExchangeAdapter.PositionInfo pos : positions) {
+                    if (Math.abs(pos.size) > 0.0001) {
+                        snapshot.positions.add(pos);
+                    }
+                }
+            }
             List<Order> openOrders = exchangeAdapter.queryOpenOrders();
             if (openOrders != null) {
                 snapshot.openOrders.addAll(openOrders);
             }
-
         } catch (Exception e) {
             log.error("[Recovery] Failed to snapshot exchange state: {}", e.getMessage());
         }
-
         return snapshot;
     }
 

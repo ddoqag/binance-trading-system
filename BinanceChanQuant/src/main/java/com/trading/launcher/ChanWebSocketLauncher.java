@@ -338,8 +338,8 @@ public class ChanWebSocketLauncher {
         log.info("[Launcher] PositionLifecycleManager initialized");
 
         // Initialize Execution Engine
-        String apiKey = ConfigUtil.get("api.key");
-        String apiSecret = ConfigUtil.get("api.secret");
+        String apiKey = ConfigUtil.getApiKey();
+        String apiSecret = ConfigUtil.getApiSecret();
         boolean testnet = ConfigUtil.isTestNet();
         // Paper trading: default true if not set, can be overridden to false for live trading
         String paperStr = ConfigUtil.get("PAPER_TRADING");
@@ -441,10 +441,10 @@ public class ChanWebSocketLauncher {
 
             // Enable proxy if configured
             String proxyHost = ConfigUtil.get("PROXY_HOST");
-            if (proxyHost != null && !proxyHost.isEmpty()) {
+            String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+            if (proxyHost != null && !proxyHost.isEmpty() && proxyPortStr != null && !proxyPortStr.isEmpty()) {
                 try {
-                    String proxyPortStr = ConfigUtil.get("PROXY_PORT");
-                    int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+                    int proxyPort = Integer.parseInt(proxyPortStr);
                     java.net.Proxy proxy = new java.net.Proxy(
                         java.net.Proxy.Type.HTTP,
                         new java.net.InetSocketAddress(proxyHost, proxyPort)
@@ -611,17 +611,18 @@ public class ChanWebSocketLauncher {
         try {
             // Enable proxy for WSL2 to use Windows VPN
             String proxyHost = ConfigUtil.get("PROXY_HOST");
-            if (proxyHost == null || proxyHost.isEmpty()) {
-                proxyHost = "127.0.0.1"; // Localhost proxy
-            }
             String proxyPortStr = ConfigUtil.get("PROXY_PORT");
-            String proxyPort = proxyPortStr != null ? proxyPortStr : "7897";
-
-            System.setProperty("https.proxyHost", proxyHost);
-            System.setProperty("https.proxyPort", proxyPort);
-            System.setProperty("http.proxyHost", proxyHost);
-            System.setProperty("http.proxyPort", proxyPort);
-            log.info("[Launcher] WebSocket proxy set: {}:{}", proxyHost, proxyPort);
+            if (proxyHost == null || proxyHost.isEmpty() || proxyPortStr == null || proxyPortStr.isEmpty()) {
+                log.info("[Launcher] Proxy not configured, direct connection");
+                proxyHost = null;
+                proxyPortStr = null;
+            } else {
+                System.setProperty("https.proxyHost", proxyHost);
+                System.setProperty("https.proxyPort", proxyPortStr);
+                System.setProperty("http.proxyHost", proxyHost);
+                System.setProperty("http.proxyPort", proxyPortStr);
+                log.info("[Launcher] WebSocket proxy set: {}:{}", proxyHost, proxyPortStr);
+            }
 
             wsClient = new UMWebsocketClientImpl("wss://fstream.binance.com/public");
 
@@ -696,8 +697,8 @@ public class ChanWebSocketLauncher {
             // Configure proxy from config
             String proxyHost = ConfigUtil.get("PROXY_HOST");
             String proxyPortStr = ConfigUtil.get("PROXY_PORT");
-            if (proxyHost != null && !proxyHost.isEmpty()) {
-                int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+            if (proxyHost != null && !proxyHost.isEmpty() && proxyPortStr != null && !proxyPortStr.isEmpty()) {
+                int proxyPort = Integer.parseInt(proxyPortStr);
                 userDataWsClient.setProxy(proxyHost, proxyPort);
                 log.info("[Launcher] UserData WS proxy set: {}:{}", proxyHost, proxyPort);
             }

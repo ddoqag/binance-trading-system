@@ -1,6 +1,8 @@
 package com.trading.infrastructure.execution.ws;
 
 import com.trading.domain.trading.model.Order;
+import com.trading.domain.trading.model.OrderIntent;
+import com.trading.domain.trading.model.BinanceExecutionSpec;
 import com.trading.domain.trading.model.TradeDirection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,9 +51,32 @@ public class WsApiRequestBuilder {
     public String buildPlaceOrderRequest(Order order, long timestamp) {
         LinkedHashMap<String, Object> params = new LinkedHashMap<>();
         params.put("symbol", order.getSymbol());
-        params.put("side", toBinanceSide(order.getSide()));
         params.put("type", toBinanceOrderType(order));
         params.put("quantity", formatQuantity(order.getQuantity()));
+
+        // P1: Use explicit OrderIntent if available (preferred path)
+        // This ensures correct side/positionSide/reduceOnly mapping
+        if (order.hasIntent()) {
+            BinanceExecutionSpec spec = BinanceExecutionSpec.from(order.getIntent());
+            params.put("side", spec.side());
+            // positionSide needed in hedge mode for non-MARKET orders only
+            // Binance WS-API rejects positionSide for MARKET orders (-1104)
+            if (spec.positionSide() != null && order.getOrderType() != com.trading.domain.trading.model.OrderType.MARKET) {
+                params.put("positionSide", spec.positionSide());
+            }
+            if (spec.reduceOnly()) {
+                params.put("reduceOnly", true);
+            }
+            log.info("[WsApiRequestBuilder] Intent={}, side={}, positionSide={}, reduceOnly={}, type={}",
+                order.getIntent(), spec.side(), spec.positionSide(), spec.reduceOnly(), order.getOrderType());
+        } else {
+            // Legacy fallback
+            params.put("side", toBinanceSide(order.getSide()));
+            if (order.isReduceOnly()) {
+                params.put("reduceOnly", true);
+            }
+            log.warn("[WsApiRequestBuilder] No intent on order {}, using legacy fallback", order.getOrderId());
+        }
 
         // Optional params based on order type
         if (order.getOrderType() == com.trading.domain.trading.model.OrderType.LIMIT ||
@@ -59,16 +84,20 @@ public class WsApiRequestBuilder {
             params.put("timeInForce", "GTC");
         }
 
-        if (order.getPrice() > 0) {
+        // P1: Required for futures - specify response type to avoid issues
+        // Use RESULT for better debugging (includes order status info)
+        // Note: MARKET orders may not support newOrderRespType, only add for non-MARKET
+        if (order.getOrderType() != com.trading.domain.trading.model.OrderType.MARKET) {
+            params.put("newOrderRespType", "RESULT");
+        }
+
+        // Only add price for non-MARKET orders (MARKET doesn't accept price)
+        if (order.getPrice() > 0 && order.getOrderType() != com.trading.domain.trading.model.OrderType.MARKET) {
             params.put("price", formatPrice(order.getPrice()));
         }
 
         if (order.getStopPrice() > 0) {
             params.put("stopPrice", formatPrice(order.getStopPrice()));
-        }
-
-        if (order.isReduceOnly()) {
-            params.put("reduceOnly", true);
         }
 
         if (order.isClosePosition()) {

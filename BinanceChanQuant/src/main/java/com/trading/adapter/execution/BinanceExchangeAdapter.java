@@ -126,19 +126,22 @@ public class BinanceExchangeAdapter {
             return Proxy.NO_PROXY;
         }
         String proxyPortStr = ConfigUtil.get("PROXY_PORT");
-        int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+        if (proxyPortStr == null || proxyPortStr.isEmpty()) {
+            return Proxy.NO_PROXY;
+        }
+        int proxyPort = Integer.parseInt(proxyPortStr);
         return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
     }
 
     private void setProxy() {
         String proxyHost = ConfigUtil.get("PROXY_HOST");
-        // Only enable proxy if PROXY_HOST is explicitly set (for China users behind VPN)
-        if (proxyHost == null || proxyHost.isEmpty()) {
-            log.info("[BinanceAdapter] Proxy disabled (PROXY_HOST not set)");
+        String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+        // Only enable proxy if both PROXY_HOST and PROXY_PORT are explicitly set
+        if (proxyHost == null || proxyHost.isEmpty() || proxyPortStr == null || proxyPortStr.isEmpty()) {
+            log.info("[BinanceAdapter] Proxy disabled (PROXY_HOST or PROXY_PORT not set)");
             return;
         }
-        String proxyPortStr = ConfigUtil.get("PROXY_PORT");
-        int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+        int proxyPort = Integer.parseInt(proxyPortStr);
         Proxy proxy = new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, proxyPort));
         ProxyAuth proxyAuth = new ProxyAuth(proxy, null);
         client.setProxy(proxyAuth);
@@ -163,10 +166,11 @@ public class BinanceExchangeAdapter {
 
             // Apply proxy settings
             String proxyHost = ConfigUtil.get("PROXY_HOST");
-            if (proxyHost != null && !proxyHost.isEmpty()) {
-                String proxyPortStr = ConfigUtil.get("PROXY_PORT");
-                int proxyPort = proxyPortStr != null ? Integer.parseInt(proxyPortStr) : 7897;
+            String proxyPortStr = ConfigUtil.get("PROXY_PORT");
+            if (proxyHost != null && !proxyHost.isEmpty() && proxyPortStr != null && !proxyPortStr.isEmpty()) {
+                int proxyPort = Integer.parseInt(proxyPortStr);
                 wsOrderRouter.setProxy(proxyHost, proxyPort);
+                log.info("[BinanceAdapter] WebSocket proxy set: {}:{}", proxyHost, proxyPort);
             }
 
             wsOrderRouter.connect();
@@ -268,22 +272,52 @@ public class BinanceExchangeAdapter {
             return simulateFill(order);
         }
 
-        // Try WebSocket API first if enabled and connected
-        if (wsOrderRouter != null && wsOrderRouter.isEnabled() && wsOrderRouter.isWsConnected()) {
+        // P0: For MARKET orders, skip WS-API and use REST directly
+        // WS-API returns -2010 for MARKET orders in hedge mode even with sufficient balance
+        // REST works correctly. This is a known Binance WS-API quirk.
+        boolean isMarketOrder = order.getOrderType() == com.trading.domain.trading.model.OrderType.MARKET;
+
+        // Try WebSocket API first for non-MARKET orders if enabled and connected
+        if (!isMarketOrder && wsOrderRouter != null && wsOrderRouter.isEnabled() && wsOrderRouter.isWsConnected()) {
             ExecutionReport wsReport = wsOrderRouter.sendOrder(order);
             if (wsReport != null) {
-                log.info("[BinanceAdapter] Order via WS: {} {} {} -> {}",
-                        order.getOrderId(), order.getSide(), order.getSymbol(), wsReport.getStatus());
+                log.info("[BinanceAdapter] Order via WS: {} {} {} -> {} (status={})",
+                        order.getOrderId(), order.getSide(), order.getSymbol(), wsReport.getStatus(), wsReport.getRejectReason());
+
+                // P0: If WS rejected with -1104 (positionSide issue), fallback to REST
+                // This handles the case where WS-API rejects positionSide on MARKET orders
+                if (wsReport.getStatus() == OrderStatus.REJECTED) {
+                    String rejectReason = wsReport.getRejectReason();
+                    if (rejectReason != null && rejectReason.contains("-1104")) {
+                        log.warn("[BinanceAdapter] WS rejected with -1104 (positionSide issue), fallback to REST");
+                        ExecutionReport restReport = orderSender.sendOrder(order);
+                        if (restReport != null && restReport.getStatus() == OrderStatus.FILLED) {
+                            totalFills.incrementAndGet();
+                            updateLocalPosition(order, restReport.getFilledQuantity(), restReport.getAvgFillPrice());
+                        }
+                        return restReport;
+                    }
+                    // For other rejections, return WS result
+                    if (wsReport.getStatus() == OrderStatus.FILLED) {
+                        totalFills.incrementAndGet();
+                        updateLocalPosition(order, wsReport.getFilledQuantity(), wsReport.getAvgFillPrice());
+                    }
+                    return wsReport;
+                }
+
+                // Success or other status
                 if (wsReport.getStatus() == OrderStatus.FILLED) {
                     totalFills.incrementAndGet();
                     updateLocalPosition(order, wsReport.getFilledQuantity(), wsReport.getAvgFillPrice());
                 }
                 return wsReport;
             }
-            log.debug("[BinanceAdapter] WS failed, fallback to REST");
+            log.debug("[BinanceAdapter] WS returned null, fallback to REST");
         }
 
-        // REST fallback
+        // REST fallback (or direct for MARKET orders)
+        log.info("[BinanceAdapter] Order via REST: {} {} {} (marketOrder={})",
+                order.getOrderId(), order.getSide(), order.getSymbol(), isMarketOrder);
         ExecutionReport report = orderSender.sendOrder(order);
 
         if (report != null && report.getStatus() == OrderStatus.FILLED) {

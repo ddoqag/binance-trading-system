@@ -299,6 +299,7 @@ public class BinanceWsApiClient {
                 CompletableFuture<JsonNode> future = pendingRequests.remove(id);
 
                 if (future != null) {
+                    log.debug("[WsApi] Recv: id={} status={}", id, node.has("status") ? node.get("status").asInt() : "N/A");
                     future.complete(node);
                 } else {
                     log.warn("[WsApi] No pending request for id: {}", id);
@@ -438,7 +439,11 @@ public class BinanceWsApiClient {
 
         // Send request
         webSocket.send(request);
-        log.debug("[WsApi] Sent: {}", request.substring(0, Math.min(100, request.length())));
+        log.info("[WsApi] Sent: {}", request);
+
+        if (log.isDebugEnabled()) {
+            log.debug("[WsApi] Request JSON: {}", request);
+        }
 
         return future;
     }
