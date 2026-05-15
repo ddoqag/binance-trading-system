@@ -69,6 +69,21 @@ public class SignalCooldownManager {
      * @return true if signal should be ignored, false if allowed
      */
     public boolean shouldIgnoreWithPosition(String symbol, TradeDirection direction, double confidence, double currentPosition) {
+        return shouldIgnoreWithContext(symbol, direction, confidence, currentPosition, 0.0);
+    }
+
+    /**
+     * Enhanced cooldown check with Chan signal context.
+     * If Chan signal confidence is very high (>0.9), reduces post-close cooldown.
+     *
+     * @param direction new signal direction
+     * @param confidence signal confidence (0-1)
+     * @param currentPosition current position size
+     * @param chanSignalConfidence Chan expert signal confidence (0-1), 0 if not available
+     * @return true if signal should be ignored, false if allowed
+     */
+    public boolean shouldIgnoreWithContext(String symbol, TradeDirection direction, double confidence,
+                                           double currentPosition, double chanSignalConfidence) {
         long now = System.currentTimeMillis();
         SignalHistory h = history.computeIfAbsent(symbol, k -> new SignalHistory());
 
@@ -83,9 +98,17 @@ public class SignalCooldownManager {
             if (lastCloseTime > 0 && now - lastCloseTime < postCloseCooldown.toMillis()) {
                 TradeDirection lastClosedDir = h.lastClosedDirection.get();
                 if (lastClosedDir == direction) {
-                    log.debug("[SignalCooldown] Post-close cooldown: pos={}, just closed {}, ignoring {} for {}s",
-                        currentPosition, lastClosedDir, direction, (postCloseCooldown.toMillis() - (now - lastCloseTime)) / 1000);
-                    return true;
+                    // P1 OPTIMIZATION: If Chan signal is very strong, reduce cooldown
+                    Duration effectiveCooldown = postCloseCooldown;
+                    if (chanSignalConfidence > 0.9) {
+                        effectiveCooldown = Duration.ofSeconds(10); // Shorten to 10s for strong signals
+                        log.info("[SignalCooldown] Strong Chan signal (conf={}), shortening post-close cooldown to 10s", chanSignalConfidence);
+                    }
+                    if (now - lastCloseTime < effectiveCooldown.toMillis()) {
+                        log.debug("[SignalCooldown] Post-close cooldown: pos={}, just closed {}, ignoring {} for {}s",
+                            currentPosition, lastClosedDir, direction, (effectiveCooldown.toMillis() - (now - lastCloseTime)) / 1000);
+                        return true;
+                    }
                 }
             }
         }

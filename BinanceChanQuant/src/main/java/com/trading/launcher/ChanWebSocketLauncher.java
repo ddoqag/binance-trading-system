@@ -716,11 +716,17 @@ public class ChanWebSocketLauncher {
             });
 
             userDataWsClient.setOnAccountUpdate(event -> {
-                log.debug("[Launcher] UserData WS balance update: wallet={} avail={} pnl={}",
-                    event.walletBalance, event.availableBalance, event.unrealizedPnl);
-                // Forward to exchange adapter
+                log.info("[Launcher] UserData WS account update: balance={} avail={} pnl={} pos={} {} @ {}",
+                    event.walletBalance, event.availableBalance, event.unrealizedPnl,
+                    event.positionAmt, event.positionSide, event.entryPrice);
+                // Forward balance update to exchange adapter
                 exchangeAdapter.onWebSocketBalanceUpdate(
                     event.walletBalance, event.availableBalance, event.unrealizedPnl);
+                // Forward position update (real-time via WebSocket)
+                if (Math.abs(event.positionAmt) > 0.0001) {
+                    exchangeAdapter.onWebSocketPositionUpdate(
+                        event.positionAmt, event.entryPrice, event.unrealizedPnl);
+                }
             });
 
             userDataWsClient.setOnStateChange(state -> {

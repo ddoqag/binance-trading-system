@@ -546,16 +546,27 @@ public class UserDataWebSocketClient {
         }
 
         // 解析持仓
+        double positionAmt = 0;
+        double entryPrice = 0;
+        String positionSide = "";
         if (a.has("P")) {
             JsonNode positions = a.get("P");
             for (JsonNode p : positions) {
                 unrealizedPnl += getDouble(p, "up");
                 totalMargin += getDouble(p, "mm");
+                // Extract position info from first BTCUSDT position
+                String posSymbol = getText(p, "s");
+                if ("BTCUSDT".equals(posSymbol)) {
+                    positionAmt = getDouble(p, "pa");
+                    entryPrice = getDouble(p, "ep");
+                    positionSide = getText(p, "ps");
+                }
             }
         }
 
         AccountUpdateEvent event = new AccountUpdateEvent(
-                walletBalance, totalMargin, availableBalance, unrealizedPnl
+                walletBalance, totalMargin, availableBalance, unrealizedPnl,
+                positionAmt, entryPrice, positionSide
         );
 
         // 更新 AccountStateStore
@@ -632,13 +643,20 @@ public class UserDataWebSocketClient {
         public final double totalMargin;
         public final double availableBalance;
         public final double unrealizedPnl;
+        public final double positionAmt;
+        public final double entryPrice;
+        public final String positionSide;
 
         public AccountUpdateEvent(double walletBalance, double totalMargin,
-                                  double availableBalance, double unrealizedPnl) {
+                                  double availableBalance, double unrealizedPnl,
+                                  double positionAmt, double entryPrice, String positionSide) {
             this.walletBalance = walletBalance;
             this.totalMargin = totalMargin;
             this.availableBalance = availableBalance;
             this.unrealizedPnl = unrealizedPnl;
+            this.positionAmt = positionAmt;
+            this.entryPrice = entryPrice;
+            this.positionSide = positionSide;
         }
     }
 }
