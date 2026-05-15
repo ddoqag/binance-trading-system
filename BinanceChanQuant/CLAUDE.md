@@ -151,6 +151,43 @@ metaLearner.recordOutcome(AlphaType.MEAN_REVERSION, 0.5, 10.0);
 - `StrategySelector` — Auto-selects highest-scoring plugin matching current state
 - `PluginHotSwapEngine` — Scans `plugins/` directory every 5s for `.jar` hot-swap
 
+### Legacy Trading API (trade/BinanceFuturesApi.java)
+
+**Purpose:** Simple market order API for basic futures trading
+
+**Market Orders:**
+```java
+BinanceFuturesApi api = new BinanceFuturesApi(apiKey, apiSecret, symbol);
+api.openLong(qty);    // Open long position
+api.openShort(qty);   // Open short position
+api.closeLong(qty);   // Close long (reduceOnly)
+api.closeShort(qty);   // Close short (reduceOnly)
+```
+
+**Algo Orders (Stop Loss / Take Profit / Trailing Stop):**
+```java
+// Stop Market Order
+api.stopLossMarket(qty, triggerPrice, "SELL", true);
+
+// Take Profit Market Order
+api.takeProfitMarket(qty, triggerPrice, "SELL", true);
+
+// Trailing Stop Market
+api.trailingStopMarket(qty, activatePrice, callbackRate, "SELL");
+
+// Close entire position on trigger
+api.closePositionTrigger(triggerPrice, "SELL");
+```
+
+**Query APIs:**
+```java
+api.getPositionInformation();  // Position info (symbol, size, entry price, PnL)
+api.getAccountBalance();        // Account balance
+api.getAccountConfig();         // Leverage, margin type
+api.getOpenOrders();             // Current open orders
+api.getAccountTradeList();      // Filled orders history
+```
+
 ### Shared Memory Layout (V2SHMClient)
 
 Total: 1296 bytes
@@ -198,6 +235,12 @@ Total: 1296 bytes
 - Catastrophic: -5%
 
 **Key Principle:** Price-based stops, NOT equity-based.
+
+**BinanceAlgoClient (P0 Protection):**
+- `BinanceExchangeAdapter` uses `BinanceAlgoClient` for direct `/fapi/v1/algoOrder` access
+- Handles STOP_MARKET with `closePosition=true` for emergency protection
+- Bypasses connector limitations for survival layer orders
+- See `com.trading.adapter.execution.BinanceAlgoClient`
 
 ### PositionSignalManager
 

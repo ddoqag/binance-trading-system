@@ -265,7 +265,7 @@ public class ExecutionEngine {
                     // Check notional for small orders
                     double notional = routedOrder.getQuantity() * routedOrder.getPrice();
                     double availableBalance = exchangeAdapter.getAvailableBalance();
-                    double maxNotional = availableBalance * 20 * 0.5;
+                    double maxNotional = availableBalance * 10 * 0.5;
 
                     if (notional > 0 && notional < maxNotional) {
                         sendOrderDirect(routedOrder);
@@ -325,6 +325,11 @@ public class ExecutionEngine {
                 order.getOrderType(), order.getQuantity(), adjustedPrice,
                 order.getStrategy(), order.getUrgency());
         adjustedOrder.setConfidence(order.getConfidence());
+
+        // P1: Preserve intent across order transformation
+        if (order.hasIntent()) {
+            adjustedOrder.setIntent(order.getIntent());
+        }
 
         ExecutionReport report = exchangeAdapter.sendOrder(adjustedOrder);
         if (report != null) {

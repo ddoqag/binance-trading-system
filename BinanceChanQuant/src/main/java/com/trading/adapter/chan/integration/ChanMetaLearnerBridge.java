@@ -15,6 +15,7 @@ import com.trading.adapter.chan.wrapper.ChanTrendStrategyAdapter;
 import com.trading.adapter.chan.wrapper.ChanGridStrategyAdapter;
 import com.trading.domain.market.model.MarketData;
 import com.trading.domain.market.model.MarketRegime;
+import com.trading.domain.market.RegimeCalculator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -164,21 +165,10 @@ public class ChanMetaLearnerBridge {
 
     /**
      * Determine regime from current context (after K-line processed)
+     * Uses RegimeCalculator for Single Source of Truth consistency
      */
     public MarketRegime determineRegimeFromContext(KlineContext ctx) {
-        if (ctx == null || ctx.zhongshu == null) {
-            if (ctx != null && ctx.lastFenxing != null) {
-                return ctx.lastFenxing.type == Fenxing.Type.TOP
-                    ? MarketRegime.TREND_DOWN : MarketRegime.TREND_UP;
-            }
-            return MarketRegime.RANGE;
-        }
-
-        if (ctx.lastBi != null) {
-            return ctx.lastBi.direction == Bi.Direction.UP
-                ? MarketRegime.TREND_UP : MarketRegime.TREND_DOWN;
-        }
-        return MarketRegime.RANGE;
+        return RegimeCalculator.calculate(ctx);
     }
 
     public double calculateDynamicWeight(MarketRegime regime) {

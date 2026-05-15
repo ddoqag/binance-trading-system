@@ -194,7 +194,10 @@ public class AlgoExecutionEngine {
             this.order = order;
             this.totalQuantity = order.getQuantity();
             this.numSlices = 10;
-            this.sliceQuantity = totalQuantity / numSlices;
+            // CRITICAL: Slice qty must be divisible by stepSize (0.001 BTC)
+            // Floor to stepSize to ensure Binance compliance (qty % stepSize == 0)
+            this.sliceQuantity = Math.floor((totalQuantity / numSlices) / 0.001) * 0.001;
+            this.sliceQuantity = Math.max(0.001, this.sliceQuantity); // Min 0.001 BTC per slice
             this.startTime = System.currentTimeMillis();
             this.sliceInterval = 10000; // 10 seconds for live trading (reduced from 60s)
         }
@@ -218,8 +221,8 @@ public class AlgoExecutionEngine {
             Slice slice = new Slice();
             slice.orderId = order.getOrderId() + "_twap_" + currentSlice;
             slice.quantity = sliceQuantity;
-            slice.orderType = OrderType.LIMIT;
-            slice.timeInForce = 300; // GTC-like behavior with timeInForce
+            slice.orderType = OrderType.MARKET; // Use MARKET for immediate fill
+            slice.timeInForce = 0;
 
             // Use order's original price as fallback when marketData is null
             double referencePrice = order.getPrice();
@@ -394,11 +397,17 @@ public class AlgoExecutionEngine {
                     order.getUrgency()
                 );
 
+                // P1: CRITICAL - Preserve intent across all TWAP slices
+                // Parent intent must NOT be lost during algo execution
+                if (order.hasIntent()) {
+                    sliceOrder.setIntent(order.getIntent());
+                }
+
                 if (exchangeAdapter != null) {
                     ExecutionReport report = exchangeAdapter.sendOrder(sliceOrder);
                     if (report != null && report.getStatus() == OrderStatus.REJECTED) {
                         consecutiveFailures++;
-                        String reason = report.getAvgFillPrice() > 0 ? "rejected" : "margin insufficient";
+                        String reason = report.getRejectReason() != null ? report.getRejectReason() : "unknown";
                         log.warn("[AlgoExecution] Slice {} failed ({}), failures={}/{}", slice.orderId, reason, consecutiveFailures, MAX_CONSECUTIVE_FAILURES);
                         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                             log.warn("[AlgoExecution] Stopping TWAP: too many failures");

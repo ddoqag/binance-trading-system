@@ -367,6 +367,10 @@ public class ChanWebSocketLauncher {
             riskChecker.updateBalance(initialBalance);
             log.info("[Launcher] Initial balance: {} USDT", String.format("%.4f", initialBalance));
 
+            // Set 10x leverage for live trading
+            exchangeAdapter.setLeverage(10);
+            log.info("[Launcher] Leverage set to 10x");
+
             // Enable WebSocket trading (WS-API v3) with REST fallback
             if (ConfigUtil.getBoolean("trading.ws-api.enabled")) {
                 exchangeAdapter.enableWebSocketTrading();
@@ -1205,6 +1209,14 @@ public class ChanWebSocketLauncher {
         );
         order.setConfidence(confidence);
 
+        // P1: Set explicit OrderIntent for unambiguous execution
+        // This fixes margin insufficient errors by proper Binance API mapping
+        com.trading.domain.trading.model.OrderIntent orderIntent =
+            signal.getDirection() == com.trading.domain.trading.model.TradeDirection.LONG
+                ? com.trading.domain.trading.model.OrderIntent.OPEN_LONG
+                : com.trading.domain.trading.model.OrderIntent.OPEN_SHORT;
+        order.setIntent(orderIntent);
+
         // Submit to execution engine
         if (executionEngine.submitOrder(order)) {
             log.info("[Launcher] ORDER: {} conf={} score=0.0 {} {} @ {}",
@@ -1221,7 +1233,7 @@ public class ChanWebSocketLauncher {
      * Hard Floor: Ensures Binance exchange compliance (minQty, minNotional, stepSize)
      */
     private double calculateDynamicQuantity(CompositeAlphaSignal signal, MarketContext context) {
-        double baseQty = 0.001;  // Base: 0.001 BTC
+        double baseQty = 0.001;  // Base: 0.001 BTC (minimum for Binance BTCUSDT)
 
         // Confidence factor: 0.55-0.90 → 0.7-1.3
         double confidenceFactor = 0.7 + (signal.getConfidence() - 0.55) * (0.6 / 0.35);
@@ -1239,7 +1251,7 @@ public class ChanWebSocketLauncher {
         double maxQty = riskChecker.getDynamicPositionLimit() * 0.1;  // 10% of limit
         double equityLimit = 0.002;  // Max 0.002 BTC (~2% of $80 equity at $40k)
 
-        rawQty = Math.max(0.0001, Math.min(Math.min(rawQty, maxQty), equityLimit));
+        rawQty = Math.max(0.001, Math.min(Math.min(rawQty, maxQty), equityLimit));
 
         // Apply Hard Floor and stepSize rounding via QuantityCalculator
         double currentPrice = (context != null) ? context.getCurrentPrice() : lastPrice;
