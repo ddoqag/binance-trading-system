@@ -418,11 +418,20 @@ public class ProtectionOrderManager {
                     boolean adopted = tryAdoptWithRetry(symbol, closeDirection, quantity, entryPrice, 3);
                     if (adopted) {
                         log.info("[Protection] Successfully adopted existing stop after -4130");
+                        // Important: we did NOT remove old protection before attempting new one
+                        // So if adopt succeeds, activeProtections already has the valid existing stop
                         return;
                     }
                     // Could not query to confirm, but exchange confirmed order exists
-                    // Adopt optimistically with minimal info
+                    // Adopt optimistically with minimal info - preserve old info if it exists
                     log.warn("[Protection] Could not query existing stop, adopting optimistically");
+                    ProtectionInfo existingInfo = activeProtections.get(symbol);
+                    if (existingInfo != null) {
+                        // We still have the old protection info - likely new order failed but old is still valid
+                        log.info("[Protection] Keeping existing protection: {} @ {}", existingInfo.orderId, existingInfo.stopPrice);
+                        return;
+                    }
+                    // No existing info - create new adopted info
                     String adoptedOrderId = "adopted-" + symbol + "-" + System.currentTimeMillis();
                     ProtectionInfo info = new ProtectionInfo(adoptedOrderId, quantity, stopPrice, closeDirection);
                     activeProtections.put(symbol, info);
