@@ -56,6 +56,10 @@ public class ProtectionOrderManager {
     private static final double DEFAULT_STOP_MULTIPLIER = 2.0;
     private static final double MIN_STOP_DISTANCE_PCT = 0.005; // 0.5% minimum
 
+    // Default trailing stop callback rate (0.0 = disabled, use static stop)
+    // Set to e.g., 0.8 for 0.8% trailing callback
+    private static final double DEFAULT_TRAILING_CALLBACK_RATE = 0.8;
+
     public ProtectionOrderManager(BinanceExchangeAdapter exchangeAdapter, boolean paperTrading) {
         this.exchangeAdapter = exchangeAdapter;
         this.paperTrading = paperTrading;
@@ -94,7 +98,8 @@ public class ProtectionOrderManager {
         }
 
         // Create and submit protection order
-        attachStopLoss(symbol, filledQty, fillPrice, direction, stopPrice);
+        // Set callbackRate > 0 to enable trailing stop instead of static stop
+        attachStopLoss(symbol, filledQty, fillPrice, direction, stopPrice, DEFAULT_TRAILING_CALLBACK_RATE);
     }
 
     /**
@@ -117,9 +122,10 @@ public class ProtectionOrderManager {
 
     /**
      * Attach stop loss order to exchange
+     * @param callbackRate > 0 enables trailing stop with this callback percentage
      */
     private void attachStopLoss(String symbol, double qty, double entryPrice,
-                                TradeDirection direction, double stopPrice) {
+                                TradeDirection direction, double stopPrice, double callbackRate) {
         try {
             // Create STOP_MARKET order (will be rejected if already protected)
             TradeDirection closeDirection = direction.getOpposite();
@@ -129,18 +135,17 @@ public class ProtectionOrderManager {
                 orderId,
                 symbol,
                 closeDirection,
-                OrderType.STOP,
+                OrderType.STOP_MARKET,
                 qty,
                 stopPrice,
                 "protection",
                 1.0
             );
             stopOrder.setStopPrice(stopPrice);
-            // reduceOnly is determined by isCloseOrder logic in BinanceOrderSender
-            // when side=SHORT for LONG position (or vice versa) in hedge mode
+            stopOrder.setClosePosition(true);
 
-            // Submit directly to exchange
-            ExecutionReport report = exchangeAdapter.sendOrder(stopOrder);
+            // Submit via protection order (supports trailing stop when callbackRate > 0)
+            ExecutionReport report = exchangeAdapter.sendProtectionOrder(stopOrder, callbackRate);
 
             if (report != null && report.getStatus() == OrderStatus.FILLED) {
                 log.warn("[Protection] Stop loss immediately filled - position already closed. Clearing protection.");
@@ -151,8 +156,13 @@ public class ProtectionOrderManager {
             if (report != null && report.getStatus() == OrderStatus.NEW) {
                 // Store exchange order ID for cancellation
                 String exchangeId = report.getExchangeOrderId();
-                activeProtections.put(symbol, new ProtectionInfo(orderId, qty, stopPrice, direction, exchangeId));
-                log.info("[Protection] Attached: {} {} stop @ {} (exchangeId={})", symbol, qty, stopPrice, exchangeId);
+                activeProtections.put(symbol, new ProtectionInfo(orderId, qty, stopPrice, direction, exchangeId, callbackRate));
+                if (callbackRate > 0) {
+                    log.info("[Protection] Attached TRAILING STOP: {} {} @ {} (activatePrice={}, callbackRate={}%)",
+                            symbol, qty, stopPrice, stopPrice, callbackRate);
+                } else {
+                    log.info("[Protection] Attached: {} {} stop @ {} (exchangeId={})", symbol, qty, stopPrice, exchangeId);
+                }
             } else if (report != null && report.getStatus() == OrderStatus.REJECTED) {
                 log.warn("[Protection] Stop rejected: {} - {}", orderId, report.getRejectReason());
             } else {
@@ -195,7 +205,7 @@ public class ProtectionOrderManager {
             if (exchangeOrderId.matches("\\d+")) {
                 // Numeric ID - could be either regular order or algo order
                 // Try algo cancel first since protection orders are typically algo orders
-                boolean cancelled = exchangeAdapter.cancelAlgoOrder(exchangeOrderId);
+                boolean cancelled = exchangeAdapter.cancelAlgoOrder(exchangeOrderId, symbol);
                 if (cancelled) {
                     log.info("[Protection] Algo protection cancelled on exchange for {}", symbol);
                 } else {
@@ -229,6 +239,52 @@ public class ProtectionOrderManager {
      */
     public ProtectionInfo getProtection(String symbol) {
         return activeProtections.get(symbol);
+    }
+
+    /**
+     * Upgrade existing static stop to trailing stop.
+     * Cancels existing stop and places new trailing stop.
+     *
+     * @param symbol Trading symbol
+     * @param callbackRate Trailing callback rate percentage (e.g., 0.8 = 0.8%)
+     * @return true if upgrade successful
+     */
+    public boolean upgradeToTrailingStop(String symbol, double callbackRate) {
+        ProtectionInfo existing = activeProtections.get(symbol);
+        if (existing == null) {
+            log.warn("[Protection] Cannot upgrade - no active protection for {}", symbol);
+            return false;
+        }
+
+        // Cancel existing stop
+        log.info("[Protection] Upgrading {} to trailing stop (callbackRate={}%)", symbol, callbackRate);
+        if (existing.clientOrderId != null) {
+            cancelProtection(symbol, existing.clientOrderId);
+        }
+
+        // Get current position info
+        double currentPrice = exchangeAdapter.getBidPrice();
+        if (currentPrice <= 0) {
+            currentPrice = exchangeAdapter.getAskPrice();
+        }
+
+        TradeDirection closeDirection = existing.entryDirection == TradeDirection.LONG
+            ? TradeDirection.SHORT : TradeDirection.LONG;
+
+        // For trailing stop on SHORT: activatePrice should be below current price
+        // Price rises to activate
+        double activatePrice = existing.entryDirection == TradeDirection.SHORT
+            ? currentPrice * 0.99  // 1% below current for SHORT position
+            : currentPrice * 1.01; // 1% above current for LONG position
+
+        // Remove old protection
+        activeProtections.remove(symbol);
+
+        // Attach trailing stop
+        attachEmergencyStop(symbol, closeDirection, existing.quantity,
+            existing.stopPrice, activatePrice, callbackRate);
+
+        return true;
     }
 
     /**
@@ -275,6 +331,22 @@ public class ProtectionOrderManager {
      */
     public void attachEmergencyStop(String symbol, TradeDirection closeDirection,
                                     double quantity, double entryPrice, double stopPrice) {
+        attachEmergencyStop(symbol, closeDirection, quantity, entryPrice, stopPrice, 0.0);
+    }
+
+    /**
+     * Attach emergency stop OR trailing stop to a position.
+     *
+     * @param symbol Trading symbol
+     * @param closeDirection Direction to close (opposite of position)
+     * @param quantity Position quantity
+     * @param entryPrice Position entry price (used for idempotency key)
+     * @param stopPrice Stop price (for trailing stop = activatePrice)
+     * @param callbackRate > 0 enables trailing stop with this callback percentage (e.g., 0.8 = 0.8%)
+     */
+    public void attachEmergencyStop(String symbol, TradeDirection closeDirection,
+                                    double quantity, double entryPrice, double stopPrice,
+                                    double callbackRate) {
         try {
             // P0.5: Idempotency check - prevent duplicate stop within 5 minutes per key
             long now = System.currentTimeMillis();
@@ -326,7 +398,8 @@ public class ProtectionOrderManager {
             stopOrder.setClosePosition(true);
 
             // Use Algo API for guaranteed execution protection
-            ExecutionReport report = exchangeAdapter.sendProtectionOrder(stopOrder);
+            // Pass callbackRate > 0 to enable trailing stop
+            ExecutionReport report = exchangeAdapter.sendProtectionOrder(stopOrder, callbackRate);
 
             if (report != null && report.getStatus() == OrderStatus.NEW) {
                 String exchangeId = report.getExchangeOrderId();
@@ -354,6 +427,26 @@ public class ProtectionOrderManager {
                     ProtectionInfo info = new ProtectionInfo(adoptedOrderId, quantity, stopPrice, closeDirection);
                     activeProtections.put(symbol, info);
                     log.info("[Protection] OPTIMISTIC ADOPT: {} @ {} (stopPrice={})", symbol, quantity, stopPrice);
+                    return;
+                }
+
+                // P0: Handle "Fallback denied" - Algo API failed and cannot fallback
+                // This is a FATAL state: network issues prevent stop loss attachment
+                if (rejectReason != null && rejectReason.contains("Fallback denied")) {
+                    log.error("[Protection] FATAL: Algo API failed, fallback blocked (closePosition=true not supported by regular API). Symbol={}, StopPrice={}, Qty={}",
+                            symbol, stopPrice, quantity);
+                    // Still try to adopt existing stop order if one exists
+                    boolean adopted = tryAdoptWithRetry(symbol, closeDirection, quantity, entryPrice, 3);
+                    if (adopted) {
+                        log.info("[Protection] Adopted existing stop after Algo failure");
+                        return;
+                    }
+                    // If cannot adopt, this position has NO protection - log critical alert
+                    // The position remains open without stop loss - human intervention required
+                    log.error("[Protection] CRITICAL: Position {} has NO stop protection! Symbol={}, Qty={}, EntryPrice={}. Manual intervention required.",
+                            symbol, symbol, quantity, entryPrice);
+                    // Recovery service will handle SAFE_MODE via periodic checks
+                    recentlyAttached.remove(idempotencyKey);
                     return;
                 }
 
@@ -416,20 +509,27 @@ public class ProtectionOrderManager {
         public final TradeDirection entryDirection;
         public final long createTime;
         public final String clientOrderId; // Binance order ID for cancellation
+        public final double callbackRate; // > 0 indicates trailing stop
 
         public ProtectionInfo(String orderId, double quantity, double stopPrice,
                              TradeDirection entryDirection) {
-            this(orderId, quantity, stopPrice, entryDirection, null);
+            this(orderId, quantity, stopPrice, entryDirection, null, 0.0);
         }
 
         public ProtectionInfo(String orderId, double quantity, double stopPrice,
                              TradeDirection entryDirection, String clientOrderId) {
+            this(orderId, quantity, stopPrice, entryDirection, clientOrderId, 0.0);
+        }
+
+        public ProtectionInfo(String orderId, double quantity, double stopPrice,
+                             TradeDirection entryDirection, String clientOrderId, double callbackRate) {
             this.orderId = orderId;
             this.quantity = quantity;
             this.stopPrice = stopPrice;
             this.entryDirection = entryDirection;
             this.createTime = System.currentTimeMillis();
             this.clientOrderId = clientOrderId;
+            this.callbackRate = callbackRate;
         }
     }
 

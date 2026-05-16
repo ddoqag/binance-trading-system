@@ -334,10 +334,38 @@ public class BinanceExchangeAdapter {
      * Falls back to regular order API if Algo API is unavailable.
      */
     public ExecutionReport sendProtectionOrder(Order order) {
-        log.info("[BinanceAdapter] sendProtectionOrder called: type={}, closePosition={}, algoClient={}",
-                order.getOrderType(), order.isClosePosition(), algoClient);
+        return sendProtectionOrder(order, 0.0);
+    }
+
+    /**
+     * Send protection order via Algo API (P0 survival layer).
+     * Uses Binance's Algo Order API which supports STOP_MARKET with closePosition.
+     * Falls back to regular order API if Algo API is unavailable.
+     *
+     * @param order Protection order
+     * @param callbackRate For trailing stop: callback rate percentage (0.0 = use regular stop)
+     */
+    public ExecutionReport sendProtectionOrder(Order order, double callbackRate) {
+        log.info("[BinanceAdapter] sendProtectionOrder called: type={}, closePosition={}, algoClient={}, callbackRate={}",
+                order.getOrderType(), order.isClosePosition(), algoClient, callbackRate);
         if (paperTrading) {
             return simulateFill(order);
+        }
+
+        // Use trailing stop if callbackRate > 0
+        if (callbackRate > 0 && order.getOrderType() == OrderType.STOP_MARKET && algoClient != null) {
+            ExecutionReport report = algoClient.sendTrailingStopOrder(order, callbackRate);
+            log.info("[BinanceAdapter] Trailing stop result: status={}, report={}", report != null ? report.getStatus() : "null", report);
+            if (report != null && report.getStatus() == OrderStatus.NEW) {
+                log.info("[BinanceAdapter] Trailing stop sent via Algo API: {} {} @ {} (callbackRate={}%)",
+                        order.getSymbol(), order.getQuantity(), order.getStopPrice(), callbackRate);
+                return report;
+            }
+            if (report == null) {
+                log.warn("[BinanceAdapter] Trailing stop returned null, falling back to regular stop");
+            } else {
+                log.warn("[BinanceAdapter] Trailing stop failed with status {}, falling back to regular stop", report.getStatus());
+            }
         }
 
         // Try Algo API first (supports closePosition for guaranteed exit)
@@ -359,9 +387,24 @@ public class BinanceExchangeAdapter {
             }
             // Algo API failed (returned null on known error) - fall through to regular order API
             if (report == null) {
-                log.warn("[BinanceAdapter] Algo API returned null (likely rejected), falling back to regular order API");
+                log.warn("[BinanceAdapter] Algo API returned null (likely network/handshake error)");
             } else {
                 log.warn("[BinanceAdapter] Algo API failed with status {}, falling back to regular order API", report.getStatus());
+            }
+
+            // P0 Fix: Block illegal fallback when closePosition=true.
+            // /fapi/v1/order does NOT support STOP_MARKET with closePosition=true.
+            // Only /fapi/v1/algoOrder supports this. Returning FAILED to let caller retry or alert.
+            if (order.isClosePosition()) {
+                log.error("[BinanceAdapter] FATAL: Algo API failed but cannot fallback (closePosition=true not supported by regular API). Returning FAILED report.");
+                ExecutionReport failedReport = new ExecutionReport(
+                    order.getOrderId(), order.getSymbol(), order.getSide(),
+                    order.getOrderType(), order.getQuantity(), order.getPrice(),
+                    0.0, 0.0, OrderStatus.REJECTED, System.currentTimeMillis(),
+                    0.0, 0.0, 0.0, 0L,
+                    "Algo API failed, fallback denied: /fapi/v1/order does not support STOP_MARKET with closePosition=true",
+                    null);
+                return failedReport;
             }
         }
 
@@ -374,11 +417,11 @@ public class BinanceExchangeAdapter {
         return orderSender.cancelOrder(orderId, binanceOrderId);
     }
 
-    public boolean cancelAlgoOrder(String algoId) {
+    public boolean cancelAlgoOrder(String algoId, String symbol) {
         if (algoClient == null) {
             return false;
         }
-        return algoClient.cancelAlgoOrder(algoId);
+        return algoClient.cancelAlgoOrder(algoId, symbol);
     }
 
     public ExecutionReport queryOrder(String orderId, long binanceOrderId) {

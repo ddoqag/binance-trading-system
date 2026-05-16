@@ -21,6 +21,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Binance Algo Orders Client
@@ -43,6 +44,13 @@ public class BinanceAlgoClient {
     private final String baseUrl;
     private final Proxy proxy;
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    // Circuit breaker: after consecutive proxy failures, switch to direct connection
+    private static final int CIRCUIT_BREAKER_THRESHOLD = 3;
+    private final AtomicInteger consecutiveProxyFailures = new AtomicInteger(0);
+    private volatile boolean proxyCircuitOpen = false;
+    private long circuitOpenSince = 0;
+    private static final long CIRCUIT_RESET_TIMEOUT_MS = 30000; // 30s
 
     public BinanceAlgoClient(String apiKey, String apiSecret, String baseUrl, Proxy proxy) {
         this.apiKey = apiKey;
@@ -96,7 +104,31 @@ public class BinanceAlgoClient {
 
             String signature = signParams(params);
 
-            String resp = executePost("/fapi/v1/algoOrder", params, signature, timestamp);
+            // P1: Circuit breaker - if proxy is failing, try direct connection
+            String resp;
+            if (shouldTryDirect()) {
+                log.warn("[BinanceAlgo] Proxy circuit open, trying direct connection");
+                try {
+                    resp = executePostDirect("/fapi/v1/algoOrder", params, signature, timestamp);
+                    if (resp != null) {
+                        // Direct worked - reset circuit breaker
+                        resetCircuitBreaker();
+                    }
+                } catch (Exception e) {
+                    log.error("[BinanceAlgo] Direct connection also failed: {}", e.getMessage());
+                    recordProxyFailure();
+                    throw e;
+                }
+            } else {
+                resp = executePost("/fapi/v1/algoOrder", params, signature, timestamp);
+                // If proxy succeeded, reset counter
+                if (!resp.startsWith("{")) {  // non-JSON means network error
+                    recordProxyFailure();
+                } else if (!resp.contains("\"code\":")) {
+                    // Successful JSON response (no error code) - reset
+                    resetCircuitBreaker();
+                }
+            }
 
             if (resp.startsWith("{")) {
                 // Check for error codes
@@ -223,12 +255,12 @@ public class BinanceAlgoClient {
     /**
      * Query algo order status.
      */
-    public ExecutionReport queryAlgoOrder(String algoId) {
+    public ExecutionReport queryAlgoOrder(String algoId, String symbol) {
         try {
             long timestamp = System.currentTimeMillis();
 
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
-            params.put("symbol", "BTCUSDT");  // TODO: pass symbol
+            params.put("symbol", symbol);
             params.put("orderId", algoId);
             params.put("timestamp", timestamp);
 
@@ -246,14 +278,93 @@ public class BinanceAlgoClient {
     }
 
     /**
+     * Send TRAILING_STOP_MARKET order for dynamic trailing protection.
+     *
+     * <p>Trailing stop adjusts automatically as price moves in favorable direction.
+     * This provides dynamic protection that locks in more profit as market moves.
+     *
+     * @param order Order with side, quantity, stopPrice (activatePrice), callbackRate set
+     * @return ExecutionReport with status
+     */
+    public ExecutionReport sendTrailingStopOrder(Order order, double callbackRate) {
+        try {
+            long timestamp = System.currentTimeMillis();
+
+            // For trailing stop: order.getStopPrice() = activatePrice
+            // side determines close direction:
+            //   - To close SHORT position: BUY (we buy to close short)
+            //   - To close LONG position: SELL (we sell to close long)
+            LinkedHashMap<String, Object> params = new LinkedHashMap<>();
+            params.put("symbol", order.getSymbol());
+            params.put("side", order.getSide() == TradeDirection.LONG ? "BUY" : "SELL");
+            params.put("type", "TRAILING_STOP_MARKET");
+            params.put("algoType", "CONDITIONAL");
+            params.put("quantity", formatQuantity(order.getQuantity()));
+            params.put("activatePrice", formatPrice(order.getStopPrice()));
+            params.put("callbackRate", String.format("%.2f", callbackRate)); // 0.5 = 0.5%
+            params.put("workingType", "MARK_PRICE");
+            // positionSide for trailing stop - same logic as STOP_MARKET
+            params.put("positionSide", order.getSide() == TradeDirection.LONG ? "SHORT" : "LONG");
+            params.put("clientAlgoId", order.getOrderId());
+            params.put("timestamp", timestamp);
+            params.put("recvWindow", 60000);
+
+            String signature = signParams(params);
+
+            String resp;
+            if (shouldTryDirect()) {
+                log.warn("[BinanceAlgo] Proxy circuit open, trying direct connection for trailing stop");
+                try {
+                    resp = executePostDirect("/fapi/v1/algoOrder", params, signature, timestamp);
+                    if (resp != null) {
+                        resetCircuitBreaker();
+                    }
+                } catch (Exception e) {
+                    log.error("[BinanceAlgo] Direct connection for trailing stop also failed: {}", e.getMessage());
+                    recordProxyFailure();
+                    throw e;
+                }
+            } else {
+                resp = executePost("/fapi/v1/algoOrder", params, signature, timestamp);
+                if (!resp.startsWith("{")) {
+                    recordProxyFailure();
+                } else if (!resp.contains("\"code\":")) {
+                    resetCircuitBreaker();
+                }
+            }
+
+            if (resp.startsWith("{")) {
+                if (resp.contains("\"code\":")) {
+                    if (resp.contains("-4500") || resp.contains("-1022") || resp.contains("-1021") || resp.contains("-2013")) {
+                        log.warn("[BinanceAlgo] Trailing stop failed: {}", resp);
+                        return createRejectedReport(order, resp);
+                    }
+                    if (resp.contains("-4130")) {
+                        log.warn("[BinanceAlgo] Trailing stop -4130: existing order, signaling rejection for adoption");
+                        return createRejectedReport(order, resp);
+                    }
+                }
+                return parseAlgoResponse(order, resp);
+            } else {
+                log.warn("[BinanceAlgo] Trailing stop returned non-JSON: {}", resp);
+                return createRejectedReport(order, resp);
+            }
+
+        } catch (Exception e) {
+            log.error("[BinanceAlgo] Trailing stop failed: {}", e.getMessage());
+            return createRejectedReport(order, e.getMessage());
+        }
+    }
+
+    /**
      * Cancel algo order by algoId.
      */
-    public boolean cancelAlgoOrder(String algoId) {
+    public boolean cancelAlgoOrder(String algoId, String symbol) {
         try {
             long timestamp = System.currentTimeMillis();
 
             LinkedHashMap<String, Object> params = new LinkedHashMap<>();
-            params.put("symbol", "BTCUSDT");  // TODO: pass symbol
+            params.put("symbol", symbol);
             params.put("orderId", algoId);
             params.put("timestamp", timestamp);
 
@@ -533,5 +644,91 @@ public class BinanceAlgoClient {
         } else {
             return String.format("%.4f", price);
         }
+    }
+
+    // ========== Circuit Breaker for Proxy Stability ==========
+
+    private boolean shouldTryDirect() {
+        if (proxy == null || proxy == Proxy.NO_PROXY) {
+            return false;
+        }
+        if (proxyCircuitOpen) {
+            // Check if we should try again (circuit reset timeout)
+            if (System.currentTimeMillis() - circuitOpenSince > CIRCUIT_RESET_TIMEOUT_MS) {
+                log.info("[BinanceAlgo] Circuit breaker timeout passed, resetting to try proxy again");
+                proxyCircuitOpen = false;
+                consecutiveProxyFailures.set(0);
+                return false;
+            }
+            return true; // Circuit is open, use direct
+        }
+        return false;
+    }
+
+    private void recordProxyFailure() {
+        int failures = consecutiveProxyFailures.incrementAndGet();
+        log.warn("[BinanceAlgo] Proxy failure #{} (threshold={})", failures, CIRCUIT_BREAKER_THRESHOLD);
+        if (failures >= CIRCUIT_BREAKER_THRESHOLD) {
+            proxyCircuitOpen = true;
+            circuitOpenSince = System.currentTimeMillis();
+            log.error("[BinanceAlgo] PROXY CIRCUIT OPEN - switching to direct connection for 30s");
+        }
+    }
+
+    private void resetCircuitBreaker() {
+        if (consecutiveProxyFailures.get() > 0) {
+            log.info("[BinanceAlgo] Proxy circuit reset - connection healthy again");
+        }
+        consecutiveProxyFailures.set(0);
+        proxyCircuitOpen = false;
+    }
+
+    /**
+     * Execute POST request without proxy (direct connection).
+     * Used when proxy circuit breaker is open.
+     */
+    private String executePostDirect(String endpoint, LinkedHashMap<String, Object> params,
+                                     String signature, long timestamp) throws IOException {
+        TreeMap<String, Object> sorted = new TreeMap<>(params);
+        StringBuilder query = new StringBuilder();
+        for (Map.Entry<String, Object> entry : sorted.entrySet()) {
+            if (query.length() > 0) query.append("&");
+            query.append(entry.getKey()).append("=").append(entry.getValue());
+        }
+        query.append("&signature=").append(signature);
+
+        String url = baseUrl + endpoint + "?" + query.toString();
+        log.info("[BinanceAlgo] DIRECT (no proxy) URL: {}", url);
+
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
+                new java.net.URL(url).openConnection(Proxy.NO_PROXY);
+
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(15000);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("X-MBX-APIKEY", apiKey);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        conn.setRequestProperty("Accept", "application/json");
+        conn.setDoOutput(true);
+
+        try (java.io.OutputStream os = conn.getOutputStream()) {
+            // Write body (empty for this endpoint)
+        }
+
+        int responseCode = conn.getResponseCode();
+        java.io.BufferedReader reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(
+                        responseCode >= 400 ? conn.getErrorStream() : conn.getInputStream(),
+                        StandardCharsets.UTF_8));
+
+        StringBuilder response = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            response.append(line);
+        }
+        reader.close();
+
+        log.info("[BinanceAlgo] DIRECT POST {} -> {} | body: {}", endpoint, responseCode, response);
+        return response.toString();
     }
 }
